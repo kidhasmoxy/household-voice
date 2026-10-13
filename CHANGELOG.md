@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.2.4
+
+Uses compact, stable API display names so Home Assistant's merged tool names fit
+OpenAI-compatible provider limits. Existing API identifiers and selections remain
+valid. Actual-HA fixtures validate merged tool schemas before release.
+
 ## 0.2.3
 
 Implements Home Assistant's LLM platform discovery callback. Household Voice

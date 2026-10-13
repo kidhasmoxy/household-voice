@@ -22,7 +22,7 @@ import time
 from types import SimpleNamespace
 
 import probatio
-from .llm_compat import tool_result
+from .llm_compat import api_name, tool_result
 from homeassistant.core import callback
 from homeassistant.helpers import device_registry as dr, entity_registry as er, llm
 
@@ -223,7 +223,7 @@ class MediaTool(llm.Tool):
 class HouseholdMediaAPI(llm.API):
     def __init__(self, hass, entry, *, execution_authorized=None, resolve_queue_profile=None, clock=time.time):
         super().__init__(hass=hass, id="household_voice_media_" + entry.entry_id,
-                         name="Household Voice media (" + entry.title + ")")
+                         name=api_name('media', entry.entry_id))
         if execution_authorized is not None and type(execution_authorized) is not bool:
             raise ValueError("Execution authorization must be explicit")
         self.entry, self.execution_authorized = entry, execution_authorized

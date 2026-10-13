@@ -4,6 +4,7 @@ import base64
 import io
 import json
 import logging
+import re
 from pathlib import Path
 import shutil
 import sys
@@ -99,6 +100,22 @@ async def main():
             assert 'Household Voice' not in assist.api_prompt
             assert len([api for api in llm.async_get_apis(hass) if api.id.startswith('household_voice_')]) == 4
             proof['real_llm_platform_discovery_no_duplicate_assist_tools'] = True
+            # Real multi-API wrapping uses api.name, not api.id, as tool namespace.
+            # Keep names valid for OpenAI-compatible function schemas, even when
+            # a user renames the config entry to a long or non-ASCII title.
+            selected_ids = [api.id for api in llm.async_get_apis(hass)
+                if api.id.startswith('household_voice_')]
+            merged = await llm.async_get_api(hass, selected_ids + [llm.LLM_API_ASSIST], context)
+            household_tools = [tool for tool in merged.tools if tool.name.startswith(('household-', 'household_'))]
+            assert len(household_tools) == 17, [tool.name for tool in merged.tools]
+            assert len({tool.name for tool in merged.tools}) == len(merged.tools)
+            assert all(re.fullmatch(r'[A-Za-z0-9_-]{1,64}', tool.name) for tool in merged.tools)
+            for tool in household_tools:
+                response = await merged.async_call_tool(llm.ToolInput(
+                    tool_name=tool.name, tool_args={}, id='merged-'+tool.name))
+                assert isinstance(response, llm.ToolResult) if hasattr(llm, 'ToolResult') else type(response) is dict
+            proof['real_merged_api_valid_function_names'] = True
+            proof['maximum_merged_household_tool_name_length'] = max(len(tool.name) for tool in household_tools)
             proof['registered_tool_instances'] = tool_count
             proof['setup_panel_tools_local_authority'] = True
             # Repeated installation cannot introduce a second local writer.

@@ -10,7 +10,7 @@ import json
 import probatio
 from homeassistant.core import callback
 from homeassistant.helpers import llm
-from .llm_compat import tool_result
+from .llm_compat import api_name, tool_result
 
 NAMES = ('household_broadcast', 'household_cancel_broadcast', 'household_broadcast_status')
 SCHEMAS = {
@@ -71,7 +71,7 @@ class BroadcastTool(llm.Tool):
 
 class BroadcastAPI(llm.API):
     def __init__(self,hass,entry,coordinator):
-        super().__init__(hass=hass,id='household_voice_broadcast_'+entry.entry_id,name='Household Voice broadcasts')
+        super().__init__(hass=hass,id='household_voice_broadcast_'+entry.entry_id,name=api_name('broadcasts', entry.entry_id))
         self.entry,self.coordinator=entry,coordinator
 
     async def async_get_api_instance(self,llm_context):

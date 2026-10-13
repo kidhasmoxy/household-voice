@@ -20,7 +20,7 @@ from aiohttp import ClientError
 import probatio
 from homeassistant.core import callback
 from homeassistant.helpers import llm
-from .llm_compat import tool_result
+from .llm_compat import api_name, tool_result
 
 from .api import CoordinatorConflict, CoordinatorError
 from .contracts import validate_payload
@@ -200,7 +200,7 @@ class ScheduleTool(llm.Tool):
 class HouseholdScheduleAPI(llm.API):
     def __init__(self, hass, entry, coordinator, *, clock=time.time):
         super().__init__(hass=hass, id=INTEGRATION+'_schedules_'+entry.entry_id,
-                         name='Household Voice schedules ('+entry.title+')')
+                         name=api_name('schedules', entry.entry_id))
         self.entry, self.coordinator, self.clock = entry, coordinator, clock
         self.completed = OrderedDict()
         self.call_lock = asyncio.Lock()

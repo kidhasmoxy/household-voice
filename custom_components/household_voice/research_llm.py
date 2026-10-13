@@ -13,7 +13,7 @@ import time
 import uuid
 
 import probatio
-from .llm_compat import tool_result
+from .llm_compat import api_name, tool_result
 from homeassistant.core import callback
 from homeassistant.helpers import device_registry as dr, llm
 from homeassistant.helpers.storage import Store
@@ -171,7 +171,7 @@ class ResearchTool(llm.Tool):
 class HouseholdResearchAPI(llm.API):
     def __init__(self, hass, entry, client, *, sessions=None, clock=time.time):
         super().__init__(hass=hass, id="household_voice_research_" + entry.entry_id,
-                         name="Household Voice weather and recipes (" + entry.title + ")")
+                         name=api_name('research', entry.entry_id))
         self.entry, self.client, self.clock = entry, client, clock
         self.sessions = sessions or RecipeSessions(VerifiedStore(lambda: Store(hass, 1,
             "household_voice_" + entry.entry_id + "_recipes", private=True, atomic_writes=True,
