@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.3.7
+
+Clear genre/mood music commands use the existing trusted Music Assistant path
+directly and speak the selected collection name without a language-model round
+trip. Ambiguous names and compound requests remain with the configured agent.
+
+All validated replacement playback requests receive the bounded 65-second
+preparation allowance after a maximum 35-second lookup period. The earlier
+mix-only allowance missed slow artist/playlist preparation. Playback uncertainty
+is explicitly distinguished from a missing catalog match; uncertain commands are
+not automatically retried.
+
 ## 0.3.6
 
 Repairs transitions out of Music Assistant dynamic endless queues. Queue mode is

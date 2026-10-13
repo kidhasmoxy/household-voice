@@ -122,6 +122,48 @@ async def verify_router(hass, entry):
         looping = await invoke('Ordinary request')
         assert 'loops back' in looping.response.speech['plain']['speech']
         fallback.loop_target = None
+    # Use HA's real registered API bridge; only the tool's external media work is
+    # synthetic here. Its source/configuration/execution guards have separate
+    # real-HA media fixtures. Verify the router passes the actual source context.
+    from custom_components.household_voice import media_llm
+    from custom_components.household_voice.intent_scope import trusted_request_text
+    from custom_components.household_voice.llm_compat import tool_result
+    media_calls = []
+    media_result = {'status':'action_accepted','executed':True,'playback_confirmed':False,
+        'announcement':'Playing Fixture Jazz.', 'selected':{'uri':'fixture://playlist/1',
+        'title':'Fixture Jazz','media_type':'playlist','provider':'fixture'}}
+    async def media_call(tool, actual_hass, tool_input, llm_context):
+        assert actual_hass is hass
+        assert llm_context.context is context and llm_context.device_id == device.id
+        assert trusted_request_text(llm_context) == (current_music_text, 'en')
+        assert tool_input.tool_args == {'kind':'music','query':current_music_query}
+        assert tool_input.id.startswith('ha-router-media-')
+        media_calls.append(tool_input)
+        return tool_result(llm, data=deepcopy(media_result), error=media_result['status']=='error')
+    with patch.object(media_llm.MediaTool, 'async_call', new=media_call):
+        before = len(fallback.calls)
+        current_music_text, current_music_query = 'Play some jazz.', 'jazz'
+        selected = await invoke(current_music_text)
+        assert selected.response.speech['plain']['speech'] == 'Playing Fixture Jazz.'
+        extra = selected.response.speech['plain']['extra_data']['household_media']
+        assert extra['selected']['uri'] == 'fixture://playlist/1' and extra['executed'] is True
+        assert 'username' not in extra and 'actions' not in extra
+        assert len(fallback.calls) == before and len(media_calls) == 1
+        current_music_text, current_music_query = 'Please play some upbeat music.', 'upbeat'
+        media_result = {'status':'dry_run','executed':False,'announcement':'Must not speak this.'}
+        disabled = await invoke(current_music_text)
+        assert 'Enable music playback' in disabled.response.speech['plain']['speech']
+        media_result = {'status':'error','reason':'media_playback_pending_or_uncertain',
+            'executed':False,'retry_automatically':False}
+        pending = await invoke(current_music_text)
+        assert 'may still be preparing' in pending.response.speech['plain']['speech']
+        count = len(media_calls)
+        missing = await invoke(current_music_text, source=None)
+        assert 'configured voice assistant' in missing.response.speech['plain']['speech']
+        assert len(media_calls) == count and len(fallback.calls) == before
+        for text in ('Play Fleetwood Mac.', 'Play jazz in the Kitchen.', 'Play the album Jazz.'):
+            await invoke(text)
+        assert len(fallback.calls) == before + 3 and len(media_calls) == count
     from custom_components.household_voice import llm as schedule_tools
     from custom_components.household_voice.intent_scope import constrain_arguments
     fake_client = SimpleNamespace()
@@ -299,4 +341,6 @@ async def verify_router(hass, entry):
         'ringing_stop_trusted_housewide_no_countdown_changes':True,
         'timer_clarification_followup_exact_revision_and_remaining_display':True,
         'no_ringing_stop_delegates_and_explicit_new_timer_delegates':True,
+        'broad_music_registered_api_direct_route_and_scoped_result':True,
+        'broad_music_no_model_on_success_dryrun_pending_or_missing_source':True,
         'physical_router_audio': False}

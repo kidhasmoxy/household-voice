@@ -183,22 +183,28 @@ class MediaLLMTests(unittest.IsolatedAsyncioTestCase):
             with self.assertRaises(module.MediaConfigurationError):
                 await native_queue_mode_reader(guard, PLAYER)
 
-    async def test_only_generated_mix_dispatch_gets_one_execution_budget(self):
+    async def test_artist_playlist_and_mix_dispatch_each_get_one_execution_budget(self):
         signature = module._resolve(self.hass, self.entry, self.context, 'kitchen')[2]
-        deadlines = []
-        guard = module._GuardedServices(self.api, self.context, 'kitchen', signature,
-            execution_deadline=types.SimpleNamespace(reschedule=deadlines.append))
-        await guard.async_call('music_assistant', 'search', {})
-        await guard.async_call('music_assistant', 'play_media', {'radio_mode': False})
-        self.assertEqual(deadlines, [])
-        before = asyncio.get_running_loop().time()
-        await guard.async_call('music_assistant', 'play_media', {'radio_mode': True})
-        after = asyncio.get_running_loop().time()
-        self.assertEqual(len(deadlines), 1)
-        self.assertGreaterEqual(deadlines[0], before + 65)
-        self.assertLessEqual(deadlines[0], after + 65)
-        await guard.async_call('music_assistant', 'play_media', {'radio_mode': True})
-        self.assertEqual(len(deadlines), 1)
+        for data in ({'media_id':['library://track/1','library://track/2'], 'radio_mode':False},
+                     {'media_id':'library://playlist/1', 'radio_mode':False},
+                     {'media_id':'library://track/1', 'radio_mode':True}):
+            with self.subTest(data=data):
+                deadlines = []
+                guard = module._GuardedServices(self.api, self.context, 'kitchen', signature,
+                    execution_deadline=types.SimpleNamespace(reschedule=deadlines.append))
+                await guard.async_call('music_assistant', 'search', {})
+                await guard.async_call('media_player', 'shuffle_set', {'shuffle':False})
+                self.assertEqual(deadlines, [])
+                self.assertFalse(guard.playback_dispatch_started)
+                before = asyncio.get_running_loop().time()
+                await guard.async_call('music_assistant', 'play_media', data)
+                after = asyncio.get_running_loop().time()
+                self.assertTrue(guard.playback_dispatch_started)
+                self.assertEqual(len(deadlines), 1)
+                self.assertGreaterEqual(deadlines[0], before + 65)
+                self.assertLessEqual(deadlines[0], after + 65)
+                await guard.async_call('music_assistant', 'play_media', data)
+                self.assertEqual(len(deadlines), 1)
 
     async def test_changed_configuration_cannot_extend_mix_deadline_or_dispatch(self):
         signature = module._resolve(self.hass, self.entry, self.context, 'kitchen')[2]
@@ -210,6 +216,7 @@ class MediaLLMTests(unittest.IsolatedAsyncioTestCase):
             await guard.async_call('music_assistant', 'play_media', {'radio_mode': True})
         self.assertEqual(deadlines, [])
         self.assertEqual(self.services.calls, [])
+        self.assertFalse(guard.playback_dispatch_started)
 
     async def test_action_timeout_returns_uncertainty_and_same_call_cannot_replay(self):
         self.entry.options.update(live_actions_enabled=True, media_enabled=True)
@@ -221,17 +228,46 @@ class MediaLLMTests(unittest.IsolatedAsyncioTestCase):
             return result
         self.services.async_call = slow_play
         timeout = asyncio.timeout
-        args = {'query': 'Fixture Book', 'kind': 'book'}
-        with patch.object(module.asyncio, 'timeout', side_effect=lambda seconds: timeout(.1)):
+        class ShortTimeout:
+            def __init__(self, seconds): self.timer = timeout(.1)
+            async def __aenter__(self):
+                await self.timer.__aenter__()
+                return self
+            async def __aexit__(self, *exc): return await self.timer.__aexit__(*exc)
+            def reschedule(self, deadline): self.timer.reschedule(asyncio.get_running_loop().time() + .1)
+        args = {'query': 'Fixture Playlist', 'kind': 'music', 'media_type':'playlist'}
+        self.services.search_result = search(item('Fixture Playlist','playlist','library://playlist/1'),'playlists')
+        with patch.object(module.asyncio, 'timeout', side_effect=ShortTimeout):
             first = await self.call(args=args, call_id='timed-out-action')
-        self.assertEqual(first.data['reason'], 'media_unavailable_or_result_uncertain')
+        self.assertEqual(first.data['reason'], 'media_playback_pending_or_uncertain')
         self.assertTrue(first.error)
+        self.assertTrue(first.data['playback_dispatch_started'])
         self.assertFalse(first.data['executed'])
+        self.assertFalse(first.data['playback_confirmed'])
         self.assertFalse(first.data['retry_automatically'])
+        self.assertIn('may still be preparing', first.data['message'])
+        self.assertIn('Do not retry', first.data['response_instruction'])
+        instance = await self.api.async_get_api_instance(self.context)
+        self.assertIn('Never retry that playback or claim no matching music was found', instance.api_prompt)
         self.assertNotIn('announcement', first.data)
         second = await self.call(args=args, call_id='timed-out-action')
         self.assertEqual(first.data, second.data)
         self.assertEqual(sum(call[1] == 'play_media' for call in self.services.calls), 1)
+
+    async def test_lookup_retains_35_second_budget_and_does_not_claim_dispatch(self):
+        self.entry.options.update(live_actions_enabled=True, media_enabled=True)
+        async def slow_search(*args, **kwargs): await asyncio.sleep(1)
+        self.services.async_call = slow_search
+        timeout = asyncio.timeout
+        budgets = []
+        def short_lookup(seconds):
+            budgets.append(seconds)
+            return timeout(.05)
+        with patch.object(module.asyncio, 'timeout', side_effect=short_lookup):
+            result = await self.call(args={'query':'Fixture Book','kind':'book'})
+        self.assertEqual(budgets, [35])
+        self.assertEqual(result.data['reason'], 'media_unavailable_or_result_uncertain')
+        self.assertNotIn('playback_dispatch_started', result.data)
 
     async def test_default_sleep_playlist_context_factory(self):
         self.services.search_result = search(item("Configured Sleep Playlist", "playlist", "library://playlist/12"), "playlists")

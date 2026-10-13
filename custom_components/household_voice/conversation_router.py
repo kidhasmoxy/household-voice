@@ -2,6 +2,47 @@
 import re
 
 
+def broad_music_query(text, language, styles):
+    """Recognize only an unqualified style request from the shared allowlist.
+
+    Named artists, titles, other rooms and compound commands retain the normal
+    agent path. Never discard a room suffix or infer a target from free text.
+    """
+    if (not isinstance(text, str) or len(text) > 512 or not isinstance(language, str)
+            or language.lower().split('-')[0] != 'en'):
+        return None
+    value = ' '.join(text.casefold().split()).rstrip('.!?')
+    match = re.fullmatch(
+        r'(?:please )?(?:(?:can|could|would) you (?:please )?)?'
+        r'(?:play me|play|put on|let me hear) (?:some |a little |a bit of )?'
+        r'(.+?)(?: music)?(?: please)?', value)
+    return match[1] if match and match[1] in styles else None
+
+
+def music_acknowledgement(result):
+    """Speak a tool's actual accepted choice; never turn uncertainty into no match."""
+    if not isinstance(result, dict):
+        result = {}
+    status, reason = result.get('status'), result.get('reason')
+    if status == 'action_accepted' and result.get('executed') is True:
+        announcement = result.get('announcement')
+        if isinstance(announcement, str) and 0 < len(announcement.strip()) <= 800:
+            return announcement
+        return 'I sent your music request to the speaker.'
+    if reason == 'media_playback_pending_or_uncertain':
+        return "Music Assistant may still be preparing playback. I couldn't confirm that it started."
+    if status == 'dry_run':
+        return 'Enable music playback and live actions in Household Voice settings to play music.'
+    if reason in ('verified_source_and_media_configuration_required', 'invalid_player_mapping',
+                  'profile_required', 'player_unavailable'):
+        return 'Check this assistant\'s speaker and Music Assistant settings in Household Voice.'
+    if reason in ('no_relevant_music_collection', 'no_exact_catalog_match'):
+        return 'I could not find a matching playlist or station. Please name a playlist or station.'
+    if status == 'clarify':
+        return 'Please name the playlist or station you would like.'
+    return 'I could not confirm your music request. Please check Music Assistant.'
+
+
 COMMANDS = {
     'start': frozenset(('make an announcement', 'make announcement', 'start an announcement',
                         'start announcement', 'broadcast an announcement', 'broadcast', 'announce',

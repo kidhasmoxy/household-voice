@@ -5,7 +5,7 @@ playback, recorded announcements, and room speaker configuration. The durable
 coordinator runs inside Home Assistant. No companion app, container, cloud
 account, or paid subscription is required for the core features.
 
-This is the **0.3.6 prerelease**. Automated tests cover implementation
+This is the **0.3.7 prerelease**. Automated tests cover implementation
 contracts; actual microphone capture, speaker delivery, phone presence, firmware,
 and audiobook resume require validation on your equipment. Keep an independent
 alarm available until your installation passes those tests. Home Assistant must
