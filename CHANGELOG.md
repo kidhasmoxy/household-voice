@@ -1,5 +1,24 @@
 # Changelog
 
+## 0.3.3
+
+Music requests accept current Home Assistant area names and aliases while
+preserving verified source devices and configured playback destinations.
+Ambiguous aliases ask for clarification instead of choosing another room.
+Broad requests such as "play some jazz" can choose relevant available music
+playlists or stations from fresh Music Assistant results. Named music, books,
+and sleep-story requests retain their exact-title and ambiguity checks.
+
+Native room ducking recognizes a new turn after a brief idle transition. The
+activity watchdog restarts for the new turn, and a manually changed volume
+becomes its new ducking baseline. Speakers still owned by the preceding duck
+remain quiet through the handoff without a volume bounce. Changes during the
+same turn, protected announcements, and uncertain writes remain preserved.
+
+Adds actual Home Assistant media-tool validation to the compatibility matrix.
+These fixtures use synthetic services and do not establish physical playback,
+wake recognition, or recovery from a device stuck in its listening state.
+
 ## 0.3.2
 
 Keeps compound household status requests such as "What are my active timers and

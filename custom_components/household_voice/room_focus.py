@@ -133,6 +133,22 @@ class AnnouncementRoomFocus:
         self.executor = SatelliteExecutor(_RoomPolicy(state), controller, state.journal, {},
             enabled=True, execution_authorized=True, focus_state=state)
 
+    async def async_relinquished_players(self, players):
+        """Identify fresh manual changes without writing any speaker volume.
+
+        A new native turn can release its obsolete contexts before acquiring a
+        new baseline. Confirmed owned ducks and uncertain writes stay untouched.
+        Other live leases still prevent that release from clearing ownership.
+        """
+        async with self.state.lock:
+            await self.executor._ready()
+            observations = await self.executor._observe()
+            await self.executor._reconcile(observations)
+            return {player for player in players
+                    if player in self.state.blocked and player not in self.state.records
+                    and not self.state.protected_players.get(player)
+                    and self.executor._observation(player, observations) is not None}
+
     async def _acquire(self, lease, players, outputs, factor):
         state, executor = self.state, self.executor
         state.allowed_players.update(players | outputs)

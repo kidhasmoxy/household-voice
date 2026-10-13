@@ -19,6 +19,7 @@ from .routing import RoomRegistry, RoutingError
 MediaType = Literal['track', 'album', 'artist', 'playlist', 'radio', 'audiobook']
 MediaKind = Literal['music', 'book', 'station', 'sleep_story', 'sleep_stories', 'sleep_collection']
 Operation = Literal['play', 'resume', 'pause', 'stop']
+SelectionMode = Literal['exact', 'broad_music']
 TYPES = ('track', 'album', 'artist', 'playlist', 'radio', 'audiobook')
 KINDS = ('music', 'book', 'station', 'sleep_story', 'sleep_stories', 'sleep_collection')
 STORY_ALIASES = frozenset(('my sleep stories', 'sleep stories', 'a sleep story',
@@ -59,6 +60,7 @@ class MediaRequest:
     selected_uri: str | None = None
     shuffle: bool = False
     radio_mode: bool = False
+    selection_mode: SelectionMode = 'exact'
 
     def __post_init__(self):
         _text(self.query, 'query', empty=True)
@@ -72,6 +74,13 @@ class MediaRequest:
                 _text(value, name, limit=2048 if name=='selected_uri' else 512)
         if type(self.shuffle) is not bool or type(self.radio_mode) is not bool:
             raise ValueError('Shuffle and radio_mode must be booleans')
+        if self.selection_mode not in ('exact', 'broad_music'):
+            raise ValueError('Unsupported media selection mode')
+        if self.selection_mode == 'broad_music' and (
+                self.kind != 'music' or self.operation != 'play'
+                or self.media_type not in (None, 'playlist', 'radio')
+                or self.artist or self.album or self.selected_uri):
+            raise ValueError('Broad music selection requires an unqualified music play request')
         if self.operation in ('pause', 'stop') and (self.query or self.selected_uri):
             raise ValueError('Pause/stop refer to the existing room queue, not a title')
 
@@ -129,6 +138,8 @@ class CatalogSnapshot:
 
     complete=True requires the adapter to verify its result was not truncated.
     A partial result can offer choices but cannot auto-select a unique match.
+    Explicit broad music requests may recommend one relevant collection without
+    claiming an exact or globally unique match.
     """
     query: str
     username: str
@@ -198,10 +209,33 @@ def _intent(request, context):
     if fixed_type and not generic_story and request.media_type not in (None, fixed_type):
         return None
     types = (fixed_type,) if fixed_type else ((request.media_type,) if request.media_type else ('track', 'album', 'artist', 'playlist', 'radio'))
+    if request.selection_mode == 'broad_music':
+        if generic_story:
+            return None
+        types = (request.media_type,) if request.media_type else ('playlist', 'radio')
     text = _normal(query + ' ' + (request.album or ''))
     spoken = (kind in ('book', 'sleep_story', 'sleep_stories', 'sleep_collection') or types==('audiobook',)
               or any(marker in text for marker in ('sleep stor', 'bedtime stor', 'calm kids')))
     return query, types, spoken
+
+
+def _broad_match(query, item):
+    """Conservative collection relevance, never an arbitrary search-result URI.
+
+    Preserve provider ranking among relevant collections. Token boundaries keep
+    'jazz' from matching 'Jazzercise'; punctuation differences remain harmless.
+    Content metadata is data and never changes action, room, or profile scope.
+    """
+    tokens = tuple(re.findall(r'\w+', query.casefold()))
+    if not tokens or item.spoken_content or not item.available:
+        return False
+    if any(marker in (item.title + ' ' + ' '.join(item.aliases)).casefold()
+           for marker in ('sleep stor', 'bedtime stor', 'calm kids', 'audiobook', 'podcast')):
+        return False
+    return any(tokens == words[start:start + len(tokens)]
+               for name in (item.title, *item.aliases)
+               for words in (tuple(re.findall(r'\w+', name.casefold())),)
+               for start in range(len(words) - len(tokens) + 1))
 
 
 def plan_media(request: MediaRequest, registry: RoomRegistry, context: MediaContext,
@@ -252,6 +286,9 @@ def plan_media(request: MediaRequest, registry: RoomRegistry, context: MediaCont
     if intent is None:
         return _result('clarify', 'content_type_conflict', question='Which kind of content did you mean?', **target)
     query, types, spoken = intent
+    broad = request.selection_mode == 'broad_music'
+    if broad and spoken:
+        return _result('clarify', 'content_type_conflict', question='Which book or story would you like?', **target)
     if not query:
         return _result('clarify', 'title_required', question='Which title or station would you like?', **target)
     # An author is not a music artist filter; ignore these fields for books.
@@ -271,7 +308,11 @@ def plan_media(request: MediaRequest, registry: RoomRegistry, context: MediaCont
                 and (not request.provider or _normal(i.provider)==_normal(request.provider))
                 and (not artist or _normal(artist) in {_normal(a) for a in i.artists})
                 and (not album or _normal(i.album or '')==_normal(album))}
-    if request.selected_uri:
+    if broad:
+        # This is a recommendation, not an attempt to disambiguate an exact title.
+        # The MA adapter preserves search order within collection result groups.
+        matches = [i for i in eligible.values() if _broad_match(query, i)][:1]
+    elif request.selected_uri:
         matches = [eligible[request.selected_uri]] if request.selected_uri in eligible else []
         if not matches:
             return _result('clarify', 'selection_not_in_catalog', question='Please choose one of the catalog results.', **target)
@@ -280,9 +321,10 @@ def plan_media(request: MediaRequest, registry: RoomRegistry, context: MediaCont
     if not matches:
         # Approximate search results are suggestions only, even when only one exists.
         options = sorted(eligible.values(), key=lambda i: (_normal(i.title), i.provider, i.uri))
-        return _result('clarify', 'no_exact_catalog_match', question='Which catalog result did you mean?',
+        return _result('clarify', 'no_relevant_music_collection' if broad else 'no_exact_catalog_match',
+                       question='Which music playlist or station would you like?' if broad else 'Which catalog result did you mean?',
                        choices=[_choice(i) for i in options[:5]], candidate_count=len(options), **target)
-    if len(matches)>1 or (not catalog.complete and not request.selected_uri):
+    if len(matches)>1 or (not catalog.complete and not request.selected_uri and not broad):
         options = sorted(matches, key=lambda i: (_normal(i.title), i.provider, i.uri))
         return _result('clarify', 'ambiguous_or_partial_catalog', question='Which version should I play?',
                        choices=[_choice(i) for i in options[:5]], candidate_count=len(options), **target)
@@ -295,7 +337,8 @@ def plan_media(request: MediaRequest, registry: RoomRegistry, context: MediaCont
     actions = _spoken_actions(player) if spoken else [_action('media_player.shuffle_set', player, shuffle=request.shuffle)]
     actions.append(_action('music_assistant.play_media', player, media_id=item.uri, media_type=item.media_type,
                            username=context.username, enqueue='replace', radio_mode=False if spoken else request.radio_mode))
-    return _result('ready', 'catalog_item_selected', actions=actions, selected=_choice(item), spoken_content=spoken,
+    return _result('ready', 'broad_music_collection_selected' if broad else 'catalog_item_selected',
+                   actions=actions, selected=_choice(item), spoken_content=spoken,
                    progress_policy='provider_managed_resume_no_seek_or_reset' if item.media_type=='audiobook' else 'no_progress_write',
                    preconditions={'catalog_observed_at': catalog.observed_at, 'config_entry_id': context.config_entry_id,
                                   'revalidate_before_execution': True, 'serialize_target_queue': True}, **target)

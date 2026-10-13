@@ -42,6 +42,7 @@ class NativeDuckRuntime:
         self._blocked = set()
         self._since = {}
         self._idle_since = {}
+        self._observed_idle = set()
         self._last_error = None
         self._lock = asyncio.Lock()
 
@@ -79,6 +80,12 @@ class NativeDuckRuntime:
     def _on_state(self, event):
         identifier = event.data.get("entity_id")
         if identifier in self._assistants or identifier in self._watch_players:
+            # Latch a real idle even if a rapid native follow-up becomes active
+            # before the runner wakes. Never trust event-supplied new_state.
+            if identifier in self._assistants:
+                state = self.hass.states.get(identifier)
+                if state is not None and state.state == 'idle':
+                    self._observed_idle.add(identifier)
             self._changed.set()
 
     def _snapshot(self):
@@ -106,18 +113,28 @@ class NativeDuckRuntime:
             self._assistants = set(rows)
             self._watch_players = set(snapshot.get("recovery_media_players", ()))
             desired = {}
+            new_turns = set()
             for identifier, row in rows.items():
                 state = self.hass.states.get(identifier)
                 if state is None or state.state not in ACTIVE:
+                    # A real native idle ends the activity epoch immediately.
+                    # The short volume handoff grace may bridge a follow-up,
+                    # but must not charge its watchdog for the previous turn.
+                    self._blocked.discard(identifier)
+                    self._since.pop(identifier, None)
+                    self._observed_idle.discard(identifier)
                     if state is not None and state.state == 'idle' and identifier in self._holds:
                         idle_since = self._idle_since.setdefault(identifier, self.clock())
                         if self.clock() - idle_since < self.idle_grace_seconds:
                             desired[identifier] = frozenset(self._holds[identifier])
                             continue
                     self._idle_since.pop(identifier, None)
+                    continue
+                if identifier in self._idle_since or identifier in self._observed_idle:
+                    new_turns.add(identifier)
                     self._blocked.discard(identifier)
                     self._since.pop(identifier, None)
-                    continue
+                self._observed_idle.discard(identifier)
                 self._idle_since.pop(identifier, None)
                 since = self._since.setdefault(identifier, self.clock())
                 if self.clock() - since >= self.max_activity_seconds:
@@ -138,11 +155,17 @@ class NativeDuckRuntime:
                 if players:
                     desired[identifier] = players
             self._blocked.intersection_update(rows)
+            self._observed_idle.intersection_update(rows)
             for identifier in set(self._since) - set(rows):
                 self._since.pop(identifier, None)
+            relinquished = set()
+            if new_turns:
+                relinquished = await self.authority.async_relinquished_players(
+                    {player for identifier in new_turns for player in self._holds.get(identifier, {})})
             for identifier, contexts in tuple(self._holds.items()):
                 for player, context in tuple(contexts.items()):
-                    if player in desired.get(identifier, ()):
+                    if (player in desired.get(identifier, ())
+                            and not (identifier in new_turns and player in relinquished)):
                         continue
                     contexts.pop(player)
                     await context.__aexit__(None, None, None)

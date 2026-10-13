@@ -237,7 +237,10 @@ class MusicAssistantAdapter:
                         raise MediaAdapterError('Wrong catalog scope')
                     response = await self._call('music_assistant', 'search', data, session, response=True)
                     result = plan(catalog=parse_search(response, data, session, self.bindings, self.clock()))
-                    result['evidence_policy'] = 'bounded_search_below_limit_not_global_uniqueness'
+                    result['evidence_policy'] = (
+                        'broad_catalog_recommendation_not_exact_title'
+                        if request.selection_mode == 'broad_music'
+                        else 'bounded_search_below_limit_not_global_uniqueness')
                 elif result.get('reason')=='fresh_queue_required':
                     response = await self._call('music_assistant', 'get_queue', {'entity_id': player}, session, response=True)
                     # Validate before passing any queue ID to the trusted profile resolver.
