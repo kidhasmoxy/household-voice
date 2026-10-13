@@ -1,0 +1,23 @@
+{
+  "upstream": {
+    "name": "esphome",
+    "repo": "esphome/esphome",
+    "ref": "2026.9.1",
+    "sha": "0b2b16e664ecfc0add37f3435db1c2140b8a687e",
+    "date": "2026-09-29T19:12:00Z"
+  },
+  "files": {
+    "voice_assistant.cpp": {
+      "original_sha256": "83110a5f29fa5c0d7d32b2835c40b2fbb683c132c63dcbf9b7017f9c6e1a9351",
+      "candidate_sha256": "787dec5023bc979e11f57596e6c696b3b8a23c1bfad13c7d39b6ac8142e4f9fc"
+    },
+    "voice_assistant.h": {
+      "original_sha256": "d1b68d11daf13c9c8453941fc6b1a37561a3d2ba7fc67cd48f4a7bd6506b0163",
+      "candidate_sha256": "1ab05909885e9b239951a5fa86c4d329bb08911be4111d39195e218ca7936aa1"
+    },
+    "__init__.py": {
+      "original_sha256": "4222932b6570a5da9a4b985624266ae046fe78f5a76cc1b8bbcd1210d06ee2ac",
+      "candidate_sha256": "4222932b6570a5da9a4b985624266ae046fe78f5a76cc1b8bbcd1210d06ee2ac"
+    }
+  }
+}
