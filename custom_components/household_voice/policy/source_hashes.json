@@ -5,7 +5,7 @@
       "source": "generated"
     },
     "media.py": {
-      "sha256": "d478539d3e649724c2e79bc703dea01d105fc7f45097f68b0b3a47ec8b612f05",
+      "sha256": "0444c7828a8a6d6ca3e102d8a1e8947a21f958deedbaaf6035712a3fba6a50d1",
       "source": "household_voice/media.py"
     },
     "routing.py": {

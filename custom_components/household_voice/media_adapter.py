@@ -66,14 +66,20 @@ def _item(raw, expected=None, depth=0):
     match = (METADATA_URI if depth else URI).fullmatch(uri)
     if not match or match[1].lower() in ('http', 'https', 'file', 'ftp', 'data', 'javascript') or match[2]!=kind or (expected and kind!=expected):
         raise MediaAdapterError('Catalog URI/type mismatch')
-    _text(raw.get('version'), empty=True)
+    version = _text(raw.get('version'), empty=True)
     name = _text(raw.get('name'), 512)
+    # HA returns album editions separately from their title. Keep the original
+    # name as an alias for exact requests, but preserve the edition as visible
+    # catalog data for soundtrack matching and meaningful version choices.
+    title = f'{name} ({version})' if kind == 'album' and depth == 0 and version and version.casefold() not in name.casefold() else name
+    _text(title, 512)
     artists = raw.get('artists', [])
     if not isinstance(artists, list) or len(artists)>32:
         raise MediaAdapterError('Malformed artists')
     names = tuple(_item(a, 'artist', depth+1)['title'] for a in artists)
     album = _item(raw['album'], 'album', depth+1)['title'] if raw.get('album') is not None else None
-    return dict(uri=uri, title=name, media_type=kind, provider=match[1], artists=names, album=album)
+    return dict(uri=uri, title=title, media_type=kind, provider=match[1], artists=names, album=album,
+                aliases=(name,) if title != name else ())
 
 
 def _provider_item(raw, kind, provider):
@@ -582,6 +588,11 @@ class MusicAssistantAdapter:
             if name=='music_assistant.play_media':
                 required = {'media_id', 'media_type', 'username', 'enqueue', 'radio_mode'}
                 selected = result.get('selected', {})
+                if 'shuffle' in data:
+                    if (data['shuffle'] is not True or selected.get('media_type') != 'album'
+                            or result.get('spoken_content') is not False or data.get('radio_mode') is not False):
+                        raise MediaAdapterError('Explicit shuffle is only supported for non-spoken albums')
+                    required.add('shuffle')
                 top_tracks = result.get('top_track_uris')
                 expected_id = top_tracks if top_tracks is not None else selected.get('uri')
                 expected_type = 'track' if top_tracks is not None else selected.get('media_type')

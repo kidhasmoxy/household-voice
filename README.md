@@ -5,7 +5,7 @@ playback, recorded announcements, and room speaker configuration. The durable
 coordinator runs inside Home Assistant. No companion app, container, cloud
 account, or paid subscription is required for the core features.
 
-This is the **0.3.10 prerelease**. Automated tests cover implementation
+This is the **0.3.11 prerelease**. Automated tests cover implementation
 contracts; actual microphone capture, speaker delivery, phone presence, firmware,
 and audiobook resume require validation on your equipment. Keep an independent
 alarm available until your installation passes those tests. Home Assistant must
@@ -67,10 +67,16 @@ firmware update, not part of a HACS installation.
   explicitly play their top tracks; clear spelling variations can match ordinary
   music names. Bare exact artist names prefer the provider's first matching
   artist; uncertain spelling and explicit ambiguous selections still ask.
-  Books/stories retain exact matching.
+  Soundtrack requests select albums with soundtrack metadata; conflicting editions
+  still ask for a choice. Explicit shuffle uses native Music Assistant album
+  playback so shuffle survives loading. Simple named-room destinations resolve
+  through configured Home Assistant areas. Books/stories retain exact matching.
   Simple named music and genre requests bypass the language model while retaining
-  the same profile, room, and catalog guards. Five seconds to playback is the
-  target, not a provider or microphone-to-speaker latency guarantee.
+  the same profile, room, and catalog guards. Music play tools have a 4.5-second
+  foreground response budget including lock wait; a stalled provider produces a
+  prompt failure or uncertain-playback response, without automatic retry. Books
+  retain their preparation allowance. Five seconds to audible playback remains
+  the target, not a provider or microphone-to-speaker latency guarantee.
   Autoplay is disabled before finite replacements and spoken resume. On MA 2.10.6
   an already-running refill can still append after disable; no public cancellation
   barrier is available, so seamless switching during refill remains a beta limit.

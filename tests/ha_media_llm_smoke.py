@@ -302,6 +302,207 @@ class MediaLLMTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result.data['reason'], 'media_unavailable_or_result_uncertain')
         self.assertNotIn('playback_dispatch_started', result.data)
 
+    async def test_music_lookup_deadline_has_no_mutations_and_caches_failure(self):
+        cancelled = asyncio.Event()
+        async def slow_search(*args, **kwargs):
+            try:
+                await asyncio.sleep(1)
+            finally:
+                cancelled.set()
+        self.services.async_call = slow_search
+        args = {'query':'Adele', 'kind':'music'}
+        start = asyncio.get_running_loop().time()
+        with patch.object(module, 'MUSIC_FOREGROUND_SECONDS', .1):
+            result = await self.call(args=args, call_id='slow-lookup')
+        self.assertLess(asyncio.get_running_loop().time() - start, .5)
+        self.assertTrue(cancelled.is_set())
+        self.assertEqual(result.data['reason'], 'media_provider_timeout')
+        self.assertEqual(result.data['timeout_phase'], 'catalog_lookup')
+        self.assertFalse(result.data['mutation_dispatch_started'])
+        self.assertFalse(result.data['playback_dispatch_started'])
+        self.assertNotIn('announcement', result.data)
+        self.assertEqual((await self.call(args=args, call_id='slow-lookup')).data, result.data)
+
+    async def test_artist_dependency_timeout_preserves_nonsecret_phase(self):
+        self.assertEqual(module.MUSIC_FOREGROUND_SECONDS, 4.5)
+        self.services.search_result = search(item('Adele','artist','fixture://artist/1'),'artists')
+        async def slow_candidates(guard, *args):
+            guard.phase = 'artist_search'
+            await asyncio.sleep(1)
+        with patch.object(module._GuardedServices, 'async_read_artist_candidates', slow_candidates), \
+             patch.object(module, 'MUSIC_FOREGROUND_SECONDS', .1):
+            result = await self.call(args={'query':'Adele','kind':'music'})
+        self.assertEqual(result.data['reason'], 'media_provider_timeout')
+        self.assertEqual(result.data['timeout_phase'], 'artist_search')
+        self.assertEqual([c[1] for c in self.services.calls], ['search'])
+
+    async def test_music_deadline_includes_lock_wait_and_never_replays_timed_out_waiter(self):
+        args = {'query':'Adele', 'kind':'music'}
+        await self.api.call_lock.acquire()
+        try:
+            with patch.object(module, 'MUSIC_FOREGROUND_SECONDS', .1):
+                result = await self.call(args=args, call_id='waiting')
+        finally:
+            self.api.call_lock.release()
+        self.assertEqual(result.data['reason'], 'media_provider_timeout')
+        self.assertEqual(result.data['timeout_phase'], 'waiting_for_media_lock')
+        self.assertEqual(self.services.calls, [])
+        self.assertEqual((await self.call(args=args, call_id='waiting')).data, result.data)
+        self.assertEqual(self.services.calls, [])
+
+    async def test_music_lock_wait_does_not_reset_lookup_budget(self):
+        async def slow_search(*args, **kwargs): await asyncio.sleep(1)
+        self.services.async_call = slow_search
+        await self.api.call_lock.acquire()
+        start = asyncio.get_running_loop().time()
+        with patch.object(module, 'MUSIC_FOREGROUND_SECONDS', .15):
+            task = asyncio.create_task(self.call(args={'query':'Adele','kind':'music'}))
+            await asyncio.sleep(.08)
+            self.api.call_lock.release()
+            result = await task
+        self.assertEqual(result.data['timeout_phase'], 'catalog_lookup')
+        self.assertLess(asyncio.get_running_loop().time() - start, .21)
+
+    async def test_music_dispatch_and_queue_control_share_fixed_budget(self):
+        self.entry.options.update(live_actions_enabled=True, media_enabled=True)
+        self.services.search_result = search(item('Fixture Playlist','playlist','library://playlist/1'),'playlists')
+        original_call = self.services.async_call
+        for slow_service, phase, played in [('shuffle_set','queue_control',False), ('play_media','playback_dispatch',True)]:
+            async def slow(domain, service, data, **kwargs):
+                result = await original_call(domain, service, data, **kwargs)
+                if service == slow_service:
+                    await asyncio.sleep(1)
+                return result
+            self.services.async_call = slow
+            start = asyncio.get_running_loop().time()
+            with patch.object(module, 'MUSIC_FOREGROUND_SECONDS', .1):
+                result = await self.call(args={'query':'Fixture Playlist','kind':'music'}, call_id=slow_service)
+            self.assertLess(asyncio.get_running_loop().time() - start, .5)
+            self.assertEqual(result.data['reason'], 'media_playback_pending_or_uncertain')
+            self.assertEqual(result.data['timeout_phase'], phase)
+            self.assertTrue(result.data['mutation_dispatch_started'])
+            self.assertEqual(result.data['playback_dispatch_started'], played)
+            self.assertFalse(result.data['playback_confirmed'])
+            self.assertNotIn('announcement', result.data)
+            self.assertFalse(self.api.call_lock.locked())
+
+    async def test_external_cancellation_keeps_reservation_and_duplicate_cannot_cancel_original(self):
+        entered = asyncio.Event()
+        async def slow_search(*args, **kwargs):
+            entered.set()
+            await asyncio.sleep(10)
+        self.services.async_call = slow_search
+        args = {'query':'Adele','kind':'music'}
+        first = asyncio.create_task(self.call(args=args, call_id='cancelled'))
+        await entered.wait()
+        duplicate = asyncio.create_task(self.call(args=args, call_id='cancelled'))
+        await asyncio.sleep(0)
+        duplicate.cancel()
+        with self.assertRaises(asyncio.CancelledError): await duplicate
+        self.assertFalse(first.done())
+        first.cancel()
+        with self.assertRaises(asyncio.CancelledError): await first
+        result = await self.call(args=args, call_id='cancelled')
+        self.assertEqual(result.data['reason'], 'media_result_uncertain')
+        self.assertFalse(self.api.pending)
+        self.assertFalse(self.api.call_lock.locked())
+
+    async def test_duplicate_deadline_does_not_cancel_or_replay_original(self):
+        entered = asyncio.Event()
+        async def slow_search(*args, **kwargs):
+            entered.set()
+            await asyncio.sleep(10)
+        self.services.async_call = slow_search
+        args = {'query':'Adele','kind':'music'}
+        first = asyncio.create_task(self.call(args=args, call_id='in-flight'))
+        await entered.wait()
+        with patch.object(module, 'MUSIC_FOREGROUND_SECONDS', .1):
+            duplicate = await self.call(args=args, call_id='in-flight')
+        self.assertEqual(duplicate.data['timeout_phase'], 'waiting_for_existing_call')
+        self.assertFalse(first.done())
+        self.assertEqual(len(self.api.pending), 1)
+        first.cancel()
+        with self.assertRaises(asyncio.CancelledError): await first
+        self.assertFalse(self.api.pending)
+
+    async def test_pending_reservations_are_bounded_and_survive_completed_cache_churn(self):
+        future = asyncio.get_running_loop().create_future()
+        self.api.pending['active'] = (('signature','config'), future)
+        for index in range(300):
+            self.api.complete_call(f'complete-{index}', ('signature','config'), {'status':'dry_run'}, False)
+        self.assertEqual(len(self.api.completed), 256)
+        self.assertIs(self.api.pending['active'][1], future)
+        for index in range(255):
+            self.api.pending[f'pending-{index}'] = (('signature','config'), asyncio.get_running_loop().create_future())
+        result = await self.call(args={'query':'Adele','kind':'music'})
+        self.assertEqual(result.data['timeout_phase'], 'media_admission')
+        self.assertEqual(len(self.api.pending), 256)
+        self.assertEqual(self.services.calls, [])
+
+    async def test_shuffle_matilda_soundtrack_uses_album_and_explicit_shuffle(self):
+        self.entry.options.update(live_actions_enabled=True, media_enabled=True)
+        title = "Roald Dahl's Matilda The Musical (Soundtrack from the Netflix Film)"
+        self.services.search_result = search(item(title, 'album', 'fixture://album/matilda'), 'albums')
+        self.context.user_prompt = 'Shuffle the Matilda soundtrack.'
+        self.context.language = 'en'
+        mode = await fixture_queue_mode(None, PLAYER)
+        commands = []
+        async def read_mode(guard, player): return deepcopy(mode)
+        async def authorize(guard, uri):
+            self.assertEqual(uri, 'fixture://album/matilda')
+            return True
+        async def send(command, **args):
+            commands.append((command, args))
+            mode['shuffle_enabled'] = True
+        helper = types.ModuleType('homeassistant.components.music_assistant.helpers')
+        helper.get_music_assistant_client = lambda hass, entry: types.SimpleNamespace(send_command=send)
+        # Even a model dropping soundtrack or shuffle cannot lose these explicit
+        # parts of the original request on this recognized route.
+        with patch.dict(sys.modules, {'homeassistant.components.music_assistant.helpers':helper}), \
+                patch.object(module._GuardedServices, 'async_read_queue_mode', read_mode), \
+                patch.object(module._GuardedServices, 'async_authorize_provider_uri', authorize):
+            result = await self.call(args={'query':'Matilda', 'kind':'music'})
+        self.assertEqual(result.data['status'], 'action_accepted')
+        self.assertEqual(result.data['selected']['title'], title)
+        self.assertFalse(any(service == 'play_media' for _, service, _, _ in self.services.calls))
+        self.assertEqual(commands, [('player_queues/play_media', {
+            'queue_id':'fixture-queue', 'media':['fixture://album/matilda'],
+            'option':'replace', 'radio_mode':False, 'shuffle':True,
+            'user':'configured-user', 'require_schema':35})])
+
+    async def test_native_shuffled_album_rejects_unauthorized_uri_and_queue_change(self):
+        signature = module._resolve(self.hass, self.entry, self.context, 'kitchen')[2]
+        data = {'entity_id':PLAYER, 'media_id':'fixture://album/matilda', 'media_type':'album',
+                'username':'configured-user', 'enqueue':'replace', 'radio_mode':False, 'shuffle':True}
+        for scenario in ('denied', 'changed_queue', 'wrong_user', 'wrong_target', 'book'):
+            guard = module._GuardedServices(self.api, self.context, 'kitchen', signature)
+            current = deepcopy(data)
+            if scenario == 'wrong_user': current['username'] = 'other'
+            if scenario == 'wrong_target': current['entity_id'] = 'media_player.other'
+            if scenario == 'book': current['media_type'] = 'audiobook'
+            reads = 0
+            async def read_mode(player):
+                nonlocal reads
+                reads += 1
+                mode = await fixture_queue_mode(None, PLAYER)
+                if scenario == 'changed_queue' and reads > 1: mode['queue_id'] = 'other'
+                return mode
+            async def authorize(uri): return scenario != 'denied'
+            guard.async_read_queue_mode, guard.async_authorize_provider_uri = read_mode, authorize
+            with self.assertRaises(module.MediaConfigurationError):
+                await guard.async_play_shuffled_album(current)
+            self.assertFalse(guard.playback_dispatch_started)
+
+    async def test_shuffle_is_a_play_option_and_cannot_shuffle_a_book(self):
+        self.entry.options.update(live_actions_enabled=True, media_enabled=True)
+        self.services.search_result = search()
+        result = await self.call(args={'query':'Fixture Book', 'kind':'book', 'shuffle':True})
+        self.assertEqual(result.data['status'], 'action_accepted')
+        self.assertTrue(any(service == 'shuffle_set' and data.get('shuffle') is False
+                            for _, service, data, _ in self.services.calls))
+        self.assertFalse(any(service == 'shuffle_set' and data.get('shuffle') is True
+                             for _, service, data, _ in self.services.calls))
+
     async def test_default_sleep_playlist_context_factory(self):
         self.services.search_result = search(item("Configured Sleep Playlist", "playlist", "library://playlist/12"), "playlists")
         result = await self.call(args={"kind": "sleep_stories"})
@@ -388,7 +589,7 @@ class MediaLLMTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result.data['status'], 'action_accepted')
         self.assertEqual(result.data['playback_kind'], 'artist_top_tracks')
         self.assertEqual(result.data['track_count'], 1)
-        self.assertEqual(result.data['announcement'], 'Playing top tracks by Fleetwood Mac.')
+        self.assertEqual(result.data['announcement'], 'Requested top tracks by Fleetwood Mac.')
         self.assertEqual(calls, [('music/search', {'search_query':'Fleetwood Mac', 'media_types':['artist'],
             'providers':['library','fixture'], 'limit':20, 'user':'configured-user','require_schema':35}),
             ('music/verify_item_uri', {'uri':'fixture://artist/7','user':'configured-user','require_schema':35}),
@@ -431,7 +632,7 @@ class MediaLLMTests(unittest.IsolatedAsyncioTestCase):
             with scope_module.bind_request('Put on some jazz.', 'en', self.context.context, self.context.device_id):
                 result = await self.call(args={'query':'jazz'})
         self.assertEqual(result.data['status'], 'action_accepted')
-        self.assertEqual(result.data['announcement'], 'Playing Fixture Instrumental, with more music to follow.')
+        self.assertEqual(result.data['announcement'], 'Requested Fixture Instrumental, with more music to follow.')
         self.assertEqual(calls, [('music/search', {'search_query':'jazz','media_types':['track'],
             'providers':['library','fixture-instance'],'limit':20,'user':'configured-user','require_schema':35}),
             ('music/verify_item_uri', {'uri':'fixture-instance://track/9','user':'configured-user','require_schema':35}),
@@ -490,7 +691,7 @@ class MediaLLMTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.services.calls[0][2]['media_type'], ['playlist','radio'])
         self.assertEqual(self.services.calls[-1][2]['entity_id'], PLAYER)
         self.assertEqual(self.services.calls[-1][2]['media_id'], 'apple_music--fixture://playlist/pl.fixture')
-        self.assertEqual(result.data['announcement'], 'Playing Jazz Chill.')
+        self.assertEqual(result.data['announcement'], 'Requested Jazz Chill.')
 
     async def test_router_original_named_request_overrides_provider_prompt(self):
         self.context.user_prompt = 'Play some jazz.'
@@ -884,7 +1085,7 @@ async def real_ha_smoke():
             assert calls[-1]['media_type']==['playlist','radio']
             assert actions[-1][2]['entity_id']==player.entity_id
             assert actions[-1][2]['media_id']=='apple_music--fixture://playlist/pl.fixture'
-            assert jazz.data['announcement'] == 'Playing Jazz Chill.'
+            assert jazz.data['announcement'] == 'Requested Jazz Chill.'
             # Real HA registries, LLM schema and action dispatch around a mocked
             # native MA client; no network or physical music is used in CI.
             raw_calls = []
@@ -909,11 +1110,42 @@ async def real_ha_smoke():
                 artist_result = await instance.async_call_tool(llm.ToolInput(tool_name=module.NAMES[0],
                     tool_args={'query':'Fleetwood Mac','media_type':'artist'}, id='artist-top-tracks'))
             assert artist_result.data['status'] == 'action_accepted' and len(actions) == 9
-            assert artist_result.data['announcement'] == 'Playing top tracks by Fleetwood Mac.'
+            assert artist_result.data['announcement'] == 'Requested top tracks by Fleetwood Mac.'
             assert raw_calls[0][1]['user'] == 'configured-user'
             assert raw_calls[0][1]['providers'] == ['library','fixture-instance']
             assert raw_calls[2][1]['provider_filter'] == 'fixture-instance'
             assert actions[-1][2]['media_id'] == ['fixture-instance://track/9']
+            async def soundtrack_search(call):
+                assert call.data['name'] == 'Matilda' and call.data['media_type'] == ['album']
+                return search(item("Matilda (Original Motion Picture Soundtrack)", 'album',
+                    'fixture-instance://album/matilda'), 'albums')
+            hass.services.async_register('music_assistant', 'search', soundtrack_search,
+                supports_response=SupportsResponse.ONLY)
+            shuffled = False
+            native_album_calls = []
+            async def album_queue(guard, entity):
+                state = await fixture_queue_mode(guard, entity)
+                state['shuffle_enabled'] = shuffled
+                return state
+            async def album_command(command, **kwargs):
+                nonlocal shuffled
+                native_album_calls.append((command, kwargs))
+                if command == 'music/verify_item_uri': return True
+                assert command == 'player_queues/play_media'
+                shuffled = True
+            helper.get_music_assistant_client = lambda ha, entry_id: types.SimpleNamespace(send_command=album_command)
+            with patch.dict(sys.modules, {'homeassistant.components.music_assistant.helpers':helper}), \
+                    patch.object(module._GuardedServices, 'async_read_queue_mode', album_queue), \
+                    scope_module.bind_request('Shuffle the Matilda soundtrack in the living room.',
+                        'en', context.context, context.device_id):
+                soundtrack = await instance.async_call_tool(llm.ToolInput(tool_name=module.NAMES[0],
+                    tool_args={'query':'Matilda soundtrack','media_type':'album','shuffle':True,
+                               'target_room':'Living Room'}, id='shuffled-soundtrack'))
+            assert soundtrack.data['status'] == 'action_accepted' and len(actions) == 9
+            assert native_album_calls[-1] == ('player_queues/play_media', {
+                'queue_id':'fixture-queue', 'media':['fixture-instance://album/matilda'],
+                'option':'replace', 'radio_mode':False, 'shuffle':True,
+                'user':'configured-user', 'require_schema':35})
             unregister()
             assert api_id not in {api.id for api in llm.async_get_apis(hass)}
             print(json.dumps({"ha_version": __version__, "real_ha_media_llm_runtime": True, "registry_ownership_validated": True,
@@ -924,6 +1156,7 @@ async def real_ha_smoke():
                 "ha_area_name_resolves_legacy_room_id": True,
                 "router_bound_promptless_broad_music_with_nested_metadata": True,
                 "profile_scoped_artist_top_tracks_with_mock_native_client": True,
+                "shuffled_soundtrack_native_play_keeps_profile_and_shuffle": True,
                 "physical_actions": False, "live_ha_contacted": False, "real_ma_contacted": False}, sort_keys=True), flush=True)
         finally:
             queue_patch.stop()

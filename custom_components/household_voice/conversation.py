@@ -9,12 +9,13 @@ from homeassistant.util import ulid as ulid_util
 
 from .const import DOMAIN
 from .conversation_router import (acknowledgement, broad_music_query, command,
-                                  inline_announcement, music_acknowledgement, named_music_query)
+                                  inline_announcement, music_acknowledgement, named_music_query,
+                                  qualified_music_request)
 from .intent_scope import bind_request
 from .knowledge_router import knowledge_question
 from .knowledge_policy import family_prompt
 from . import knowledge_llm
-from .media_llm import _MUSIC_STYLES
+from .media_llm import _MUSIC_STYLES, _resolve as resolve_media_room
 from .schedule_control import get_schedule_control
 
 _ACTIVE_ROUTERS = ContextVar('household_voice_active_conversation_routers', default=frozenset())
@@ -101,15 +102,22 @@ class HouseholdConversationRouter(conversation.ConversationEntity):
         """Use the registered media API's source/configuration/idempotency guards."""
         if not self._trusted_source(user_input):
             return self._reply(user_input, 'Use a configured voice assistant to play music in its room.')
+        arguments = {'kind':'music', **(query if isinstance(query, dict) else {'query':query})}
+        context = user_input.as_llm_context(DOMAIN)
+        if target := arguments.get('target_room'):
+            try:
+                _, room, _, _ = resolve_media_room(self.hass, self.entry, context, target)
+                arguments['target_room'] = room['room_id']
+            except Exception:
+                return self._reply(user_input, 'I could not match that room to a configured music speaker. Check the room name and speaker pairing.')
         call_id = 'ha-router-media-' + hashlib.sha256(json.dumps([
-            self.entry.entry_id, user_input.context.id, user_input.device_id, query
-        ]).encode()).hexdigest()
+            self.entry.entry_id, user_input.context.id, user_input.device_id, arguments
+        ], sort_keys=True).encode()).hexdigest()
         try:
             with bind_request(user_input.text, user_input.language, user_input.context, user_input.device_id):
-                context = user_input.as_llm_context(DOMAIN)
                 api = await llm.async_get_api(self.hass, 'household_voice_media_' + self.entry.entry_id, context)
                 result = await api.async_call_tool(llm.ToolInput(tool_name='household_media_play',
-                    tool_args={'kind': 'music', 'query': query}, id=call_id))
+                    tool_args=arguments, id=call_id))
                 data = result.data if hasattr(result, 'data') else result
         except Exception:
             data = {'status': 'error'}
@@ -118,6 +126,7 @@ class HouseholdConversationRouter(conversation.ConversationEntity):
         if isinstance(data, dict):
             evidence = {key: data[key] for key in ('status', 'reason', 'executed',
                 'playback_confirmed', 'retry_automatically', 'playback_dispatch_started',
+                'mutation_dispatch_started', 'timeout_phase',
                 'playback_kind', 'track_count', 'actions_issued') if key in data}
             if isinstance(data.get('selected'), dict):
                 evidence['selected'] = {key: data['selected'][key]
@@ -167,6 +176,8 @@ class HouseholdConversationRouter(conversation.ConversationEntity):
                     result.conversation_id=selection['conversation_id']
                 result.continue_conversation=selection['continue_conversation']
                 return result
+            if (request := qualified_music_request(user_input.text, user_input.language, _MUSIC_STYLES)) is not None:
+                return await self._media_reply(user_input, request)
             if (query := broad_music_query(user_input.text, user_input.language, _MUSIC_STYLES)) is not None:
                 return await self._media_reply(user_input, query)
             if (query := named_music_query(user_input.text, user_input.language)) is not None:

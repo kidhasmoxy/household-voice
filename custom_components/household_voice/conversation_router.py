@@ -30,12 +30,20 @@ def music_acknowledgement(result):
             return announcement
         return 'I sent your music request to the speaker.'
     if reason == 'media_playback_pending_or_uncertain':
+        if result.get('mutation_dispatch_started') and not result.get('playback_dispatch_started'):
+            return "Music Assistant took too long. I couldn't confirm your request."
         return "Music Assistant may still be preparing playback. I couldn't confirm that it started."
+    if reason == 'media_provider_timeout':
+        return 'Music Assistant took too long to find the music. No playback was requested.'
+    if reason == 'media_result_uncertain':
+        return "I couldn't confirm the earlier music request."
     if status == 'dry_run':
         return 'Enable music playback and live actions in Household Voice settings to play music.'
     if reason in ('verified_source_and_media_configuration_required', 'invalid_player_mapping',
                   'profile_required', 'player_unavailable'):
         return 'Check this assistant\'s speaker and Music Assistant settings in Household Voice.'
+    if reason == 'no_relevant_soundtrack':
+        return 'I could not find that soundtrack. Please name the film, show, or soundtrack version.'
     if reason in ('no_relevant_music_collection', 'no_exact_catalog_match'):
         return 'I could not find a matching playlist or station. Please name a playlist or station.'
     if status == 'clarify':
@@ -72,6 +80,70 @@ def named_music_query(text, language='en'):
             or query.casefold() in ('music', 'some music', 'something', 'anything', 'it', 'that', 'more')):
         return None
     return query
+
+
+def qualified_music_request(text, language='en', styles=()):
+    """Extract explicit soundtrack, shuffle and room-qualified music requests.
+
+    A returned room is only a literal name, never an entity or guessed area ID.
+    The caller must resolve it through the trusted media room registry before
+    dispatch. Unsupported commands and compound requests remain uninterpreted.
+    """
+    if (not isinstance(text, str) or len(text) > 512 or not isinstance(language, str)
+            or language.lower().split('-')[0] != 'en'):
+        return None
+    value = ' '.join(text.split()).rstrip('.!?')
+    value = re.sub(r'^(?:(?:um|uh|erm)[.,]?\s+){1,2}', '', value, flags=re.I)
+    match = re.fullmatch(r'(?:please )?(?:(?:can|could|would) you (?:please )?)?'
+        r'(?P<verb>play me|play|put on|let me hear|shuffle) (?P<body>.+?)(?: please)?', value, re.I)
+    if not match:
+        return None
+    body = match['body']
+    if (re.search(r'[;:!?"“”]', body)
+            or re.search(r'\b(?:and|then)\s+(?:play|shuffle|turn|set|stop|pause|resume|'
+                         r'announce|broadcast|open|close|lock|unlock|send|make)\b', body, re.I)):
+        return None
+    shuffle = match['verb'].casefold() == 'shuffle'
+    if re.search(r' on shuffle$', body, re.I):
+        body = re.sub(r' on shuffle$', '', body, flags=re.I)
+        shuffle = True
+    soundtrack = re.fullmatch(r'(?:the )?(?P<title>.+?) (?:music )?soundtrack'
+        r'(?P<shuffle> on shuffle)?(?: in (?:the )?(?P<room>.+))?', body, re.I)
+    target = None
+    if soundtrack:
+        title = soundtrack['title']
+        if named_music_query('play ' + title, language) is None:
+            return None
+        request = {'query':title + ' soundtrack', 'media_type':'album'}
+        shuffle = shuffle or bool(soundtrack['shuffle'])
+        target = soundtrack['room']
+    else:
+        # Do not reinterpret a malformed soundtrack request as a bare artist.
+        if re.search(r'\bsoundtrack\b', body, re.I):
+            return None
+        destination = re.fullmatch(r'(?P<title>.+?) in (?:the )?(?P<room>.+)', body, re.I)
+        if destination:
+            body, target = destination['title'], destination['room']
+        if not shuffle and target is None:
+            return None
+        typed = re.fullmatch(r'(?:the )?(album|playlist|artist|band|song|track) (.+)', body, re.I)
+        if typed:
+            media_type = {'band':'artist','song':'track'}.get(typed[1].casefold(), typed[1].casefold())
+            query = named_music_query('play ' + typed[2], language)
+            request = {'query':query, 'media_type':media_type}
+        else:
+            query = broad_music_query('play ' + body, language, styles) or named_music_query('play ' + body, language)
+            request = {'query':query}
+        if not query:
+            return None
+    if target is not None:
+        if (not 1 <= len(target) <= 80 or re.search(r'[^\w\s\-\'&]', target)
+                or re.search(r'\b(?:and|then|everywhere|all rooms)\b', target, re.I)):
+            return None
+        request['target_room'] = target
+    if shuffle:
+        request['shuffle'] = True
+    return request
 
 
 COMMANDS = {

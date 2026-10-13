@@ -225,6 +225,33 @@ def _spoken_actions(player):
             _action('media_player.repeat_set', player, repeat='off')]
 
 
+def _soundtrack_query(request):
+    """Recognize an explicit soundtrack category without guessing an edition."""
+    if request.kind != 'music' or request.operation != 'play' or request.media_type not in (None, 'album'):
+        return None
+    match = re.fullmatch(r'(?:the\s+)?(.+?)\s+(?:music\s+)?soundtrack', request.query.strip(), re.I)
+    return match[1].strip() if match else None
+
+
+def _soundtrack_rank(query, item):
+    """Prefer an actual soundtrack over a cast recording, excluding spoken/cover media."""
+    if item.media_type != 'album' or not item.available or item.spoken_content:
+        return None
+    names = (item.title, *item.aliases)
+    metadata = ' '.join(names).casefold()
+    if any(marker in metadata for marker in ('calm kids', 'sleep stor', 'bedtime stor',
+            'audiobook', 'podcast', 'karaoke', 'tribute', 'cover version', 'lullab')):
+        return None
+    required = set(re.findall(r'\w+', query.casefold()))
+    if not required or not any(required <= set(re.findall(r'\w+', name.casefold())) for name in names):
+        return None
+    if re.search(r'\bsoundtrack\b', metadata):
+        return 0
+    if re.search(r'\b(?:original\s+)?(?:broadway\s+|london\s+)?cast\s+recording\b', metadata):
+        return 1
+    return None
+
+
 def _intent(request, context):
     query = request.query.strip()
     generic_story = request.kind in ('music', 'sleep_story', 'sleep_stories') and _normal(query) in STORY_ALIASES
@@ -236,6 +263,8 @@ def _intent(request, context):
     if fixed_type and not generic_story and request.media_type not in (None, fixed_type):
         return None
     types = (fixed_type,) if fixed_type else ((request.media_type,) if request.media_type else ('track', 'album', 'artist', 'playlist', 'radio'))
+    if soundtrack_query := _soundtrack_query(request):
+        query, types = soundtrack_query, ('album',)
     if request.selection_mode == 'broad_music':
         if generic_story:
             return None
@@ -314,6 +343,7 @@ def plan_media(request: MediaRequest, registry: RoomRegistry, context: MediaCont
     if intent is None:
         return _result('clarify', 'content_type_conflict', question='Which kind of content did you mean?', **target)
     query, types, spoken = intent
+    soundtrack = _soundtrack_query(request) is not None
     broad = request.selection_mode == 'broad_music'
     if broad and spoken:
         return _result('clarify', 'content_type_conflict', question='Which book or story would you like?', **target)
@@ -338,7 +368,17 @@ def plan_media(request: MediaRequest, registry: RoomRegistry, context: MediaCont
                 and (not album or _normal(i.album or '')==_normal(album))}
     artist_preferred = False
     artist_ranked = False
-    if broad:
+    if soundtrack:
+        ranked = [(rank, item) for item in eligible.values()
+                  if (rank := _soundtrack_rank(query, item)) is not None]
+        if request.selected_uri:
+            matches = [item for _, item in ranked if item.uri == request.selected_uri]
+            if not matches:
+                return _result('clarify', 'selection_not_in_catalog', question='Please choose one of the soundtrack results.', **target)
+        else:
+            best = min((rank for rank, _ in ranked), default=None)
+            matches = [item for rank, item in ranked if rank == best]
+    elif broad:
         # This is a recommendation, not an attempt to disambiguate an exact title.
         # The MA adapter preserves search order within collection result groups.
         relevant = [i for i in eligible.values() if _broad_match(query, i)]
@@ -372,10 +412,10 @@ def plan_media(request: MediaRequest, registry: RoomRegistry, context: MediaCont
         # Results without an exact match, relevant broad collection, or clear
         # music-only spelling winner remain suggestions, even if only one exists.
         options = sorted(eligible.values(), key=lambda i: (_normal(i.title), i.provider, i.uri))
-        return _result('clarify', 'no_relevant_music_collection' if broad else 'no_exact_catalog_match',
+        return _result('clarify', 'no_relevant_soundtrack' if soundtrack else 'no_relevant_music_collection' if broad else 'no_exact_catalog_match',
                        question='Which music playlist or station would you like?' if broad else 'Which catalog result did you mean?',
                        choices=[_choice(i) for i in options[:5]], candidate_count=len(options), **target)
-    confident_music = (request.kind == 'music' and not spoken
+    confident_music = (request.kind == 'music' and not spoken and not soundtrack
                        and matches == _music_recommendation(query, eligible.values()))
     if (request.media_type is None and len(matches) == 1 and matches[0].media_type == 'artist'
             and not catalog.complete and 'artist' not in catalog.complete_media_types):
@@ -390,10 +430,17 @@ def plan_media(request: MediaRequest, registry: RoomRegistry, context: MediaCont
     spoken = spoken or item.spoken_content or item.media_type=='audiobook'
     if request.radio_mode and not spoken and (item.media_type=='radio' or not item.radio_mode_supported):
         return _result('unavailable', 'radio_mode_unsupported', selected=_choice(item), **target)
-    actions = _spoken_actions(player) if spoken else [_action('media_player.shuffle_set', player, shuffle=request.shuffle)]
+    shuffled_album = request.shuffle and not spoken and item.media_type == 'album'
+    # MA treats albums as ordered and overrides a preceding shuffle_set unless
+    # shuffle=True is passed on its native play command. The guarded HA adapter
+    # handles this supported native path; it must not pass this field to HA's
+    # play_media service, whose schema does not support it.
+    actions = _spoken_actions(player) if spoken else ([] if shuffled_album else
+        [_action('media_player.shuffle_set', player, shuffle=request.shuffle)])
     actions.append(_action('music_assistant.play_media', player, media_id=item.uri, media_type=item.media_type,
-                           username=context.username, enqueue='replace', radio_mode=False if spoken else request.radio_mode))
-    return _result('ready', 'provider_ranked_artist_selected' if artist_ranked else
+                           username=context.username, enqueue='replace', radio_mode=False if spoken else request.radio_mode,
+                           **({'shuffle': True} if shuffled_album else {})))
+    return _result('ready', 'soundtrack_album_selected' if soundtrack else 'provider_ranked_artist_selected' if artist_ranked else
                    'broad_music_collection_selected' if broad else 'catalog_item_selected',
                    actions=actions, selected=_choice(item), spoken_content=spoken,
                    autoplay_enabled=False,

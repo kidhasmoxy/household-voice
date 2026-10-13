@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.3.11
+
+Soundtrack requests resolve albums using soundtrack/cast metadata, while preserving
+edition ambiguity and excluding spoken excerpts. Simple room-qualified requests
+and explicit shuffle run through the guarded direct route, including brief speech
+fillers. Shuffled albums use Music Assistant's native play option so album loading
+does not silently switch shuffle off. URI, configured user, and active queue are
+revalidated before native playback.
+
+Music play requests have a 4.5-second foreground tool budget, including waiting
+for another media call. A provider timeout before an action is reported promptly;
+once an action has been sent, the result is uncertain and never automatically
+retried. This is a response bound, not a guarantee that a provider starts audible
+music in five seconds. Microphone, speech recognition, and a separate LLM route
+are outside this tool budget. Books retain their existing preparation allowance.
+
 ## 0.3.10
 
 Bare exact artist names use the first available artist in the provider-ranked

@@ -129,6 +129,7 @@ async def verify_router(hass, entry):
     from custom_components.household_voice.intent_scope import trusted_request_text
     from custom_components.household_voice.llm_compat import tool_result
     media_calls = []
+    current_music_arguments = None
     media_result = {'status':'action_accepted','executed':True,'playback_confirmed':False,
         'announcement':'Playing Fixture Jazz.', 'selected':{'uri':'fixture://playlist/1',
         'title':'Fixture Jazz','media_type':'playlist','provider':'fixture'}}
@@ -136,7 +137,7 @@ async def verify_router(hass, entry):
         assert actual_hass is hass
         assert llm_context.context is context and llm_context.device_id == device.id
         assert trusted_request_text(llm_context) == (current_music_text, 'en')
-        assert tool_input.tool_args == {'kind':'music','query':current_music_query}
+        assert tool_input.tool_args == (current_music_arguments or {'kind':'music','query':current_music_query})
         assert tool_input.id.startswith('ha-router-media-')
         media_calls.append(tool_input)
         return tool_result(llm, data=deepcopy(media_result), error=media_result['status']=='error')
@@ -154,9 +155,13 @@ async def verify_router(hass, entry):
         disabled = await invoke(current_music_text)
         assert 'Enable music playback' in disabled.response.speech['plain']['speech']
         media_result = {'status':'error','reason':'media_playback_pending_or_uncertain',
-            'executed':False,'retry_automatically':False}
+            'executed':False,'retry_automatically':False,
+            'mutation_dispatch_started':True,'timeout_phase':'playback_dispatch'}
         pending = await invoke(current_music_text)
         assert 'may still be preparing' in pending.response.speech['plain']['speech']
+        timeout = pending.response.speech['plain']['extra_data']['household_media']
+        assert timeout['timeout_phase'] == 'playback_dispatch'
+        assert timeout['mutation_dispatch_started'] is True
         count = len(media_calls)
         missing = await invoke(current_music_text, source=None)
         assert 'configured voice assistant' in missing.response.speech['plain']['speech']
@@ -168,9 +173,31 @@ async def verify_router(hass, entry):
             named = await invoke(current_music_text)
             assert named.response.speech['plain']['speech'] == media_result['announcement']
         assert len(media_calls) == count + 2 and len(fallback.calls) == before
-        for text in ('Play jazz in the Kitchen.', 'Play the album Jazz.'):
-            await invoke(text)
-        assert len(fallback.calls) == before + 2 and len(media_calls) == count + 2
+        for current_music_text, current_music_arguments in [
+            ('shuffle the Matilda soundtrack', {'kind':'music','query':'Matilda soundtrack','media_type':'album','shuffle':True}),
+            ('Um. Play Matilda music soundtrack.', {'kind':'music','query':'Matilda soundtrack','media_type':'album'}),
+            ('play the Matilda soundtrack on shuffle', {'kind':'music','query':'Matilda soundtrack','media_type':'album','shuffle':True}),
+        ]:
+            media_result = {'status':'action_accepted','executed':True,'announcement':'Requested Fixture Soundtrack.'}
+            soundtrack = await invoke(current_music_text)
+            assert soundtrack.response.speech['plain']['speech'] == media_result['announcement']
+            assert len(fallback.calls) == before
+        current_music_text = 'play the Matilda soundtrack in the living room'
+        current_music_arguments = {'kind':'music','query':'Matilda soundtrack','media_type':'album','target_room':'configured-living'}
+        with patch('custom_components.household_voice.conversation.resolve_media_room',
+                return_value=(None, {'room_id':'configured-living'}, 'signature', True)) as resolve_room:
+            soundtrack = await invoke(current_music_text)
+            assert soundtrack.response.speech['plain']['speech'] == media_result['announcement']
+            assert resolve_room.call_args.args[0:2] == (hass,entry)
+            assert resolve_room.call_args.args[2].device_id == device.id
+            assert resolve_room.call_args.args[3] == 'living room'
+        count = len(media_calls)
+        with patch('custom_components.household_voice.conversation.resolve_media_room', side_effect=ValueError('unknown or ambiguous')):
+            rejected = await invoke(current_music_text)
+            assert 'could not match that room' in rejected.response.speech['plain']['speech']
+            assert len(media_calls) == count and len(fallback.calls) == before
+        await invoke('Play the album Jazz.')
+        assert len(fallback.calls) == before + 1 and len(media_calls) == count
     from custom_components.household_voice import llm as schedule_tools
     from custom_components.household_voice.intent_scope import constrain_arguments
     fake_client = SimpleNamespace()
@@ -350,4 +377,6 @@ async def verify_router(hass, entry):
         'no_ringing_stop_delegates_and_explicit_new_timer_delegates':True,
         'broad_music_registered_api_direct_route_and_scoped_result':True,
         'broad_music_no_model_on_success_dryrun_pending_or_missing_source':True,
+        'soundtrack_shuffle_filler_direct_route_preserves_registered_tool_guards':True,
+        'explicit_music_room_requires_resolved_configured_room_and_fails_closed':True,
         'physical_router_audio': False}
