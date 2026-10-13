@@ -9,6 +9,7 @@ from homeassistant.util import ulid as ulid_util
 
 from .const import DOMAIN
 from .conversation_router import acknowledgement, command
+from .intent_scope import bind_request
 
 _ACTIVE_ROUTERS = ContextVar('household_voice_active_conversation_routers', default=frozenset())
 
@@ -84,10 +85,11 @@ class HouseholdConversationRouter(conversation.ConversationEntity):
                     or agent is None or isinstance(agent, HouseholdConversationRouter)):
                 return self._reply(user_input, 'Choose an available fallback conversation agent in Household Voice settings.')
             try:
-                return await conversation.async_converse(self.hass, text=user_input.text,
-                    conversation_id=user_input.conversation_id, context=user_input.context,
-                    language=user_input.language, agent_id=fallback, device_id=user_input.device_id,
-                    satellite_id=user_input.satellite_id, extra_system_prompt=user_input.extra_system_prompt)
+                with bind_request(user_input.text, user_input.language, user_input.context, user_input.device_id):
+                    return await conversation.async_converse(self.hass, text=user_input.text,
+                        conversation_id=user_input.conversation_id, context=user_input.context,
+                        language=user_input.language, agent_id=fallback, device_id=user_input.device_id,
+                        satellite_id=user_input.satellite_id, extra_system_prompt=user_input.extra_system_prompt)
             except Exception:
                 return self._reply(user_input, 'The fallback conversation agent is unavailable. Please try again.')
         finally:

@@ -1,5 +1,5 @@
 """Real HA router lifecycle, delegation and actions with an inert broadcaster."""
-from types import MappingProxyType
+from types import MappingProxyType, SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
 from homeassistant.components import conversation
@@ -7,6 +7,7 @@ from homeassistant.components.conversation.const import DATA_COMPONENT
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import Context
 from homeassistant.helpers import device_registry as dr, intent
+from homeassistant.helpers import llm
 from homeassistant.setup import async_setup_component
 
 
@@ -24,6 +25,7 @@ async def verify_router(hass, entry):
         _attr_unique_id = 'fixture-fallback'
         supported_languages = '*'
         loop_target = None
+        tool_callback = None
 
         def __init__(self):
             self.calls = []
@@ -34,6 +36,8 @@ async def verify_router(hass, entry):
                 return await conversation.async_converse(hass, text=user_input.text,
                     conversation_id=user_input.conversation_id, context=user_input.context,
                     agent_id=self.loop_target, language=user_input.language, device_id=user_input.device_id)
+            if self.tool_callback:
+                await self.tool_callback(user_input)
             response = intent.IntentResponse(language=user_input.language)
             response.async_set_speech('Fixture delegated answer')
             return conversation.ConversationResult(response=response,
@@ -99,6 +103,40 @@ async def verify_router(hass, entry):
         looping = await invoke('Ordinary request')
         assert 'loops back' in looping.response.speech['plain']['speech']
         fallback.loop_target = None
+    from custom_components.household_voice import llm as schedule_tools
+    from custom_components.household_voice.intent_scope import constrain_arguments
+    fake_client = SimpleNamespace()
+    posts = []
+    async def schedules():
+        return {'rooms':[{'id':'test_room','name':'Test room'}], 'schedules':[{
+            'id':'ringing-timer','kind':'timer','label':'Fixture','source_room':'test_room',
+            'target_room':'test_room','state':'ringing','revision':1,'due':1000,'remaining':None}]}
+    async def mutate(service, payload):
+        posts.append(payload)
+        return {'schedule': (await schedules())['schedules'][0]}
+    fake_client.schedules, fake_client.mutate = schedules, mutate
+    fake_coordinator = SimpleNamespace(client=fake_client, async_request_refresh=AsyncMock())
+    api = schedule_tools.HouseholdScheduleAPI(hass, entry, fake_coordinator, clock=lambda:1000)
+    results = []
+    async def omitted_kind_tool(user_input):
+        tool_context = llm.LLMContext(platform='fixture', context=user_input.context,
+            language=user_input.language, assistant='conversation', device_id=user_input.device_id)
+        result = await hass.async_create_task(schedule_tools.ScheduleTool(schedule_tools.NAMES[3], api).async_call(hass,
+            llm.ToolInput(tool_name=schedule_tools.NAMES[3],tool_args={'operation':'stop'},id='scope-'+str(len(results))),tool_context))
+        results.append(result.data if hasattr(result,'data') else result)
+    fallback.tool_callback = omitted_kind_tool
+    await invoke('Stop the ringing alarm')
+    assert results[-1]['status'] == 'clarify' and not posts
+    await invoke('stop')
+    assert results[-1]['status'] == 'stored' and posts[-1]['identifier'] == 'ringing-timer'
+    async def book_constraint(user_input):
+        tool_context = llm.LLMContext(platform='fixture',context=user_input.context,
+            language=user_input.language,assistant='conversation',device_id=user_input.device_id)
+        assert constrain_arguments('media','resume',{},tool_context) == {'kind':'book'}
+    fallback.tool_callback = book_constraint
+    await invoke('Continue my audiobook')
+    fallback.tool_callback = None
+    assert constrain_arguments('media','resume',{},SimpleNamespace(context=context,device_id=device.id)) == {}
     flow = await hass.config_entries.options.async_init(entry.entry_id)
     flow = await hass.config_entries.options.async_configure(flow['flow_id'], {'next_step_id': 'conversation_routing'})
     assert flow['step_id'] == 'conversation_routing'
@@ -126,4 +164,5 @@ async def verify_router(hass, entry):
     return {'router_real_ha_lifecycle_and_options': True,
         'router_commands_call_broadcast_once': True, 'router_delegation_context_and_history_preserved': True,
         'router_missing_source_failure_and_recursion_guarded': True,
-        'phone_presence_options_validated_without_automatic_change': True, 'physical_router_audio': False}
+        'phone_presence_options_validated_without_automatic_change': True,
+        'router_category_scope_prevents_wrong_schedule_and_binds_book_resume': True, 'physical_router_audio': False}

@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.2.6
+
+Clarifies weekday numbering and exact-label schedule selection. Normalizes an
+explicit album playback request without a search query. Adds a scoped constraint
+for whole, simple English alarm/timer stop and book/audiobook resume commands
+while delegating through the router. Matching Household Voice tools fill an
+omitted category or reject conflicting arguments before acting. The constraint
+is bound to the request context and device and is reset after delegation.
+Direct fallback-agent requests and unrecognized wording bypass it; it is not a
+guarantee that the model will invoke a tool or complete playback.
+
 ## 0.2.5
 
 Adds an optional announcement conversation router. Exact start, cancel, and

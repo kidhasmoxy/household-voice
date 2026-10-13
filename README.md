@@ -5,7 +5,7 @@ playback, recorded announcements, and room speaker configuration. The durable
 coordinator runs inside Home Assistant. No companion app, container, cloud
 account, or paid subscription is required for the core features.
 
-This is the **0.2.5 prerelease**. Automated tests cover implementation
+This is the **0.2.6 prerelease**. Automated tests cover implementation
 contracts; actual microphone capture, speaker delivery, phone presence, firmware,
 and audiobook resume require validation on your equipment. Keep an independent
 alarm available until your installation passes those tests. Home Assistant must
@@ -31,6 +31,11 @@ their respective audio features.
    Exact English requests such as "make an announcement", "cancel announcement",
    and "announcement status" use the announcement runtime directly. Other requests
    go to your selected agent. Leaving the fallback blank keeps this router disabled.
+   For whole, simple English commands such as "stop my alarm" or "resume my book",
+   the router scopes Household Voice tool calls to the requested category. This
+   rejects conflicting tool arguments and fills an omitted category. Other wording
+   and requests sent directly to the fallback agent do not get this constraint;
+   it does not guarantee that the model will call a tool or that audio will play.
 6. Enable and test one feature and one room before expanding to the household.
 
 For manual installation, extract the release's `household_voice.zip` into
