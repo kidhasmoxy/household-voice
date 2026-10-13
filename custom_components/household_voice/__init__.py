@@ -56,6 +56,9 @@ async def async_setup(hass, config):
         if coordinator is None:
             raise HomeAssistantError("Select one loaded Household Voice config_entry_id")
         try:
+            selected_entry=hass.config_entries.async_get_entry(coordinator.entry_id)
+            if selected_entry is not None:
+                await async_configure(coordinator.client,selected_entry.options,hass=hass)
             result = await coordinator.client.mutate(call.service, dict(call.data))
         except (CoordinatorError, ClientError, TimeoutError) as error:
             # Never forward response bodies, URL query strings, or credentials.
@@ -97,6 +100,26 @@ async def async_setup(hass, config):
         schema=vol.Schema({vol.Required('config_entry_id'):str,vol.Required('media_player'):str,
                            vol.Required('confirm_audio_stopped'):vol.In([True])}),
         supports_response=SupportsResponse.ONLY)
+    async def reset_native_audio(call):
+        if not call.context.user_id:
+            raise HomeAssistantError('Administrator access is required')
+        user=await hass.auth.async_get_user(call.context.user_id)
+        if user is None or not user.is_admin:
+            raise HomeAssistantError('Administrator access is required')
+        coordinator=hass.data[DOMAIN].get(call.data['config_entry_id'])
+        entry=hass.config_entries.async_get_entry(call.data['config_entry_id'])
+        if coordinator is None or entry is None:
+            raise HomeAssistantError('Select one loaded Household Voice config entry')
+        from .native_alarm import async_reset_native_alarm
+        try:
+            return await async_reset_native_alarm(hass,entry,call.data['assistant_id'],
+                confirm_output_stopped=call.data['confirm_audio_stopped'])
+        except Exception:
+            raise HomeAssistantError('Native audio recovery unavailable; confirm silence and wait for active work') from None
+    hass.services.async_register(DOMAIN,'reset_native_alarm_audio',reset_native_audio,
+        schema=vol.Schema({vol.Required('config_entry_id'):str,vol.Required('assistant_id'):str,
+                           vol.Required('confirm_audio_stopped'):vol.In([True])}),
+        supports_response=SupportsResponse.ONLY)
     return True
 
 
@@ -112,7 +135,7 @@ async def async_setup_entry(hass, entry):
         client = VoiceClient(async_get_clientsession(hass), entry.data[CONF_URL], entry.data[CONF_TOKEN])
     coordinator = VoiceCoordinator(hass, entry, client)
     try:
-        await async_configure(client,entry.options)
+        await async_configure(client,entry.options,hass=hass)
         await coordinator.async_config_entry_first_refresh()
     except BaseException as error:
         if local:
@@ -123,6 +146,7 @@ async def async_setup_entry(hass, entry):
     coordinator.broadcast_runtime=BroadcastRuntime(hass,entry,client,execution_authorized=True)
     coordinator.ring_worker=RingWorker(hass,entry,client)
     coordinator.satellite_runtime=None
+    coordinator.echomuse_runtime=None
     coordinator.platforms=[Platform.SENSOR]
     if entry.options.get('conversation_fallback_agent'):
         coordinator.platforms.append(Platform.CONVERSATION)
@@ -132,6 +156,10 @@ async def async_setup_entry(hass, entry):
     from .satellite_runtime import async_setup_satellite_runtime, SatelliteDependencyNotReady
     try:
         await hass.config_entries.async_forward_entry_setups(entry, coordinator.platforms)
+        from .echomuse_runtime import async_setup_echomuse_runtime
+        coordinator.echomuse_runtime=await async_setup_echomuse_runtime(hass,entry)
+        # Restore durable playback holds before any external-audio callback or
+        # ring/broadcast worker can submit a new clip to the same MA output.
         coordinator.satellite_runtime=await async_setup_satellite_runtime(hass,entry)
         await coordinator.broadcast_runtime.async_start_worker()
         await coordinator.ring_worker.async_start()
@@ -146,6 +174,8 @@ async def async_setup_entry(hass, entry):
         if local:
             from homeassistant.const import EVENT_HOMEASSISTANT_STOP
             async def stop_local_engine(event):
+                if coordinator.echomuse_runtime:
+                    await coordinator.echomuse_runtime.async_close()
                 await coordinator.broadcast_runtime.async_close()
                 await coordinator.ring_worker.async_close()
                 if coordinator.satellite_runtime:
@@ -153,6 +183,8 @@ async def async_setup_entry(hass, entry):
                 await client.async_close()
             entry.async_on_unload(hass.bus.async_listen_once(EVENT_HOMEASSISTANT_STOP, stop_local_engine))
     except BaseException as error:
+        if coordinator.echomuse_runtime:
+            await coordinator.echomuse_runtime.async_close()
         await coordinator.broadcast_runtime.async_close()
         await coordinator.ring_worker.async_close()
         if coordinator.satellite_runtime:
@@ -174,6 +206,8 @@ async def async_unload_entry(hass, entry):
     coordinator=hass.data[DOMAIN].get(entry.entry_id)
     if coordinator is None:
         return True
+    if coordinator.echomuse_runtime:
+        await coordinator.echomuse_runtime.async_close()
     await coordinator.broadcast_runtime.async_close()
     await coordinator.ring_worker.async_close()
     if coordinator.satellite_runtime:

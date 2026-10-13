@@ -10,6 +10,10 @@ source device. SpeechMetadata contains no source identity. The broadcast runtime
 checks visible pipeline assignments before arming. Setup never edits pipelines.
 
 The injected capture callback owns authenticated transfer and subsequent retention.
+Optional runtime.inline_capture_enabled and runtime.inline_announcement(text)
+enable provisional first-turn buffering. consume_inline requires the exact source,
+transcript and task-context capability, and returns raw PCM without calling the
+capture callback. Missing feature properties keep provisional capture disabled.
 The broadcast runtime uploads only after the question's response matches the
 captured transcript; the server must have matching profile/source/room bindings.
 Returned upload metadata is not published as entity state. This wrapper
@@ -47,7 +51,9 @@ async def async_setup_entry(hass, entry, async_add_entities):
     if runtime is None:
         raise CaptureSttConfigurationError("Broadcast runtime must be initialized before STT setup")
     try:
-        entities = build_capture_entities(hass, entry.entry_id, entry.options, runtime.async_capture_ready)
+        entities = build_capture_entities(hass, entry.entry_id, entry.options, runtime.async_capture_ready,
+            inline_enabled=lambda: getattr(runtime, 'inline_capture_enabled', False) is True,
+            inline_parser=lambda text: runtime.inline_announcement(text))
     except CaptureSttProviderNotReady:
         from homeassistant.exceptions import PlatformNotReady
         raise PlatformNotReady("Configured capture STT provider is not ready") from None
@@ -78,7 +84,8 @@ def _provider(hass, entity_id):
 
 
 def build_capture_entities(hass, config_entry_id: str, options: Mapping,
-                           async_capture_ready: Callable[[CapturedUtterance], Awaitable[object]]):
+                           async_capture_ready: Callable[[CapturedUtterance], Awaitable[object]], *,
+                           inline_enabled=None, inline_parser=None):
     """Build only; caller must explicitly register and bind exclusive pipelines."""
     profiles = options.get(PROFILE_OPTION, [])
     if not isinstance(profiles, list) or len(profiles) > 64:
@@ -109,16 +116,17 @@ def build_capture_entities(hass, config_entry_id: str, options: Mapping,
         selected.append((name, source, provider_id, provider))
     manager = CaptureSessionManager(bindings)
     return [HouseholdCaptureStt(hass, config_entry_id, name, source, provider_id,
-                               provider, manager, async_capture_ready)
+                               provider, manager, async_capture_ready,
+                               inline_enabled=inline_enabled, inline_parser=inline_parser)
             for name, source, provider_id, provider in selected]
 
 
 class HouseholdCaptureStt(stt.SpeechToTextEntity):
-    """Proxy one existing STT entity and capture only one explicitly armed turn."""
+    """Proxy one STT entity with explicitly gated two-turn/inline capture."""
     _attr_should_poll = False
 
     def __init__(self, hass, entry_id, profile, source, provider_id, provider,
-                 manager, async_capture_ready):
+                 manager, async_capture_ready, *, inline_enabled=None, inline_parser=None):
         self.hass = hass
         self.profile_id, self.source_device_id = profile, source
         self.provider_entity_id, self._bound_provider = provider_id, provider
@@ -128,6 +136,9 @@ class HouseholdCaptureStt(stt.SpeechToTextEntity):
         self._removed = False
         self._delivery_tasks = set()
         self.capture_status = "not_armed"
+        self._inline_enabled = inline_enabled or (lambda: False)
+        self._inline_parser = inline_parser
+        self._inline_generation = object()
 
     def _current_provider(self):
         if self._removed:
@@ -135,6 +146,7 @@ class HouseholdCaptureStt(stt.SpeechToTextEntity):
         device = dr.async_get(self.hass).async_get(self.source_device_id)
         provider = _provider(self.hass, self.provider_entity_id)
         if device is None or device.disabled_by is not None or provider is not self._bound_provider or not provider.available:
+            self.manager.inline.invalidate(self.profile_id)
             return None
         return provider
 
@@ -188,6 +200,21 @@ class HouseholdCaptureStt(stt.SpeechToTextEntity):
                 changed = True
         return changed
 
+    def consume_inline(self, trusted_source, exact_transcript):
+        """Return raw first-turn PCM only to its exact current router context."""
+        if (trusted_source != self.source_device_id or not self.available
+                or not self._inline_is_enabled()):
+            self.manager.inline.invalidate(self.profile_id)
+            return None
+        return self.manager.inline.consume(self.profile_id, trusted_source,
+            exact_transcript, self._inline_generation)
+
+    def _inline_is_enabled(self):
+        try:
+            return self._inline_enabled() is True
+        except Exception:
+            return False
+
     async def async_process_audio_stream(self, metadata, stream):
         provider = self._current_provider()
         if provider is None or not provider.check_metadata(metadata):
@@ -195,7 +222,11 @@ class HouseholdCaptureStt(stt.SpeechToTextEntity):
             self.capture_status = "provider_unavailable_or_unsupported"
             return stt.SpeechResult(None, stt.SpeechResultState.ERROR)
         outcome = await self.manager.process(self.profile_id, metadata, stream,
-            provider.internal_async_process_audio_stream)
+            provider.internal_async_process_audio_stream,
+            provisional=self._inline_is_enabled(),
+            inline_parser=self._inline_parser, generation=self._inline_generation)
+        if self._current_provider() is None or not self._inline_is_enabled():
+            self.manager.inline.invalidate(self.profile_id)
         self.capture_status = outcome.capture_status
         if outcome.capture is not None and not self._removed:
             # Keep the result local: no state attribute, log, background retry or

@@ -1,5 +1,46 @@
 # Changelog
 
+## 0.3.0
+
+Adds Home Assistant area discovery, optional assistant speaker overrides, and
+assistant-owned new alarms that follow the paired speaker. Preserves existing
+alarms and timer routing. Shared room ducking respects manual volume changes and
+recovers confirmed restores when speakers return.
+
+Shared timers and alarms can use an unpaired assistant's built-in speaker when
+it supports Home Assistant announcements. A configured external speaker that is
+unavailable does not silently redirect audio. Native ringing uses finite clips,
+preserves native volume, and records uncertain output durably until administrator
+recovery. New assistant bindings retain device identity across entity changes.
+
+Recognized ambiguous timer changes ask for a name or numbered choice before
+changing a schedule. Choices expire and retain revisions, so a stale answer
+cannot mutate a different timer. A bare "stop" first dismisses all timers and
+alarms ringing in the authoritative household snapshot, preserving countdowns
+and future alarms. Only an empty ringing snapshot permits normal media fallback.
+These are bounded English command patterns, not unrestricted natural-language
+understanding.
+
+Adds optional Family friendly world-knowledge answers with an editable parent
+prompt, curated sources, strict Brave SafeSearch and durable search budgets.
+Knowledge synthesis has no household tools. The existing household agent receives
+the family content prompt without disabling its authorized controls.
+
+Shortens announcement follow-up to "What's the announcement?" and removes the
+initial acknowledgment. One-request body-only replay remains disabled pending
+successful acoustic alignment validation.
+
+Adds the opt-in EchoMuse companion receiver and administrator controls, with
+durable replay protection and per-source credentials. Unpaired sources can use
+native speech when selected before a turn; uncertain external playback does not
+fall back. Backup preparation drains pending search-ledger writes and receiver
+operations before configuration is copied.
+
+The schedule database migrates to schema 4. Back up configuration before upgrading;
+do not point an older integration version at the migrated database. Rollback
+requires the matching pre-upgrade configuration/state backup, which also rewinds
+schedule changes made since that backup.
+
 ## 0.2.6
 
 Clarifies weekday numbering and exact-label schedule selection. Normalizes an

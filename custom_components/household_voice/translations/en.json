@@ -68,7 +68,11 @@
           "capture": "Dedicated recording STT profile",
           "test_pairing": "Test a saved speaker pairing",
           "audio_recovery": "Recover speaker after uncertain audio",
-          "conversation_routing": "Conversation routing"
+          "conversation_routing": "Conversation routing",
+          "single_turn_announcements": "Single-turn announcements",
+          "assistant_pairing": "Assistant speakers from Home Assistant areas",
+          "knowledge_family": "Knowledge and family settings",
+          "native_audio_recovery": "Recover built-in speaker after uncertain audio"
         }
       },
       "announcements": {
@@ -76,7 +80,7 @@
         "description": "Choose one Music Assistant endpoint per speaker and an optional chime. Audiobooks and podcasts resume after announcements if playback remains unchanged. Phones receive the transcript when home. Choose whether to trust the current home state or require a report within five minutes or one hour. Away, unknown and unavailable phones are skipped.",
         "data": {
           "default_announcement_speakers": "Announcement speakers",
-          "announcement_volume": "Announcement volume (0–1)",
+          "announcement_volume": "Announcement volume (0\u00c3\u00a2\u00e2\u201a\u00ac\u00e2\u20ac\u01531)",
           "announcement_chime": "Announcement chime",
           "spoken_media_policy": "Audiobook and podcast interruptions",
           "phone_presence_policy": "Phone home presence policy"
@@ -84,7 +88,7 @@
       },
       "phone": {
         "title": "Select a home phone",
-        "description": "Choose the phone’s registered presence tracker. Selecting an existing tracker edits its mapping.",
+        "description": "Choose the phone\u00c3\u00a2\u00e2\u201a\u00ac\u00e2\u201e\u00a2s registered presence tracker. Selecting an existing tracker edits its mapping.",
         "data": {
           "device_tracker": "Phone presence tracker"
         }
@@ -107,14 +111,14 @@
       },
       "satellite_details": {
         "title": "Satellite room and speakers",
-        "description": "Satellite: {satellite}. Choose its room ID and one Music Assistant reply speaker, plus any room players to lower while listening. Duck factor is a fraction of each player’s current volume. The completion action must belong to this voice device; the runtime verifies authenticated ownership before calling it.",
+        "description": "Satellite: {satellite}. Choose its room ID and one Music Assistant reply speaker, plus any room players to lower while listening. Duck factor is a fraction of each player\u00c3\u00a2\u00e2\u201a\u00ac\u00e2\u201e\u00a2s current volume. The completion action must belong to this voice device; the runtime verifies authenticated ownership before calling it.",
         "data": {
           "room_id": "Coordinator room ID",
           "tts_media_player": "Music Assistant reply speaker",
           "duck_media_players": "Room speakers to lower",
           "completion_service": "External reply completion action (optional)",
-          "reply_volume": "Reply volume (0–1)",
-          "duck_factor": "Listening volume fraction (0.05–1)"
+          "reply_volume": "Reply volume (0\u00c3\u00a2\u00e2\u201a\u00ac\u00e2\u20ac\u01531)",
+          "duck_factor": "Listening volume fraction (0.05\u00c3\u00a2\u00e2\u201a\u00ac\u00e2\u20ac\u01531)"
         }
       },
       "remove": {
@@ -147,7 +151,8 @@
           "satellite_audio_enabled": "Room speaker replies and wake ducking",
           "announcements_enabled": "Recorded announcements and home phone text",
           "ring_actions_enabled": "Alarm and timer ringing",
-          "stt_capture_enabled": "Dedicated STT recording profiles"
+          "stt_capture_enabled": "Dedicated STT recording profiles",
+          "echomuse_audio_enabled": "Paired EchoMuse external replies (requires companion app)"
         }
       },
       "alarms": {
@@ -195,6 +200,56 @@
         "data": {
           "conversation_fallback_agent": "Existing fallback conversation agent (optional)"
         }
+      },
+      "single_turn_announcements": {
+        "title": "Single-turn original-voice announcements",
+        "description": "Say the command and message together. A compatible forced-alignment server locates your message in the original recording. If the boundary cannot be verified, you will be asked to repeat the message. Ordinary speech-to-text servers are not compatible. Enter the server base URL (for example http://speech:8000); /v1/audio/transcriptions is added automatically. Leave the API key empty to keep the saved key.",
+        "data": {
+          "single_turn_announcements_enabled": "Enable single-turn announcements",
+          "announcement_alignment_url": "Forced-alignment server base URL",
+          "announcement_alignment_model": "Forced-alignment model",
+          "announcement_alignment_api_key": "API key (optional)",
+          "announcement_alignment_clear_api_key": "Clear the saved API key"
+        }
+      },
+      "assistant_pairing": {
+        "title": "Assistant speakers",
+        "description": "One suitable Music Assistant speaker in the assistant area is selected automatically. Choose a default when several speakers share an area. Existing explicit pairings are preserved.",
+        "data": {
+          "assistant": "Assistant and paired speaker"
+        }
+      },
+      "assistant_speaker": {
+        "title": "Speaker for {assistant}",
+        "description": "Home Assistant area: {area}. Current status: {status}. This selection configures new alarm output and reply routing; it does not enable firmware or audio features.",
+        "data": {
+          "speaker": "Default speaker"
+        }
+      },
+      "knowledge_family": {
+        "title": "Knowledge and family settings",
+        "description": "Family-friendly knowledge uses your existing local model with household tools disabled. Search uses Brave strict SafeSearch and only the domains below; questions, including health questions, go to Brave and your local model. Avoid sharing personal or identifying details. Source excerpts are stored locally and may reveal the topic. They are reused for up to six hours; expired cache records are removed on the next search. No new subscription is created. Search excerpts and AI answers can be incomplete or wrong, and content screening is not perfect. Non-graphic health, body and puberty education remains available. A parent can edit the style prompt; fixed safety and tool restrictions still apply. Reset restores the default prompt. Blank credentials reuse one unambiguous existing Brave configuration; saved keys are never shown. Save through Review and save; this form does not play audio or query providers.",
+        "data": {
+          "knowledge_enabled": "Enable family knowledge",
+          "knowledge_age_policy": "Answer style",
+          "knowledge_agent": "Existing local model conversation agent",
+          "knowledge_search_entry": "Existing Brave configuration",
+          "knowledge_domains": "Allowed source domains, one per line (includes their subdomains)",
+          "knowledge_prompt": "Parent-editable default prompt",
+          "knowledge_reset_prompt": "Reset prompt to family-friendly default",
+          "knowledge_daily_limit": "Maximum Brave requests per rolling day",
+          "knowledge_monthly_limit": "Maximum Brave requests per rolling 31 days",
+          "knowledge_brave_api_key": "Optional Brave API key override",
+          "knowledge_clear_api_key": "Clear saved key override"
+        }
+      },
+      "native_audio_recovery": {
+        "title": "Recover built-in speaker",
+        "description": "Only confirm after checking that pending alarm audio has stopped. This clears the saved local hold; it does not stop playback or prove silence.",
+        "data": {
+          "assistant_id": "Assistant with built-in speaker",
+          "confirm_audio_stopped": "I verified all pending alarm audio stopped"
+        }
       }
     },
     "error": {
@@ -204,7 +259,7 @@
       "invalid_enabled": "Choose enabled or disabled.",
       "select_one_satellite": "Choose exactly one Assist entity or ESPHome device.",
       "invalid_device": "Select an existing enabled ESPHome device, or a registered Assist entity with its device.",
-      "invalid_room": "Use an exact room ID, 1–64 letters, numbers, underscores, or hyphens; start with a letter or number.",
+      "invalid_room": "Use an exact room ID, 1\u00c3\u00a2\u00e2\u201a\u00ac\u00e2\u20ac\u015364 letters, numbers, underscores, or hyphens; start with a letter or number.",
       "invalid_completion_service": "Select a registered ESPHome external_reply_complete action, or None.",
       "invalid_mapping": "Select a valid saved mapping.",
       "invalid_music_player": "Choose an enabled Music Assistant player with a registered Music Assistant instance.",
@@ -221,7 +276,16 @@
       "invalid_spoken_media_policy": "Choose pause and resume, provider default, or pause and hold.",
       "audio_recovery_failed": "Confirm pending audio stopped, select a saved speaker, and wait for active work to finish.",
       "invalid_conversation_fallback": "Choose an existing conversation agent outside Household Voice to avoid routing loops.",
-      "invalid_phone_presence_policy": "Choose current home state, home within one hour, or home within five minutes."
+      "invalid_phone_presence_policy": "Choose current home state, home within one hour, or home within five minutes.",
+      "invalid_alignment_configuration": "Choose a valid speech server base URL and model before enabling. Credentials belong in the API key field.",
+      "invalid_knowledge_settings": "Choose valid knowledge settings.",
+      "invalid_knowledge_age": "Choose a listed family answer style.",
+      "invalid_knowledge_domains": "Enter one to twenty public domain names, without URLs, wildcards, ports or local addresses.",
+      "invalid_knowledge_prompt": "Enter a prompt of one to four thousand characters, or reset to the default.",
+      "invalid_knowledge_agent": "Select an available Local OpenAI conversation agent before enabling knowledge.",
+      "invalid_knowledge_search_entry": "Select an existing Tools for Assist configuration or automatic credential reuse.",
+      "invalid_knowledge_key": "Enter a valid API key without whitespace, or leave blank to reuse a configured key.",
+      "invalid_knowledge_budget": "Choose whole-number request limits in the allowed ranges."
     }
   }
 }

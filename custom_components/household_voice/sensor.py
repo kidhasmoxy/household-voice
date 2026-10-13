@@ -10,7 +10,7 @@ async def async_setup_entry(hass, entry, async_add_entities):
 class SchedulesSensor(CoordinatorEntity, SensorEntity):
     _attr_name = "Household Voice Schedules"
     _attr_icon = "mdi:timer-outline"
-    _unrecorded_attributes = frozenset({"schedules", "events"})
+    _unrecorded_attributes = frozenset({"schedules", "events","assistants","area_pairings"})
 
     def __init__(self, coordinator, entry_id):
         super().__init__(coordinator)
@@ -33,5 +33,7 @@ class SchedulesSensor(CoordinatorEntity, SensorEntity):
                 "maintenance_healthy":self.coordinator.data.get("maintenance", {}).get("healthy"),
                 "maintenance_last_success":self.coordinator.data.get("maintenance", {}).get("last_success"),
                 "rooms": self.coordinator.data.get("rooms", []),
+                "assistants":self.coordinator.data.get('assistants',[]),
+                "area_pairings":self.coordinator.data.get('area_pairings',{}),
                 "schedules": self.coordinator.data["schedules"], "events": self.coordinator.data["events"][-100:],
                 "event_count": len(self.coordinator.data["events"])}

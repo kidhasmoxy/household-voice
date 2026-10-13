@@ -1,9 +1,12 @@
-"""Source-bound two-turn broadcasts and a durable-outbox consumer.
+"""Source-bound recorded broadcasts and a durable-outbox consumer.
 
 HA 2026.10.1 assist_satellite.ask_question forces its response pipeline to end
 at STT. Never use start_conversation/extra_system_prompt to collect the content:
 that would let the recorded reply execute arbitrary conversation commands.
-Only the explicit question turn is armed; the original command is not recorded.
+The explicit question turn is armed for ordinary two-turn capture. Optional
+single-turn capture consumes a short-lived, task-bound microphone buffer and
+requires validated alignment before uploading only the announcement body.
+Uncertain trimming falls back to a fresh question, never whole-command playback.
 
 Audio and text exist in memory until upload completes, then only in the bounded
 coordinator recording store. Pending delivery rows survive HA restart. An expired
@@ -13,6 +16,7 @@ The coordinator must bind its authenticated capture profiles to the same devices
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import logging
 from collections import OrderedDict
 from copy import deepcopy
@@ -22,6 +26,7 @@ import time
 from urllib.parse import urlsplit
 
 from .announcement_adapter import AnnouncementAdapter
+from .conversation_router import inline_announcement
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -41,6 +46,7 @@ class _Session:
     task: object = field(default=None, repr=False)
     nonce: str | None = None
     capture: object = field(default=None, repr=False)
+    inline: object = field(default=None, repr=False)
     phase: str = 'waiting_for_first_turn'
     broadcast_id: str | None = None
 
@@ -62,13 +68,36 @@ class BroadcastRuntime:
         self.adapter = adapter or AnnouncementAdapter(hass, self.options, client.resolve_recording,
             allowed_audio_origins=[f'{parsed.scheme}://{parsed.netloc}'],
             allowed_audio_path_prefix=parsed.path.rstrip('/')+'/audio/',
-            execution_authorized=self.execution_authorized)
+            execution_authorized=self.execution_authorized, focus_entry=entry)
         self.entities = {}
         self.sessions = {}
         self.completed = OrderedDict()
         self.latest = {}
         self._workers = []
         self._closed = False
+        self._alignment_slots = asyncio.Semaphore(1)
+
+    @property
+    def inline_capture_enabled(self):
+        return (self.enabled and self.options.get('stt_capture_enabled') is True
+                and self.options.get('single_turn_announcements_enabled') is True
+                and bool(self.options.get('announcement_alignment_url'))
+                and bool(self.options.get('announcement_alignment_model')))
+
+    @staticmethod
+    def inline_announcement(text):
+        return inline_announcement(text)
+
+    async def _align_inline(self, captured):
+        from homeassistant.helpers.aiohttp_client import async_get_clientsession
+        from .announcement_alignment import AnnouncementAlignmentAdapter
+        async with asyncio.timeout(15):
+            async with self._alignment_slots:
+                aligner = AnnouncementAlignmentAdapter(async_get_clientsession(self.hass),
+                    endpoint=self.options['announcement_alignment_url'],
+                    model=self.options['announcement_alignment_model'],
+                    api_key=self.options.get('announcement_alignment_api_key', ''), timeout=15)
+                return await aligner.align_announcement(captured)
 
     @property
     def enabled(self):
@@ -174,6 +203,39 @@ class BroadcastRuntime:
                         return
                 await asyncio.sleep(.1)
 
+    async def async_start_inline(self, device_id, context, *, transcript, body, request_id):
+        """Consume the exact current STT capability before scheduling any work."""
+        if (not isinstance(device_id, str) or not device_id or context is None
+                or not isinstance(request_id, str) or not 1 <= len(request_id) <= 200
+                or inline_announcement(transcript) != body):
+            return _result('clarify', 'trusted_inline_announcement_required')
+        try:
+            targets = self.adapter.targets()
+            satellite, wrapper = self._binding_resolver(device_id)
+        except Exception:
+            return _result('clarify', 'configure_exclusive_capture_pipeline_and_targets')
+        signature = repr((device_id, targets, hashlib.sha256(transcript.encode()).hexdigest()))
+        if previous := self.completed.get(request_id):
+            return deepcopy(previous[1]) if previous[0] == signature else _result('error', 'request_id_reused')
+        if active := self.sessions.get(device_id):
+            if active.request_id == request_id and active.targets == targets:
+                return _result('queued', 'inline_announcement_already_started')
+            return _result('clarify', 'announcement_already_in_progress_on_this_device')
+        captured = None
+        if self.inline_capture_enabled:
+            try:
+                captured = wrapper.consume_inline(device_id, transcript)
+            except Exception:
+                pass  # No text, PCM, capability or provider error in diagnostics.
+        if captured is None or captured.body != body:
+            # Typed requests, stale capabilities and unavailable alignment all
+            # use the existing explicit recording question, never synthesized audio.
+            return await self.async_start(device_id, context, request_id=request_id)
+        session = _Session(device_id, request_id, targets, context, wrapper, satellite, inline=captured)
+        self.sessions[device_id] = session
+        session.task = self._spawn(self._run_question(session, signature), 'household voice inline announcement')
+        return _result('queued', 'inline_announcement_queued', target_count=len(targets))
+
     async def async_capture_ready(self, captured):
         """Local STT handoff only; do not upload until ask_question confirms it."""
         session = self.sessions.get(captured.source_device)
@@ -188,21 +250,43 @@ class BroadcastRuntime:
             await self._wait_idle(session.satellite)
             if not self.enabled or self._binding_resolver(session.device_id) != (session.satellite, session.wrapper):
                 raise BroadcastError('Capture binding changed')
-            arm = session.wrapper.arm(session.device_id, ttl=30)
-            session.nonce, session.phase = arm.nonce, 'asking'
-            async with asyncio.timeout(50):
-                answer = await self.hass.services.async_call('assist_satellite', 'ask_question', {
-                    'entity_id': session.satellite,
-                    'question': 'What would you like me to announce? Say cancel to stop.',
-                    'answers': [], 'preannounce': False}, blocking=True, return_response=True, context=session.context)
-            text = answer.get('sentence') if isinstance(answer, dict) else None
-            if isinstance(text, str) and text.casefold().strip().rstrip('.!?') in ('cancel', 'cancel announcement', 'never mind', 'nevermind'):
-                result = _result('cancelled', 'announcement_cancelled')
-                return
-            captured = session.capture
-            if captured is None or not isinstance(text, str) or not text.strip() or text != captured.transcript:
-                result = _result('error', 'silence_or_capture_response_mismatch')
-                return
+            captured = None
+            if session.inline is not None:
+                session.phase = 'aligning'
+                try:
+                    captured = await self._align_inline(session.inline)
+                    if (captured.profile_id != session.inline.profile_id
+                            or captured.source_device != session.device_id
+                            or captured.nonce != session.inline.nonce
+                            or captured.transcript != session.inline.body):
+                        captured = None
+                        raise BroadcastError('Aligned capture binding mismatch')
+                except Exception:
+                    # Alignment uncertainty asks for a clean new recording. Never
+                    # guess a cut, synthesize the body, or replay the command phrase.
+                    pass
+                finally:
+                    session.inline = None
+                if not self.enabled or self._binding_resolver(session.device_id) != (session.satellite, session.wrapper):
+                    raise BroadcastError('Capture binding changed')
+            if captured is None:
+                arm = session.wrapper.arm(session.device_id, ttl=30)
+                session.nonce, session.phase = arm.nonce, 'asking'
+                async with asyncio.timeout(50):
+                    answer = await self.hass.services.async_call('assist_satellite', 'ask_question', {
+                        'entity_id': session.satellite,
+                        'question': "What's the announcement?",
+                        'answers': [], 'preannounce': False}, blocking=True, return_response=True, context=session.context)
+                text = answer.get('sentence') if isinstance(answer, dict) else None
+                if isinstance(text, str) and text.casefold().strip().rstrip('.!?') in ('cancel', 'cancel announcement', 'never mind', 'nevermind'):
+                    result = _result('cancelled', 'announcement_cancelled')
+                    return
+                captured = session.capture
+                if captured is None or not isinstance(text, str) or not text.strip() or text != captured.transcript:
+                    result = _result('error', 'silence_or_capture_response_mismatch')
+                    return
+            else:
+                session.nonce = captured.nonce
             session.phase = 'uploading'
             # The durable nonce reservation makes same-nonce upload retries safe.
             # Enqueue uses a separate stable request ID; never create a new one
@@ -217,6 +301,7 @@ class BroadcastRuntime:
                         raise BroadcastError('Capture upload failed') from None
                     await asyncio.sleep(.25 * (attempt + 1))
             session.capture = None
+            session.inline = None
             for attempt in range(3):
                 try:
                     queued = await self.client.enqueue_broadcast(row['id'], session.request_id, session.targets)
@@ -240,6 +325,7 @@ class BroadcastRuntime:
             if session.nonce:
                 session.wrapper.cancel(session.device_id, nonce=session.nonce)
             session.capture = None
+            session.inline = None
             self.sessions.pop(session.device_id, None)
             self.completed[session.request_id] = (signature, result)
             self.latest[session.device_id] = result
@@ -266,6 +352,7 @@ class BroadcastRuntime:
             if session.nonce:
                 session.wrapper.cancel(device_id,nonce=session.nonce)
             session.capture=None
+            session.inline=None
             self.sessions.pop(device_id,None)
             self.latest[device_id]=_result('cancelled','question_cancelled_before_capture')
         return _result('cancelled', 'question_cancelled_pending_delivery_may_have_been_accepted')

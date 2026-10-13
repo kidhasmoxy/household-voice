@@ -90,22 +90,58 @@ def _result(status):
 
 class SatelliteExecutor:
     def __init__(self, policy, controller, journal, registrations, *, verifier=None,
-                 enabled=False, execution_authorized=False):
+                 enabled=False, execution_authorized=False, focus_state=None):
         if set(registrations) != set(policy.routes) or not all(
                 isinstance(r, Registration) for r in registrations.values()):
             raise ExecutorError('Every policy satellite needs an explicit registration')
         if len({r.device_id for r in registrations.values()}) != len(registrations):
             raise ExecutorError('Duplicate device registration')
         self.policy, self.controller, self.journal = policy, controller, journal
+        self.focus_state = focus_state
         self.registrations, self.verifier = dict(registrations), verifier
         self.enabled = enabled is True and execution_authorized is True
-        self.lock = asyncio.Lock()
-        self.records = {}
-        self.loaded = False
-        self.recovery_attempted = False
-        self.failed = False
-        self.blocked = set()
+        if focus_state is None:
+            self.lock = asyncio.Lock()
+            self.records = {}
+            self.loaded = False
+            self.recovery_attempted = False
+            self.failed = False
+            self.blocked = set()
+        else:
+            self.lock = focus_state.lock
+            self.journal = focus_state.journal
+            self.records = focus_state.records
+            self.blocked = focus_state.blocked
+            self.policy.focus = focus_state.focus
+            focus_state.allowed_players.update(p for r in policy.routes.values() for p in r.duck_players)
         self.replies = {}
+
+    @property
+    def loaded(self):
+        return self.focus_state.loaded if self.focus_state is not None else self._loaded
+
+    @loaded.setter
+    def loaded(self, value):
+        if self.focus_state is not None: self.focus_state.loaded = value
+        else: self._loaded = value
+
+    @property
+    def recovery_attempted(self):
+        return self.focus_state.recovery_attempted if self.focus_state is not None else self._recovery_attempted
+
+    @recovery_attempted.setter
+    def recovery_attempted(self, value):
+        if self.focus_state is not None: self.focus_state.recovery_attempted = value
+        else: self._recovery_attempted = value
+
+    @property
+    def failed(self):
+        return self.focus_state.failed if self.focus_state is not None else self._failed
+
+    @failed.setter
+    def failed(self, value):
+        if self.focus_state is not None: self.focus_state.failed = value
+        else: self._failed = value
 
     async def _trusted(self, origin, satellite):
         registration = self.registrations.get(satellite)
@@ -136,6 +172,8 @@ class SatelliteExecutor:
                 raise ValueError()
             records = snapshot['players']
             configured = {p for r in self.policy.routes.values() for p in r.duck_players}
+            if self.focus_state is not None:
+                configured = self.focus_state.allowed_players
             if not isinstance(records, dict) or len(records) > 256:
                 raise ValueError()
             for player, record in records.items():
@@ -151,7 +189,8 @@ class SatelliteExecutor:
         except Exception:
             self.failed = True
             raise ExecutorError('Invalid or unavailable restoration journal') from None
-        self.records = deepcopy(records)
+        self.records.clear()
+        self.records.update(deepcopy(records))
         self.loaded = True
         if not records:
             self.recovery_attempted = True
@@ -216,6 +255,9 @@ class SatelliteExecutor:
     async def _execute(self, plan):
         outcomes = []
         for change in plan.volumes:
+            if self.focus_state is not None and self.focus_state.protected_players.get(change.player, 0):
+                outcomes.append({'player': change.player, 'outcome': 'active_output_preserved'})
+                continue
             observations = await self._observe()
             observation = self._observation(change.player, observations)
             await self._reconcile(observations)
@@ -268,6 +310,10 @@ class SatelliteExecutor:
         if not self.enabled:
             return [{'outcome': 'disabled'}]
         async with self.lock:
+            # A second adapter sharing this authority must not recover live
+            # leases or re-run a prior recovery attempt.
+            if self.focus_state is not None and self.recovery_attempted:
+                return []
             if self.policy.sessions:
                 raise ExecutorError('Startup recovery cannot run during active sessions')
             await self._load()

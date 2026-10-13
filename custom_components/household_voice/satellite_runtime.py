@@ -35,6 +35,7 @@ from homeassistant.helpers.network import get_url
 from .policy.satellite_audio import SatelliteAudio, SatelliteEvent, SatelliteRoute, PlayerObservation
 from .satellite_executor import SatelliteExecutor, Registration, ExecutorError
 from .satellite_journal import SQLiteJournal
+from .room_focus import get_room_focus_state, release_policy_focus
 from .satellite_transport import MAAnnouncementTransport, AudioTransportError
 
 
@@ -88,6 +89,7 @@ class HAAudioController:
 
     async def observe(self):
         players = {p for r in self.runtime.policy.routes.values() for p in r.duck_players}
+        players.update(self.runtime.focus_state.allowed_players)
         return {p: observation for p in players if p not in self.active_players and (observation := self._state(p))}
 
     async def set_volume(self, player, target, *, expected_generation, expected_volume, operation_id):
@@ -141,7 +143,7 @@ class HAAudioController:
             state = self.runtime.policy.sessions.get((device,epoch,plan.session))
             return bool(binding.attached and binding.epoch == epoch and state
                         and not state.ended and state.expires > self.runtime.clock()
-                        and state.deadline > self.runtime.clock())
+                        and state.deadline > self.runtime.clock() and self.runtime._route_current(device,plan.player))
         try:
             result = await self.transport.play(plan.player, media['url'], volume=media['volume'], chime=False,
                                                before_dispatch=still_current)
@@ -203,17 +205,20 @@ class SatelliteRuntime:
         routes = {device: SatelliteRoute(r['room_id'], r['tts_media_player'], tuple(r.get('duck_media_players',[])))
                   for device,r in self.rows.items()}
         self.policy = SatelliteAudio(routes, clock=clock)
+        self.focus_state=get_room_focus_state(hass,entry,clock=clock)
+        self.policy.focus=self.focus_state.focus
         self.bindings = {}
         self.controller = HAAudioController(self)
         self.executor = SatelliteExecutor(self.policy, self.controller,
-            SQLiteJournal(hass.config.path('.storage','household_voice_'+entry.entry_id+'_satellite.sqlite3')),
+            self.focus_state.journal,
             {device: Registration(device, r['completion_service']) for device,r in self.rows.items()},
-            verifier=self, enabled=True, execution_authorized=True)
+            verifier=self, enabled=True, execution_authorized=True,focus_state=self.focus_state)
         self.queue = asyncio.Queue(maxsize=256)
         self.closed = False
         self.unsubscribers = []
         self.worker = self.ticker = None
         self.sessions = {}
+        self.session_routes = {}
         self.errors = []
         self.allowed_origins = set()
         for candidate in (getattr(hass.config,'internal_url',None),getattr(hass.config,'external_url',None)):
@@ -233,6 +238,38 @@ class SatelliteRuntime:
             self.queue.put_nowait(item)
         except asyncio.QueueFull:
             self.errors[:] = ['satellite_queue_overflow']
+
+    def _discovered_route(self,device):
+        from .area_registry import collect_pairings
+        row=self.rows[device]
+        snapshot=collect_pairings(self.hass,self.entry.options)
+        assistant=row.get('satellite_entity_id')
+        if assistant:
+            binding=snapshot['assistants'].get(assistant,{})
+            if binding.get('status')!='ready': return None
+            return SatelliteRoute(binding['area_id'],binding['speaker_id'],tuple(binding['duck_speakers']))
+        # Legacy output-less transport is still explicitly installed. Its exact
+        # output must be safe; automatic discovery never creates registrations.
+        output=snapshot['outputs'].get(row['tts_media_player'])
+        if not output or not output['available']: return None
+        return SatelliteRoute(output['area_id'],row['tts_media_player'],tuple(output['duck_media_players']))
+
+    def _route_current(self,device,player):
+        try:
+            route=self._discovered_route(device)
+            return route is not None and route.tts_player==player and route.room==self.policy.routes[device].room
+        except Exception:
+            return False
+
+    def _refresh_route(self,device):
+        route=self._discovered_route(device)
+        if route is None: return False
+        # Freeze the output for a turn; a new wake invalidates old turns in the
+        # existing policy. Every actual reply revalidates the current pairing.
+        self.policy.routes[device]=route
+        self.focus_state.allowed_players.update(route.duck_players)
+        self.controller.transport.allowed_players=frozenset(r.tts_player for r in self.policy.routes.values())
+        return True
 
     async def verify(self, origin, satellite, device_id):
         binding = self.bindings.get(satellite)
@@ -305,6 +342,7 @@ class SatelliteRuntime:
                     await self.executor._execute(self.policy.disconnect(device,observations))
                 binding.attached, binding.origin, binding.epoch = False, None, None
                 self.sessions = {k:v for k,v in self.sessions.items() if v[0]!=device}
+                self.session_routes = {k:v for k,v in self.session_routes.items() if k in self.sessions}
             return
         if binding.attached:
             return
@@ -367,6 +405,7 @@ class SatelliteRuntime:
             binding.epoch = result['connection']
             binding.boot, binding.native_connection, binding.last_sequence = packet['boot_id'],int(packet['connection']),-1
             self.sessions = {k:v for k,v in self.sessions.items() if v[0]!=device}
+            self.session_routes = {k:v for k,v in self.session_routes.items() if k in self.sessions}
         sequence = int(packet['sequence'])
         if sequence<=binding.last_sequence:
             return
@@ -379,10 +418,18 @@ class SatelliteRuntime:
         binding.sequence += 1
         reply_id, completion = None, None
         if kind == 'wake':
+            if not self._refresh_route(device):
+                self.errors[:]=['assistant_pairing_not_ready']
+                return
             self.policy.focus.factor = self.rows[device].get('duck_factor',.25)
             self.sessions[session] = (device, binding.epoch)
+            self.session_routes[session]=self.policy.routes[device]
         elif kind == 'reply_ready':
             if session not in self.sessions:
+                return
+            selected=self.session_routes.get(session)
+            if selected is None or selected!=self.policy.routes[device] or not self._route_current(device,selected.tts_player):
+                self.errors[:]=['assistant_pairing_changed_during_turn']
                 return
             url = self._media_url(packet['media_url'])
             reply_id = hashlib.sha256(f'{session}:{sequence}'.encode()).hexdigest()
@@ -394,8 +441,10 @@ class SatelliteRuntime:
             self.controller.media.pop(reply_id,None)
         if kind in {'stop','error'}:
             self.sessions.pop(session,None)
+            self.session_routes.pop(session,None)
 
     async def _provider_end(self, session, success, proof):
+        self.session_routes.pop(session,None)
         identity = self.sessions.pop(session,None)
         if identity is None:
             await self.executor.tick()
@@ -467,11 +516,15 @@ class SatelliteRuntime:
         await asyncio.gather(*(t for t in (self.worker,self.ticker) if t),return_exceptions=True)
         # Await bounded native announcements before restoring their ducked player.
         await asyncio.gather(*list(self.controller.tasks.values()),return_exceptions=True)
-        async with self.executor.lock:
-            for device in self.bindings:
-                observations = await self.controller.observe()
-                await self.executor._execute(self.policy.disconnect(device,observations))
-        self.controller.media.clear()
+        try:
+            async with self.executor.lock:
+                for device in self.bindings:
+                    observations = await self.controller.observe()
+                    await self.executor._execute(self.policy.disconnect(device,observations))
+        finally:
+            await release_policy_focus(self.focus_state,self.policy)
+            self.controller.media.clear()
+            self.session_routes.clear()
 
 
 async def async_setup_satellite_runtime(hass, entry):

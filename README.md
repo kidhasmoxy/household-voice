@@ -5,7 +5,7 @@ playback, recorded announcements, and room speaker configuration. The durable
 coordinator runs inside Home Assistant. No companion app, container, cloud
 account, or paid subscription is required for the core features.
 
-This is the **0.2.6 prerelease**. Automated tests cover implementation
+This is the **0.3.0 prerelease**. Automated tests cover implementation
 contracts; actual microphone capture, speaker delivery, phone presence, firmware,
 and audiobook resume require validation on your equipment. Keep an independent
 alarm available until your installation passes those tests. Home Assistant must
@@ -29,8 +29,10 @@ their respective audio features.
 5. Optionally choose a fallback conversation agent in Household Voice settings,
    then select the new Household Voice router entity in one voice pipeline.
    Exact English requests such as "make an announcement", "cancel announcement",
-   and "announcement status" use the announcement runtime directly. Other requests
-   go to your selected agent. Leaving the fallback blank keeps this router disabled.
+   and "announcement status" use the announcement runtime directly. Recognized
+   timer changes and ringing-stop requests also run deterministically; optional
+   general knowledge uses its separate provider path. Remaining requests go to
+   your selected agent. Leaving the fallback blank keeps this router disabled.
    For whole, simple English commands such as "stop my alarm" or "resume my book",
    the router scopes Household Voice tool calls to the requested category. This
    rejects conflicting tool arguments and fills an omitted category. Other wording
@@ -55,6 +57,21 @@ asset. Release tags must match the manifest version.
   the original recording with a chime on configured speakers, and send its exact
   transcript to configured phones whose presence satisfies the selected home policy.
 - Room mappings for external replies, music, wake ducking, and alarm speakers.
+- Automatic assistant/speaker pairing from Home Assistant areas, with optional
+  per-assistant overrides. Multiple eligible speakers require a choice. New alarms
+  belong to an assistant and follow its current paired speaker or, when unpaired,
+  its built-in speaker if HA announcements are supported. New voice timers can
+  also follow their listening assistant. Existing room-only schedules remain intact.
+- Ambiguous recognized timer edits ask which timer you mean. Follow-up choices
+  are tied to the device, conversation, and saved revision. Saying "stop" first
+  dismisses all currently ringing household timers and alarms without cancelling
+  countdowns or future alarms. Use the router in each relevant voice pipeline.
+- Shared room volume handling preserves manual changes and retries confirmed
+  restores when an unavailable speaker returns. Group and physical-speaker aliases
+  are checked before ducking; discovery does not enable external speech by itself.
+- Optional **Family friendly** knowledge answers using an existing local OpenAI
+  compatible provider and Brave search credentials. The parent can edit/reset the
+  prompt, choose source domains, and set daily/monthly search limits in HA settings.
 - Optional forecast/place lookup and recipe tools. Brave recipe search requires
   your own supported API key and explicit enablement; request limits apply.
 
@@ -71,6 +88,43 @@ External replies and wake ducking depend on compatible, authenticated satellite
 events. Stock Voice Preview Edition firmware alone does not establish that path.
 No firmware or device credentials are distributed here. Ordinary stock satellite
 speech and external-speaker speech must be tested separately.
+
+The optional EchoMuse companion app uses the Home Assistant management page for
+administrator provisioning, enabling, revoking and recovering individual sources.
+Provisioning creates a disabled source and shows its controller credential once.
+An unpaired assistant keeps its normal local speech: the controller selects native
+audio before the turn starts. A configured but unavailable speaker, an identity
+mismatch, or an uncertain previous playback does not trigger duplicate local audio.
+Pairing an assistant does not install the companion app or change device firmware.
+
+Built-in alarm playback retains the assistant's native volume. It uses finite
+clips; dismissal stops further clips but an already submitted clip may finish.
+If completion becomes uncertain, a durable hold prevents blind replay. After
+checking that audio stopped, an administrator can use **Recover built-in speaker**
+in Household Voice settings. Recovery does not send a generic media-stop command.
+
+Version 0.3.0 migrates schedules to database schema 4. Do not run an older version
+against migrated state. Keep a pre-upgrade HA configuration backup for rollback;
+restoring it also rewinds subsequent schedule changes.
+
+General knowledge uses curated search excerpts and a separate model request with
+no household tools or conversation history. Strict SafeSearch is always requested.
+The default explains things at about an eight-year-old level, including factual,
+non-graphic body, puberty and health education. It avoids explicit sexual content,
+graphic violence and dangerous instructions. Filtering and model moderation are
+fallible; sources are cited, not certified as true. The router recognizes common
+English question forms; other requests use the existing agent with the family
+prompt added. This is not full natural-language isolation of every mixed request.
+Provider failures in the knowledge path do not fall back to an unrestricted agent.
+Questions, including personal or health questions, are sent to Brave and the
+configured local model. Search limits bound attempts; they do not determine your
+provider's billing. Existing subscriptions require a supported API credential.
+
+Bare announcement requests receive only "What's the announcement?" before the
+recording. Body-only replay from a command containing its message remains
+experimental: the available alignment service failed acoustic validation and
+stays disabled. Without validated alignment, the assistant asks for a fresh
+recording instead of replaying the command or substituting generated speech.
 
 The default spoken-media policy pauses recognized audiobook/podcast queues and
 resumes after completed announcements only if the queue, item, position, and

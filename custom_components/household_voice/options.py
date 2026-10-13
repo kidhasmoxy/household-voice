@@ -2,9 +2,12 @@
 from copy import deepcopy
 import math
 import re
+from urllib.parse import urlsplit, urlunsplit
+from .knowledge_policy import initial_settings, validate_knowledge_settings, KnowledgePolicyError
 
 FEATURES = ("live_actions_enabled", "media_enabled", "satellite_audio_enabled",
-            "announcements_enabled", "ring_actions_enabled", "stt_capture_enabled")
+            "announcements_enabled", "ring_actions_enabled", "stt_capture_enabled",
+            "echomuse_audio_enabled")
 
 
 class RoutingError(ValueError):
@@ -19,6 +22,7 @@ def initial_options(existing):
     result.setdefault("default_announcement_speakers", [])
     result.setdefault("phones", [])
     result.setdefault("satellites", [])
+    result.setdefault("assistant_speaker_overrides", {})
     result.setdefault("media_rooms", [])
     result.setdefault("stt_capture_profiles", [])
     result.setdefault("alarm_rooms", [])
@@ -29,7 +33,50 @@ def initial_options(existing):
     result.setdefault("spoken_media_policy", "pause_and_resume")
     result.setdefault("phone_presence_policy", "recent_five_minutes")
     result.setdefault("conversation_fallback_agent", "")
+    result.setdefault("single_turn_announcements_enabled", False)
+    result.setdefault("announcement_alignment_url", "")
+    result.setdefault("announcement_alignment_model", "")
+    result.setdefault("announcement_alignment_api_key", "")
+    result.update(initial_settings(existing))
     return result
+
+
+def alignment_url(value):
+    """Configured server base URL; append exactly /v1/audio/transcriptions."""
+    try:
+        if not isinstance(value, str) or not value or len(value)>2048 or any(ord(c)<33 for c in value) or '\\' in value:
+            raise ValueError()
+        parsed = urlsplit(value)
+        if (parsed.scheme not in ('http','https') or not parsed.hostname or parsed.username or parsed.password
+                or parsed.query or parsed.fragment or not re.fullmatch(r'[/A-Za-z0-9_.~-]*', parsed.path)
+                or any(part in ('.','..') for part in parsed.path.split('/'))):
+            raise ValueError()
+        parsed.port  # Reject malformed ports before saving.
+        path = parsed.path.rstrip('/')
+        if path.endswith('/v1'):
+            path = path[:-3]
+        if path.endswith('/audio/transcriptions'):
+            raise ValueError()
+        return urlunsplit((parsed.scheme, parsed.netloc, path, '', ''))
+    except (ValueError, TypeError):
+        raise RoutingError('invalid_alignment_configuration') from None
+
+
+def alignment_options(data):
+    enabled = data.get('single_turn_announcements_enabled', False)
+    url = data.get('announcement_alignment_url', '')
+    model = data.get('announcement_alignment_model', '')
+    key = data.get('announcement_alignment_api_key', '')
+    if (type(enabled) is not bool or not isinstance(url, str) or not isinstance(model, str)
+            or len(model)>512 or model != model.strip() or any(ord(c)<32 or ord(c)==127 for c in model)
+            or not isinstance(key, str) or len(key)>4096 or any(ord(c)<32 or ord(c)==127 for c in key)):
+        raise RoutingError('invalid_alignment_configuration')
+    if url:
+        url = alignment_url(url)
+    if enabled and (not url or not model):
+        raise RoutingError('invalid_alignment_configuration')
+    return {'single_turn_announcements_enabled':enabled,'announcement_alignment_url':url,
+            'announcement_alignment_model':model,'announcement_alignment_api_key':key}
 
 
 def conversation_fallback(value, entities):
@@ -174,8 +221,28 @@ def satellite(data, entities, devices, services):
 
 def validate_options(data, entities, devices, services):
     result = initial_options(data)
+    try:
+        result.update(validate_knowledge_settings(result))
+        selected = result['knowledge_agent']
+        if selected:
+            item = entities.get(selected)
+            if item is None or item.get('disabled') or item.get('integration') != 'local_openai':
+                raise KnowledgePolicyError('invalid_knowledge_agent')
+    except KnowledgePolicyError as exc:
+        raise RoutingError(str(exc)) from None
+    result.update(alignment_options(result))
     result["conversation_fallback_agent"] = conversation_fallback(result["conversation_fallback_agent"], entities)
     result.update(feature_options(result))
+    overrides=result['assistant_speaker_overrides']
+    if not isinstance(overrides,dict) or len(overrides)>100:
+        raise RoutingError('invalid_mapping')
+    for assistant,player in overrides.items():
+        # Preserve unavailable/removed exact choices so a transient registry change
+        # cannot silently select another speaker. The runtime resolves safety.
+        if not isinstance(assistant,str) or not re.fullmatch(r'assist_satellite\.[a-z0-9_]+',assistant):
+            raise RoutingError('invalid_mapping')
+        if player not in (None,'auto') and (not isinstance(player,str) or not re.fullmatch(r'media_player\.[a-z0-9_]+',player)):
+            raise RoutingError('invalid_mapping')
     result["announcement_volume"] = volume(result["announcement_volume"])
     if result["announcement_chime"] not in ("none", "default"):
         raise RoutingError("invalid_chime")
@@ -220,7 +287,7 @@ def validate_options(data, entities, devices, services):
     alarm_targets = [target for row in result["alarm_rooms"] for target in row["speakers"]]
     if len(set(alarm_targets)) != len(alarm_targets):
         raise RoutingError("duplicate_mapping")
-    if result["live_actions_enabled"] and result["ring_actions_enabled"] and not result["alarm_rooms"]:
+    if result["live_actions_enabled"] and result["ring_actions_enabled"] and not result["alarm_rooms"] and not any(key.startswith('assist_satellite.') for key in entities):
         raise RoutingError("alarm_mapping_required")
     if len({row["room_id"] for key in ("satellites", "media_rooms", "alarm_rooms") for row in result[key]}) > 100:
         raise RoutingError("invalid_mapping")

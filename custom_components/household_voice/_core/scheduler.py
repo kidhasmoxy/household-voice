@@ -5,6 +5,7 @@ Staging only: no HA client, speakers, phone delivery, shell, or provider credent
 import hashlib
 import json
 import math
+import re
 from pathlib import Path
 import sqlite3
 import time
@@ -65,7 +66,7 @@ class Scheduler:
         self.ring_seconds=ring_seconds
         with self.db() as db:
             version=db.execute('PRAGMA user_version').fetchone()[0]
-            if version>2:
+            if version>4:
                 raise ValueError('Database is newer than this scheduler; refusing downgrade')
             db.executescript("""
             CREATE TABLE IF NOT EXISTS schedules(
@@ -85,7 +86,7 @@ class Scheduler:
             db.execute('BEGIN IMMEDIATE')
             try:
                 for table, additions in {
-                    'schedules': {'mono_due':'REAL','clock_id':'TEXT'},
+                    'schedules': {'mono_due':'REAL','clock_id':'TEXT','target_assistant_id':'TEXT','target_assistant_device_id':'TEXT'},
                     'outbox': {'ring_until':'REAL','ring_deadline':'REAL','clock_id':'TEXT'},
                 }.items():
                     columns={r['name'] for r in db.execute(f'PRAGMA table_info({table})')}
@@ -95,7 +96,7 @@ class Scheduler:
                 # Legacy timers inherit their persisted UTC deadline on upgrade.
                 db.execute("UPDATE schedules SET mono_due=?,clock_id='' WHERE kind='timer' AND state='active' AND mono_due IS NULL",(0,))
                 db.execute("UPDATE outbox SET ring_until=due+?,clock_id='' WHERE status='ringing' AND ring_until IS NULL",(ring_seconds,))
-                db.execute('PRAGMA user_version=2')
+                db.execute('PRAGMA user_version=4')
                 db.commit()
             except BaseException:
                 db.rollback()
@@ -150,14 +151,14 @@ class Scheduler:
             raise ValueError(f"{name} must contain 1..120 characters")
         return value.strip()
 
-    def create_timer(self, label, seconds, source_room, request_id, target_room=None):
+    def create_timer(self, label, seconds, source_room, request_id, target_room=None, target_assistant_id=None):
         if type(seconds) not in (float, int) or not math.isfinite(seconds) or not 0 < seconds <= 604800:
             raise ValueError("Timer duration must be 0..604800 seconds, exclusive of zero")
         return self._create("timer", label, source_room, target_room or source_room,
                             self.clock() + seconds, {}, request_id,
-                            {"seconds": seconds})
+                            {"seconds": seconds}, target_assistant_id=target_assistant_id, requested_target_room=target_room)
 
-    def create_alarm(self, label, local_time, tz_name, weekdays, source_room, request_id, target_room=None, one_shot=False):
+    def create_alarm(self, label, local_time, tz_name, weekdays, source_room, request_id, target_room=None, one_shot=False, target_assistant_id=None):
         if type(one_shot) is not bool:
             raise ValueError('one_shot must be boolean')
         due = next_alarm(local_time, tz_name, weekdays, self.clock())
@@ -165,17 +166,42 @@ class Scheduler:
         if one_shot:
             spec['one_shot']=True
         return self._create("alarm", label, source_room, target_room or source_room,
-                            due, spec, request_id, spec)
+                            due, spec, request_id, spec, target_assistant_id=target_assistant_id,
+                            requested_target_room=target_room)
 
-    def _create(self, kind, label, source, target, due, spec, request_id, original):
+    @staticmethod
+    def _assistant_binding(db, identifier):
+        if not isinstance(identifier,str) or not re.fullmatch(r'assist_satellite\.[a-z0-9_]+',identifier):
+            raise ValueError('Select a configured target_assistant_id')
+        table=db.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='runtime_settings'").fetchone()
+        row=db.execute('SELECT body FROM runtime_settings WHERE id=1').fetchone() if table else None
+        config=json.loads(row['body']) if row else {}
+        binding=config.get('assistants',{}).get(identifier)
+        output=binding.get('schedule_output') if isinstance(binding,dict) else None
+        legacy_external=isinstance(binding,dict) and binding.get('status')=='ready' and isinstance(binding.get('speaker_id'),str) and re.fullmatch(r'media_player\.[a-z0-9_]+',binding['speaker_id'])
+        if (not isinstance(binding,dict) or binding.get('area_id') not in config.get('rooms',{})
+                or not binding.get('device_id') or not (output or legacy_external)):
+            raise ValueError('Target assistant needs an available schedule output')
+        return binding
+
+    def _create(self, kind, label, source, target, due, spec, request_id, original, *, target_assistant_id=None, requested_target_room=None):
         label = self._text(label, "label")
         source, target = self._text(source, "source_room"), self._text(target, "target_room")
         payload = dict(kind=kind, label=label, source=source, target=target, **original)
+        if kind=='alarm' or target_assistant_id is not None: payload['target_assistant_id']=target_assistant_id
         def action(db):
+            destination=target
+            device=None
+            if kind=='alarm' or target_assistant_id is not None:
+                binding=self._assistant_binding(db,target_assistant_id)
+                if requested_target_room is not None and requested_target_room!=binding['area_id']:
+                    raise ValueError('Alarm room must match the selected assistant area')
+                destination=binding['area_id']
+                device=binding['device_id']
             identifier = str(uuid.uuid4())
             mono_due=self.monotonic()+due-self.clock() if kind=='timer' else None
-            db.execute("INSERT INTO schedules(id,kind,label,source_room,target_room,due,remaining,state,revision,spec,created,mono_due,clock_id) VALUES(?,?,?,?,?,?,?, ?,1,?,?,?,?)",
-                       (identifier, kind, label, source, target, due, None, "active", json.dumps(spec), self.clock(),mono_due,self.boot_id if mono_due is not None else None))
+            db.execute("INSERT INTO schedules(id,kind,label,source_room,target_room,due,remaining,state,revision,spec,created,mono_due,clock_id,target_assistant_id,target_assistant_device_id) VALUES(?,?,?,?,?,?,?, ?,1,?,?,?,?,?,?)",
+                       (identifier, kind, label, source, destination, due, None, "active", json.dumps(spec), self.clock(),mono_due,self.boot_id if mono_due is not None else None,target_assistant_id,device))
             return dict(db.execute("SELECT * FROM schedules WHERE id=?", (identifier,)).fetchone())
         return self._mutate(request_id, payload, action)
 
@@ -184,14 +210,16 @@ class Scheduler:
             db.execute('BEGIN IMMEDIATE')
             try:
                 rows=[self._rebase(db,dict(r)) for r in db.execute("SELECT * FROM schedules WHERE state!='deleted' ORDER BY created,id").fetchall()]
+                for row in rows:
+                    if row['kind']=='alarm': row['alarm_binding']='assistant_bound' if row['target_assistant_id'] else 'legacy_needs_binding'
                 db.commit()
                 return rows
             except BaseException:
                 db.rollback()
                 raise
 
-    def command(self, identifier, operation, request_id, expected_revision, seconds=0, target_room=None, label=None):
-        allowed = {"pause", "resume", "add", "cancel", "dismiss", "snooze", "move", "enable", "disable", "rename", "delete"}
+    def command(self, identifier, operation, request_id, expected_revision, seconds=0, target_room=None, label=None, target_assistant_id=None):
+        allowed = {"pause", "resume", "add", "set", "cancel", "dismiss", "snooze", "move", "enable", "disable", "rename", "delete"}
         if operation not in allowed:
             raise ValueError("Unsupported operation")
         if type(expected_revision) is not int or expected_revision < 1:
@@ -201,6 +229,9 @@ class Scheduler:
         payload = dict(id=identifier, op=operation, revision=expected_revision, seconds=seconds, target=target_room)
         if label is not None:
             payload['label']=label
+        if target_assistant_id is not None:
+            if operation!='move': raise ValueError('Assistant target is only valid for move')
+            payload['target_assistant_id']=target_assistant_id
         def action(db):
             row = db.execute("SELECT * FROM schedules WHERE id=?", (identifier,)).fetchone()
             if not row:
@@ -221,6 +252,15 @@ class Scheduler:
                     raise ValueError("Timer is not paused")
                 r.update(due=now+r["remaining"], remaining=None, state="active")
                 r.update(mono_due=self.monotonic()+r['due']-now,clock_id=self.boot_id)
+            elif operation == "set":
+                if r['kind']!='timer' or r['state'] not in ('active','paused') or not 0<seconds<=604800:
+                    raise ValueError('Set needs an active or paused timer and positive duration')
+                if r['state']=='paused':
+                    r['remaining']=seconds
+                else:
+                    r['due']=now+seconds
+                    r['mono_due']=self.monotonic()+seconds
+                    r['clock_id']=self.boot_id
             elif operation == "add":
                 if r["kind"] != "timer" or r["state"] not in ("active", "paused"):
                     raise ValueError("Only active/paused timers can change duration")
@@ -236,7 +276,17 @@ class Scheduler:
             elif operation=='delete':
                 r.update(state='deleted',due=None,remaining=None,mono_due=None,clock_id=None)
             elif operation == "move":
-                r["target_room"] = self._text(target_room, "target_room")
+                if r['kind']=='alarm' or target_assistant_id is not None:
+                    binding=self._assistant_binding(db,target_assistant_id)
+                    if target_room is not None and target_room!=binding['area_id']:
+                        raise ValueError('Alarm room must match the selected assistant area')
+                    r['target_assistant_id']=target_assistant_id
+                    r['target_assistant_device_id']=binding['device_id']
+                    r['target_room']=binding['area_id']
+                else:
+                    r['target_assistant_id']=None
+                    r['target_assistant_device_id']=None
+                    r["target_room"] = self._text(target_room, "target_room")
                 db.execute("UPDATE outbox SET target_room=? WHERE schedule_id=? AND status='ringing'",
                            (r["target_room"], identifier))
             elif operation == "snooze":
@@ -266,8 +316,8 @@ class Scheduler:
             if operation in ("cancel", "disable", "dismiss", "snooze", "delete"):
                 db.execute("UPDATE outbox SET status=? WHERE schedule_id=? AND status='ringing'", (operation, identifier))
             r["revision"] += 1
-            db.execute("UPDATE schedules SET target_room=?,due=?,remaining=?,state=?,revision=?,label=?,mono_due=?,clock_id=? WHERE id=?",
-                       (r["target_room"], r["due"], r["remaining"], r["state"], r["revision"],r['label'],r['mono_due'],r['clock_id'], identifier))
+            db.execute("UPDATE schedules SET target_room=?,due=?,remaining=?,state=?,revision=?,label=?,mono_due=?,clock_id=?,target_assistant_id=?,target_assistant_device_id=? WHERE id=?",
+                       (r["target_room"], r["due"], r["remaining"], r["state"], r["revision"],r['label'],r['mono_due'],r['clock_id'],r['target_assistant_id'],r['target_assistant_device_id'], identifier))
             return r
         return self._mutate(request_id, payload, action)
 

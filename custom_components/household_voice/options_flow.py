@@ -5,11 +5,12 @@ from homeassistant.helpers import device_registry as dr, entity_registry as er
 from homeassistant.helpers.selector import (
     BooleanSelector, DeviceSelector, DeviceSelectorConfig, EntitySelector,
     EntitySelectorConfig, SelectSelector, SelectSelectorConfig, TextSelector,
-    NumberSelector, NumberSelectorConfig,
+    NumberSelector, NumberSelectorConfig, TextSelectorConfig, TextSelectorType,
 )
 from .options import (FEATURES, RoutingError, initial_options, phone, resolve_satellite,
                       satellite, speakers, validate_options, media_room, alarm_room,
-                      stt_profile, feature_options, volume, ma_speakers, conversation_fallback)
+                      stt_profile, feature_options, volume, ma_speakers, conversation_fallback, alignment_options)
+from .knowledge_policy import validate_knowledge_settings, KnowledgePolicyError
 
 
 class HouseholdVoiceOptionsFlow(config_entries.OptionsFlow):
@@ -54,7 +55,125 @@ class HouseholdVoiceOptionsFlow(config_entries.OptionsFlow):
 
     async def async_step_init(self, user_input=None):
         self._ensure_draft()
-        return self.async_show_menu(step_id="init", menu_options=["features", "conversation_routing", "announcements", "phone", "satellite", "media", "alarms", "capture", "test_pairing", "audio_recovery", "remove", "review"])
+        return self.async_show_menu(step_id="init", menu_options=["features", "assistant_pairing", "conversation_routing", "knowledge_family", "announcements", "single_turn_announcements", "phone", "satellite", "media", "alarms", "capture", "test_pairing", "audio_recovery", "native_audio_recovery", "remove", "review"])
+
+    async def async_step_knowledge_family(self, user_input=None):
+        """Administrative HA options only; never a model-accessible settings tool."""
+        self._ensure_draft()
+        sources = [entry for entry in self.hass.config_entries.async_entries('llm_intents')
+                   if entry.disabled_by is None]
+        choices = [{'value':'', 'label':'Reuse the sole configured Brave credential automatically'}]
+        choices += [{'value':entry.entry_id, 'label':entry.title} for entry in sources]
+        errors = {}
+        if user_input is not None:
+            try:
+                updated = {**self.draft, **{key:value for key,value in user_input.items()
+                    if key.startswith('knowledge_') and key not in ('knowledge_brave_api_key', 'knowledge_clear_api_key', 'knowledge_reset_prompt')}}
+                if user_input.get('knowledge_clear_api_key') is True:
+                    updated['knowledge_brave_api_key'] = ''
+                elif user_input.get('knowledge_brave_api_key'):
+                    updated['knowledge_brave_api_key'] = user_input['knowledge_brave_api_key']
+                values = validate_knowledge_settings(updated, reset_prompt=user_input.get('knowledge_reset_prompt',False))
+                if values['knowledge_search_entry'] not in {row['value'] for row in choices}:
+                    raise KnowledgePolicyError('invalid_knowledge_search_entry')
+                selected = values['knowledge_agent']
+                item = self._registry()[0].get(selected) if selected else None
+                if selected and (item is None or item.get('disabled') or item.get('integration') != 'local_openai'):
+                    raise KnowledgePolicyError('invalid_knowledge_agent')
+            except KnowledgePolicyError as exc:
+                errors['base'] = str(exc)
+            else:
+                self.draft.update(values)
+                return await self.async_step_init()
+        # Saved/newly-entered credentials never appear as suggested form values.
+        values = {key:value for key,value in (user_input or self.draft).items()
+                  if key.startswith('knowledge_') and key not in ('knowledge_brave_api_key','knowledge_clear_api_key','knowledge_reset_prompt')}
+        if isinstance(values.get('knowledge_domains'),list):
+            values['knowledge_domains'] = '\n'.join(values['knowledge_domains'])
+        return self._form('knowledge_family', {
+            vol.Optional('knowledge_enabled', default=False): BooleanSelector(),
+            vol.Optional('knowledge_age_policy', default='family_friendly'): SelectSelector(SelectSelectorConfig(options=[
+                {'value':'family_friendly','label':'Family friendly (about age eight)'},
+                {'value':'preteen','label':'Preteen (ten to twelve)'},
+                {'value':'teen','label':'Teen, with the same content safeguards'}], mode='dropdown')),
+            vol.Optional('knowledge_agent'): EntitySelector(EntitySelectorConfig(domain='conversation', integration='local_openai')),
+            vol.Optional('knowledge_search_entry', default=''): SelectSelector(SelectSelectorConfig(options=choices,mode='dropdown')),
+            vol.Required('knowledge_domains'): TextSelector(TextSelectorConfig(multiline=True)),
+            vol.Required('knowledge_prompt'): TextSelector(TextSelectorConfig(multiline=True)),
+            vol.Optional('knowledge_reset_prompt', default=False): BooleanSelector(),
+            vol.Optional('knowledge_daily_limit', default=20): NumberSelector(NumberSelectorConfig(min=1,max=100,step=1,mode='box')),
+            vol.Optional('knowledge_monthly_limit', default=300): NumberSelector(NumberSelectorConfig(min=1,max=1000,step=1,mode='box')),
+            vol.Optional('knowledge_brave_api_key'): TextSelector(TextSelectorConfig(type=TextSelectorType.PASSWORD)),
+            vol.Optional('knowledge_clear_api_key', default=False): BooleanSelector(),
+        }, errors, values)
+
+    async def async_step_assistant_pairing(self,user_input=None):
+        self._ensure_draft()
+        from .area_registry import collect_pairings
+        pairings=collect_pairings(self.hass,self.draft)['assistants']
+        errors={}
+        if user_input is not None:
+            selected=user_input.get('assistant')
+            if selected not in pairings: errors['base']='invalid_mapping'
+            else:
+                self.pairing_assistant=selected
+                return await self.async_step_assistant_speaker()
+        choices=[{'value':identifier,'label':f"{row['name']} — {row['speaker_name'] or row['status']}"} for identifier,row in pairings.items()]
+        return self._form('assistant_pairing',{
+            vol.Required('assistant'):SelectSelector(SelectSelectorConfig(options=choices,mode='dropdown')),
+        },errors,user_input)
+
+    async def async_step_assistant_speaker(self,user_input=None):
+        from .area_registry import collect_pairings
+        pairings=collect_pairings(self.hass,self.draft)
+        row=pairings['assistants'].get(self.pairing_assistant)
+        if row is None: return await self.async_step_assistant_pairing()
+        choices=[{'value':'auto','label':'Automatic — single suitable speaker in this Home Assistant area'},
+                 {'value':'none','label':'No paired speaker'}]
+        choices += [{'value':item['entity_id'],'label':item['name']+(' (unavailable)' if not item['available'] else '')} for item in row['choices']]
+        # Preserve a deliberate cross-area or currently unavailable exact override.
+        if row.get('speaker_id') and row['speaker_id'] not in {item['value'] for item in choices}:
+            choices.append({'value':row['speaker_id'],'label':f"{row['speaker_name']} (current explicit choice)"})
+        errors={}
+        if user_input is not None:
+            choice=user_input.get('speaker')
+            if choice not in {item['value'] for item in choices}: errors['base']='invalid_mapping'
+            else:
+                self.draft['assistant_speaker_overrides'][self.pairing_assistant]=None if choice=='none' else choice
+                return await self.async_step_init()
+        current=self.draft['assistant_speaker_overrides'].get(self.pairing_assistant,row['speaker_id'] if row['selection']=='manual' else 'auto')
+        return self._form('assistant_speaker',{
+            vol.Required('speaker',default=current or 'none'):SelectSelector(SelectSelectorConfig(options=choices,mode='dropdown')),
+        },errors,user_input,{'assistant':row['name'],'area':row['area_id'] or 'No area','status':row['status']})
+
+    async def async_step_single_turn_announcements(self, user_input=None):
+        self._ensure_draft()
+        errors = {}
+        if user_input is not None:
+            try:
+                updated = {**self.draft, **{key:value for key,value in user_input.items()
+                    if key in ('single_turn_announcements_enabled','announcement_alignment_url','announcement_alignment_model')}}
+                key = user_input.get('announcement_alignment_api_key', '')
+                if user_input.get('announcement_alignment_clear_api_key') is True:
+                    updated['announcement_alignment_api_key'] = ''
+                elif key:
+                    updated['announcement_alignment_api_key'] = key
+                values = alignment_options(updated)
+            except RoutingError as exc:
+                errors['base'] = str(exc)
+            else:
+                self.draft.update(values)
+                return await self.async_step_init()
+        # Never return a saved or newly supplied credential as a form suggestion.
+        values = {key:value for key,value in (user_input or self.draft).items()
+                  if key in ('single_turn_announcements_enabled','announcement_alignment_url','announcement_alignment_model')}
+        return self._form('single_turn_announcements', {
+            vol.Optional('single_turn_announcements_enabled', default=False): BooleanSelector(),
+            vol.Optional('announcement_alignment_url'): TextSelector(),
+            vol.Optional('announcement_alignment_model'): TextSelector(),
+            vol.Optional('announcement_alignment_api_key'): TextSelector(TextSelectorConfig(type=TextSelectorType.PASSWORD)),
+            vol.Optional('announcement_alignment_clear_api_key', default=False): BooleanSelector(),
+        }, errors, values)
 
     async def async_step_conversation_routing(self, user_input=None):
         self._ensure_draft()
@@ -90,6 +209,24 @@ class HouseholdVoiceOptionsFlow(config_entries.OptionsFlow):
                 return await self.async_step_init()
         return self._form('audio_recovery',{
             vol.Required('media_player'):EntitySelector(EntitySelectorConfig(domain='media_player',integration='music_assistant')),
+            vol.Required('confirm_audio_stopped',default=False):BooleanSelector(),
+        },errors,user_input)
+
+    async def async_step_native_audio_recovery(self,user_input=None):
+        self._ensure_draft()
+        errors={}
+        if user_input is not None:
+            try:
+                from .native_alarm import async_reset_native_alarm
+                await async_reset_native_alarm(self.hass,self.config_entry,
+                    user_input.get('assistant_id'),
+                    confirm_output_stopped=user_input.get('confirm_audio_stopped'))
+            except Exception:
+                errors['base']='audio_recovery_failed'
+            else:
+                return await self.async_step_init()
+        return self._form('native_audio_recovery',{
+            vol.Required('assistant_id'):EntitySelector(EntitySelectorConfig(domain='assist_satellite')),
             vol.Required('confirm_audio_stopped',default=False):BooleanSelector(),
         },errors,user_input)
 
@@ -290,6 +427,12 @@ class HouseholdVoiceOptionsFlow(config_entries.OptionsFlow):
         entities, devices, services = self._registry()
         device = self.selected_satellite["satellite_device_id"]
         current = next((item for item in self.draft["satellites"] if item["satellite_device_id"] == device), {})
+        if not current:
+            from .area_registry import collect_pairings
+            recommended=collect_pairings(self.hass,self.draft)['assistants'].get(self.selected_satellite.get('satellite_entity_id'))
+            if recommended and recommended['status']=='ready':
+                current={'room_id':recommended['area_id'],'tts_media_player':recommended['speaker_id'],
+                    'duck_media_players':recommended['duck_speakers']}
         if user_input is not None:
             try:
                 selected = satellite({**user_input, **self.selected_satellite}, entities, devices, services)

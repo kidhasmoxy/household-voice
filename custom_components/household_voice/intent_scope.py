@@ -2,6 +2,7 @@
 from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass
+from .schedule_language import schedule_edit
 
 
 class ScopeConflict(ValueError):
@@ -15,6 +16,7 @@ class RequestScope:
     operations: tuple[str, ...]
     context_id: str
     device_id: str | None
+    edit: object | None = None
 
 
 _SCOPE = ContextVar('household_voice_request_scope', default=None)
@@ -48,7 +50,12 @@ def bind_request(text, language, context, device_id):
     """Bind for one awaited fallback call; reset even on failure/cancellation."""
     match = category(text, language)
     context_id = getattr(context, 'id', None)
-    value = RequestScope(*match, context_id, device_id) if match and context_id else None
+    edit = schedule_edit(text, language)
+    if edit is not None and context_id:
+        operations=('stop','dismiss') if edit.operation=='dismiss' else (edit.operation,) if edit.operation else ()
+        value = RequestScope('schedules', edit.kind, operations, context_id, device_id, edit)
+    else:
+        value = RequestScope(*match, context_id, device_id) if match and context_id else None
     token = _SCOPE.set(value)
     try:
         yield
@@ -69,3 +76,18 @@ def constrain_arguments(family, operation, arguments, llm_context):
     if arguments.get('kind') not in (None, scope.kind):
         raise ScopeConflict()
     return {**arguments, 'kind': scope.kind}
+
+
+def trusted_schedule_edit(llm_context):
+    """Current original wording, never the model-selected schedule ID.
+
+    The router binds context when delegating. Direct HA LLM APIs also carry the
+    original user_prompt; use that conservative guard when available.
+    """
+    scope=_SCOPE.get()
+    if scope is not None:
+        if (getattr(getattr(llm_context,'context',None),'id',None)!=scope.context_id
+                or getattr(llm_context,'device_id',None)!=scope.device_id):
+            raise ScopeConflict()
+        if scope.edit is not None:return scope.edit
+    return schedule_edit(getattr(llm_context,'user_prompt',None),getattr(llm_context,'language','en'))

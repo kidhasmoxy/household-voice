@@ -5,7 +5,7 @@ submitted may finish (two seconds of audio plus transport buffering). MA offers
 no announcement-ID stop; this code deliberately does not invent one.
 """
 import asyncio
-from contextlib import suppress
+from contextlib import suppress, asynccontextmanager
 from copy import deepcopy
 import time
 
@@ -20,6 +20,7 @@ class RingWorker:
         targets.update(self.options.get('ring_fallback_speakers',[]))
         self.transport=transport or MAAnnouncementTransport(hass,targets,timeout=20,
             spoken_media_policy=self.options.get('spoken_media_policy','pause_and_resume'))
+        self.injected_transport=transport
         self.task=None
         self.pending=set()
         self.last_error=None
@@ -63,25 +64,50 @@ class RingWorker:
                 return
             args={k:clip[k] for k in keys}
             valid_targets={p for r in self.options.get('alarm_rooms',[]) if r.get('room_id')==clip.get('room') for p in r.get('speakers',[])}
+            assistant=clip.get('target_assistant_id')
+            def current_assistant():
+                from .area_registry import collect_pairings
+                row=collect_pairings(self.hass,self.options)['assistants'].get(assistant,{})
+                output=row.get('schedule_output')
+                if output is None and row.get('status')=='ready':
+                    output={'kind':'ma','entity_id':row.get('speaker_id'),'device_id':row.get('device_id')}
+                return (output is not None and output.get('entity_id')==clip['target']
+                    and output.get('kind')==clip.get('output_kind','ma')
+                    and (not clip.get('target_assistant_device_id') or output.get('device_id')==clip['target_assistant_device_id']))
+            transport=self.transport
+            if assistant:
+                valid_targets={clip['target']} if current_assistant() else set()
+                if self.injected_transport is None:
+                    if clip.get('output_kind')=='native':
+                        from .native_alarm import NativeAlarmTransport
+                        from .area_registry import collect_pairings
+                        row=collect_pairings(self.hass,self.options)['assistants'].get(assistant,{})
+                        transport=NativeAlarmTransport(self.hass,self.entry,assistant,row.get('device_id'))
+                    else:
+                        transport=MAAnnouncementTransport(self.hass,valid_targets,timeout=20,
+                            spoken_media_policy=self.options.get('spoken_media_policy','pause_and_resume'))
             if clip['target'] not in valid_targets:
                 return
             async def current():
                 if not self.enabled():
                     return False
                 valid=(await self.client.validate_ring(**args)).get('valid') is True
-                return valid and self.enabled()  # Options may change during I/O.
+                return valid and self.enabled() and (not assistant or current_assistant())
             if not await current():
                 return
             target=clip['target']
             try:
-                self.transport.resolve(target)
+                transport.resolve(target)
             except AudioTransportError:
+                if assistant:
+                    outcome='target_unavailable'
+                    return
                 # Fallback is allowed only before any primary service invocation.
                 target=None
                 available_but_busy=False
                 for candidate in self.options.get('ring_fallback_speakers',[]):
                     try:
-                        self.transport.resolve(candidate)
+                        transport.resolve(candidate)
                     except AudioTransportError:
                         continue
                     if not await current():
@@ -96,8 +122,15 @@ class RingWorker:
                     outcome='not_invoked' if available_but_busy else 'target_unavailable'
                     return
             outcome='service_outcome_unknown'
-            result=await self.transport.play(target,self.client.url+'/audio/alarm.wav',
-                volume=self.options.get('ring_volume',45)/100,chime=False,before_dispatch=current)
+            @asynccontextmanager
+            async def focus():
+                if assistant and clip.get('output_kind','ma')=='ma' and self.injected_transport is None:
+                    from .room_focus import announcement_room_focus
+                    async with announcement_room_focus(self.hass,self.entry,target):yield
+                else:yield
+            async with focus():
+                result=await transport.play(target,self.client.url+'/audio/alarm.wav',
+                    volume=self.options.get('ring_volume',45)/100,chime=False,before_dispatch=current)
             outcome=result.get('outcome','service_outcome_unknown')
             if outcome not in ('service_completed','not_invoked'):
                 outcome='service_outcome_unknown'

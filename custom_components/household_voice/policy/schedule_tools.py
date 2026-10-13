@@ -13,9 +13,9 @@ from typing import Literal
 from .routing import RoomRegistry
 
 Operation = Literal['list', 'stop', 'pause', 'resume', 'add', 'cancel', 'dismiss',
-                    'snooze', 'move', 'enable', 'disable', 'rename', 'delete']
+                    'snooze', 'move', 'enable', 'disable', 'rename', 'delete', 'set']
 OPERATIONS = ('list', 'stop', 'pause', 'resume', 'add', 'cancel', 'dismiss', 'snooze',
-              'move', 'enable', 'disable', 'rename', 'delete')
+              'move', 'enable', 'disable', 'rename', 'delete', 'set')
 STATES = ('active', 'paused', 'ringing', 'cancelled', 'disabled', 'completed', 'missed', 'deleted')
 TERMINAL = ('cancelled', 'completed', 'missed', 'deleted')
 
@@ -56,7 +56,7 @@ class ScheduleRequest:
             raise ValueError('include_terminal must be boolean')
         if self.seconds is not None and (not _number(self.seconds) or abs(self.seconds)>604800):
             raise ValueError('Invalid duration')
-        if self.seconds is not None and self.operation not in ('add', 'snooze'):
+        if self.seconds is not None and self.operation not in ('add', 'snooze', 'set'):
             raise ValueError('This command does not take a duration')
         if self.new_target_room is not None and self.operation!='move':
             raise ValueError('Only move takes a destination room')
@@ -139,7 +139,7 @@ def _eligible(record, operation):
         return record.kind=='timer' and record.state=='active'
     if operation=='resume':
         return record.kind=='timer' and record.state=='paused'
-    if operation=='add':
+    if operation in ('add','set'):
         return record.kind=='timer' and record.state in ('active', 'paused')
     if operation=='enable':
         return record.kind=='alarm' and record.state=='disabled'
@@ -194,11 +194,13 @@ def plan_schedule(request: ScheduleRequest, snapshot: ScheduleSnapshot, context:
     operation = 'dismiss' if request.operation=='stop' else request.operation
     command = {'identifier': selected.id, 'operation': operation, 'request_id': context.request_id,
                'expected_revision': selected.revision}
-    if operation in ('add', 'snooze'):
+    if operation in ('add', 'snooze', 'set'):
         if request.seconds is None:
             return _result('clarify', 'duration_required', question='For how many seconds?', selected=_choice(selected, now))
         if operation=='snooze' and not 0<request.seconds<=3600:
             return _result('clarify', 'invalid_snooze_duration')
+        if operation=='set' and not 0<request.seconds<=604800:
+            return _result('clarify', 'invalid_timer_duration')
         if operation=='add':
             remaining = selected.remaining if selected.state=='paused' else selected.due-now if selected.due is not None else None
             if remaining is None or remaining+request.seconds<=0 or request.seconds==0:

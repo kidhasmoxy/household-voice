@@ -126,13 +126,14 @@ async def main():
             proof['duplicate_local_install_rejected'] = True
             runtime = await client.runtime_config()
             await client.configure_runtime({'rooms': {'test_room': {'name': 'Test room', 'satellites': ['fixture_device'], 'capture_profiles': {'fixture_profile': 'fixture_device'}}},
-                'alarm_rooms': {}, 'ring_fallback_speakers': [], 'ring_enabled': False}, runtime['revision'])
+                'alarm_rooms': {}, 'ring_fallback_speakers': [], 'ring_enabled': False,
+                'assistants':{'assist_satellite.fixture':{'device_id':'fixture_device','area_id':'test_room','speaker_id':'media_player.fixture','status':'ready'}}}, runtime['revision'])
             timer = await hass.services.async_call('household_voice', 'create_timer', {
                 'label': 'Durability fixture', 'seconds': 3600, 'source_room': 'test_room', 'request_id': 'fixture-timer'}, blocking=True, return_response=True)
             timer_id = timer['schedule']['id']
             retry = await client.mutate('create_timer', {'label': 'Durability fixture', 'seconds': 3600, 'source_room': 'test_room', 'request_id': 'fixture-timer'})
             assert retry['schedule']['id'] == timer_id
-            alarm = await client.mutate('create_alarm', {'label': 'Alarm fixture', 'local_time': '07:00', 'timezone': 'UTC', 'weekdays': [0,1,2,3,4,5,6], 'source_room': 'test_room'})
+            alarm = await client.mutate('create_alarm', {'label': 'Alarm fixture', 'local_time': '07:00', 'timezone': 'UTC', 'weekdays': [0,1,2,3,4,5,6], 'source_room': 'test_room','target_assistant_id':'assist_satellite.fixture'})
             # Original PCM capture + signed/expiring single-recording media route.
             buffer = io.BytesIO()
             with wave.open(buffer, 'wb') as audio:

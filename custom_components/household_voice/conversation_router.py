@@ -35,12 +35,39 @@ def command(text, language='en'):
     return None
 
 
+def inline_announcement(text, language='en'):
+    """Extract only an anchored announcement body, preserving its exact text.
+
+    The returned suffix is data, never a second command. Audio alignment must
+    independently prove its boundary before any original recording is replayed.
+    """
+    if (not isinstance(text, str) or not isinstance(language, str)
+            or language.lower().split('-')[0] != 'en' or len(text) > 8000
+            or command(text, language) is not None):
+        return None
+    prefix = (r'^\s*(?:please\s+)?(?:(?:can|could|would)\s+you\s+)?(?:please\s+)?'
+              r'(?:(?:make|start|send)\s+(?:an?\s+)?(?:announcement|broadcast)'
+              r'|broadcast\s+(?:a\s+message|an\s+announcement)|announce|broadcast)'
+              r'(?:\s+(?:that|saying))?(?:\s*[,.:;!?]\s*|\s+)')
+    match = re.match(prefix, text, flags=re.IGNORECASE)
+    if match is None:
+        return None
+    body = text[match.end():].strip()
+    if not body or not re.search(r'\w', body) or body.casefold().rstrip('.!?') in ('that', 'saying', 'please'):
+        return None
+    return body
+
+
 def acknowledgement(operation, result):
     """Do not equate a queued workflow or provider acceptance with audible delivery."""
     if not isinstance(result, dict):
         result = {}
     status = result.get('status')
     if status == 'queued':
+        if operation == 'start':
+            # HA skips TTS on an empty response. The native question workflow
+            # supplies the sole prompt, or the inline recording plays directly.
+            return ''
         if result.get('reason') == 'recording_queued_for_delivery':
             return 'Your recording is queued. Speaker and phone delivery has not been confirmed.'
         return 'Wait for the announcement prompt, then say your message.'

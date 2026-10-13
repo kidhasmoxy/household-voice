@@ -8,8 +8,12 @@ from homeassistant.helpers import device_registry as dr, entity_registry as er, 
 from homeassistant.util import ulid as ulid_util
 
 from .const import DOMAIN
-from .conversation_router import acknowledgement, command
+from .conversation_router import acknowledgement, command, inline_announcement
 from .intent_scope import bind_request
+from .knowledge_router import knowledge_question
+from .knowledge_policy import family_prompt
+from . import knowledge_llm
+from .schedule_control import get_schedule_control
 
 _ACTIVE_ROUTERS = ContextVar('household_voice_active_conversation_routers', default=frozenset())
 
@@ -52,6 +56,45 @@ class HouseholdConversationRouter(conversation.ConversationEntity):
             return False
         return True
 
+    def _trusted_schedule_source(self,user_input):
+        """Registered assistant identity, independent of its current output pairing."""
+        if not getattr(user_input.context,'id',None) or not user_input.device_id:
+            return False
+        device=dr.async_get(self.hass).async_get(user_input.device_id)
+        if device is None or device.disabled_by is not None:return False
+        registry=er.async_get(self.hass)
+        assistants=[row for row in er.async_entries_for_device(registry,device.id)
+            if row.entity_id.startswith('assist_satellite.') and row.disabled_by is None]
+        if user_input.satellite_id:
+            return any(row.entity_id==user_input.satellite_id for row in assistants)
+        return len(assistants)==1
+
+    async def _knowledge_reply(self, user_input):
+        # No history, household context or caller prompt crosses this boundary.
+        # Failure stays in this lane; never delegate it to a tool-enabled agent.
+        try:
+            answer = await knowledge_llm.async_answer(self.hass, self.entry,
+                user_input.text, user_input.language)
+            speech = answer['speech']
+            if not isinstance(speech, str) or not speech.strip():
+                raise ValueError('invalid_knowledge_speech')
+            sources = answer.get('sources', [])
+            if (not isinstance(sources, list) or len(sources) > 5
+                    or any(not isinstance(row, dict)
+                        or not isinstance(row.get('title'), str)
+                        or not isinstance(row.get('url'), str) for row in sources)):
+                raise ValueError('invalid_knowledge_sources')
+        except Exception:
+            answer = {}
+            speech = 'I could not find a reliable answer right now. Please try again later.'
+        result = self._reply(user_input, speech)
+        result.response.response_type = intent.IntentResponseType.QUERY_ANSWER
+        sources = answer.get('sources', [])
+        if sources:
+            result.response.async_set_card('Answer sources', '\n\n'.join(
+                row['title'] + '\n' + row['url'] for row in sources))
+        return result
+
     async def async_process(self, user_input):
         active = _ACTIVE_ROUTERS.get()
         if self.entry.entry_id in active:
@@ -59,6 +102,9 @@ class HouseholdConversationRouter(conversation.ConversationEntity):
         token = _ACTIVE_ROUTERS.set(active | {self.entry.entry_id})
         try:
             operation = command(user_input.text, user_input.language)
+            body = inline_announcement(user_input.text, user_input.language)
+            if body is not None:
+                operation = 'start'
             if operation is not None:
                 if not self._trusted_source(user_input):
                     return self._reply(user_input, 'Use a configured voice satellite to manage its announcement.')
@@ -68,8 +114,12 @@ class HouseholdConversationRouter(conversation.ConversationEntity):
                         request_id = 'ha-router-' + hashlib.sha256(json.dumps([
                             self.entry.entry_id, user_input.context.id, user_input.device_id, operation
                         ]).encode()).hexdigest()
-                        result = await runtime.async_start(user_input.device_id, user_input.context,
-                                                           request_id=request_id)
+                        if body is not None:
+                            result = await runtime.async_start_inline(user_input.device_id, user_input.context,
+                                transcript=user_input.text, body=body, request_id=request_id)
+                        else:
+                            result = await runtime.async_start(user_input.device_id, user_input.context,
+                                                               request_id=request_id)
                     elif operation == 'cancel':
                         result = await runtime.async_cancel(user_input.device_id)
                     else:
@@ -77,6 +127,19 @@ class HouseholdConversationRouter(conversation.ConversationEntity):
                 except Exception:
                     result = {'status': 'error'}
                 return self._reply(user_input, acknowledgement(operation, result))
+            control=get_schedule_control(self.hass)
+            selection=await control.route(self.coordinator.client,self.entry.entry_id,user_input,
+                trusted=self._trusted_schedule_source(user_input),
+                conversation_id=user_input.conversation_id or ulid_util.ulid_now())
+            if selection is not None:
+                result=self._reply(user_input,selection['speech'])
+                if selection.get('conversation_id'):
+                    result.conversation_id=selection['conversation_id']
+                result.continue_conversation=selection['continue_conversation']
+                return result
+            if (self.entry.options.get('knowledge_enabled', False)
+                    and knowledge_question(user_input.text, user_input.language)):
+                return await self._knowledge_reply(user_input)
             fallback = self.entry.options.get('conversation_fallback_agent')
             registered = er.async_get(self.hass).async_get(fallback) if fallback else None
             agent = conversation.async_get_agent(self.hass, fallback) if fallback else None
@@ -85,11 +148,15 @@ class HouseholdConversationRouter(conversation.ConversationEntity):
                     or agent is None or isinstance(agent, HouseholdConversationRouter)):
                 return self._reply(user_input, 'Choose an available fallback conversation agent in Household Voice settings.')
             try:
+                extra_prompt = user_input.extra_system_prompt
+                if self.entry.options.get('knowledge_enabled', False):
+                    policy = family_prompt(self.entry.options)
+                    extra_prompt = '\n\n'.join(part for part in (extra_prompt, policy) if part)
                 with bind_request(user_input.text, user_input.language, user_input.context, user_input.device_id):
                     return await conversation.async_converse(self.hass, text=user_input.text,
                         conversation_id=user_input.conversation_id, context=user_input.context,
                         language=user_input.language, agent_id=fallback, device_id=user_input.device_id,
-                        satellite_id=user_input.satellite_id, extra_system_prompt=user_input.extra_system_prompt)
+                        satellite_id=user_input.satellite_id, extra_system_prompt=extra_prompt)
             except Exception:
                 return self._reply(user_input, 'The fallback conversation agent is unavailable. Please try again.')
         finally:

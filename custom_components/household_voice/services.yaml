@@ -1,3 +1,10 @@
+reset_native_alarm_audio:
+  name: Recover built-in alarm speaker
+  description: Clear a native assistant's uncertain audio hold after an administrator verifies pending audio stopped. Does not stop playback or confirm physical silence.
+  fields:
+    config_entry_id: {name: Coordinator entry ID, required: true, selector: {text: {}}}
+    assistant_id: {name: Assistant, required: true, selector: {entity: {domain: assist_satellite}}}
+    confirm_audio_stopped: {name: I verified pending alarm audio stopped, required: true, default: false, selector: {boolean: {}}}
 test_pairing:
   name: Test paired speaker
   description: Play a short test tone on this satellite's explicitly paired Music Assistant speaker. Requires enabled satellite audio and administrator access.
@@ -23,7 +30,7 @@ create_timer:
     request_id: {name: Retry ID, description: Omit for a generated UUID; reuse only for retrying the same request., selector: {text: {}}}
 create_alarm:
   name: Create household alarm
-  description: Create a coordinator alarm using local time and an IANA timezone.
+  description: Create an alarm bound to one registered assistant and its current paired speaker.
   fields:
     config_entry_id: {name: Coordinator entry ID, selector: {text: {}}}
     label: {name: Label, required: true, selector: {text: {}}}
@@ -32,7 +39,8 @@ create_alarm:
     weekdays: {name: Days, description: JSON integer list from Monday=0 to Sunday=6., required: true, example: '[0,1,2,3,4,5,6]', selector: {object: {}}}
     one_shot: {name: Only next occurrence, default: false, selector: {boolean: {}}}
     source_room: {name: Source room ID, required: true, selector: {text: {}}}
-    target_room: {name: Ring room ID, selector: {text: {}}}
+    target_assistant_id: {name: Alarm assistant, required: true, selector: {entity: {domain: assist_satellite}}}
+    target_room: {name: Assistant area ID, description: Optional consistency check; must match the selected assistant area., selector: {text: {}}}
     request_id: {name: Retry ID, description: Omit for a generated UUID., selector: {text: {}}}
 command:
   name: Change household schedule
@@ -45,9 +53,10 @@ command:
       required: true
       selector:
         select:
-          options: [pause, resume, add, cancel, dismiss, snooze, move, enable, disable, rename, delete]
+          options: [pause, resume, add, set, cancel, dismiss, snooze, move, enable, disable, rename, delete]
     expected_revision: {name: Current revision, required: true, selector: {number: {min: 1, max: 2147483647, mode: box}}}
     seconds: {name: Add/subtract or snooze seconds, selector: {number: {min: -604800, max: 604800, mode: box}}}
-    target_room: {name: New room for move, selector: {text: {}}}
+    target_room: {name: New room for timer move, selector: {text: {}}}
+    target_assistant_id: {name: New assistant for alarm move, selector: {entity: {domain: assist_satellite}}}
     label: {name: New label for rename, selector: {text: {}}}
     request_id: {name: Retry ID, description: Omit for a generated UUID., selector: {text: {}}}

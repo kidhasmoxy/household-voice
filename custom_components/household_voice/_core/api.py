@@ -20,14 +20,19 @@ class ScheduleAPI:
 
     def snapshot(self):
         self.scheduler.tick()
+        with self.scheduler.db() as db:
+            table=db.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='runtime_settings'").fetchone()
+            row=db.execute('SELECT body FROM runtime_settings WHERE id=1').fetchone() if table else None
+            assistants=json.loads(row['body']).get('assistants',{}) if row else {}
         return {'mode': 'dry_run', 'ha_connected': False,
-                'schedules': self.scheduler.list(), 'events': self.scheduler.events(), 'rooms': self.rooms}
+                'schedules': self.scheduler.list(), 'events': self.scheduler.events(), 'rooms': self.rooms,
+                'assistants':[{'id':identifier,**binding} for identifier,binding in assistants.items()]}
 
     def dispatch(self, operation, payload):
         schemas = {
-            'timer': ({'label', 'seconds', 'source_room', 'request_id'}, {'target_room'}),
-            'alarm': ({'label', 'local_time', 'timezone', 'weekdays', 'source_room', 'request_id'}, {'target_room', 'one_shot'}),
-            'command': ({'identifier', 'operation', 'request_id', 'expected_revision'}, {'seconds', 'target_room', 'label'}),
+            'timer': ({'label', 'seconds', 'source_room', 'request_id'}, {'target_room','target_assistant_id'}),
+            'alarm': ({'label', 'local_time', 'timezone', 'weekdays', 'source_room', 'request_id','target_assistant_id'}, {'target_room', 'one_shot'}),
+            'command': ({'identifier', 'operation', 'request_id', 'expected_revision'}, {'seconds', 'target_room', 'label','target_assistant_id'}),
         }
         if operation not in schemas:
             raise APIError('Unknown operation', 404)

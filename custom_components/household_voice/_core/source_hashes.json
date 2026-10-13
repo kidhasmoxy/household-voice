@@ -9,7 +9,7 @@
       "source": "household_voice/announcements.py"
     },
     "api.py": {
-      "sha256": "bd4500b9cfcb098032785b92ef4622e2885125b418127950b88d29784b6f9a9a",
+      "sha256": "2a4e18eb6cf6565a2b3c3b1ee2e87ecbf56ae6f1133d4812bc281631e910303d",
       "source": "household_voice/api.py"
     },
     "brave_search.py": {
@@ -28,6 +28,10 @@
       "sha256": "a266b85153a0b3628b59922913bdb27d4c574109a1b920cb8a87e405070a37d1",
       "source": "household_voice/delivery.py"
     },
+    "knowledge_search.py": {
+      "sha256": "b754b3dea26389ef48e03fe2211ab09767b2639768db997dbafffea14648f181",
+      "source": "household_voice/knowledge_search.py"
+    },
     "research.py": {
       "sha256": "7eb3bce700bbc4de24931aeaab7480a75a2a6fc15445b973586d00cbbe1239ee",
       "source": "household_voice/research.py"
@@ -37,11 +41,11 @@
       "source": "household_voice/routing.py"
     },
     "runtime.py": {
-      "sha256": "c3be037ca58714a28bf400195616e91b2fd098d14c1fdd3515164b8749f13c36",
+      "sha256": "a23b0bdad990dfbb8e0b33c40b6ad7475e70089f5088c2d99771df67dadfade2",
       "source": "household_voice/runtime.py"
     },
     "scheduler.py": {
-      "sha256": "3972130c7c376c1e9f3fce5e8e633148468780481d1164d460a1eec2e32c73a9",
+      "sha256": "50772f964fe2f4eee3d9422354ce75e7448359087cb0b5dbd0de737bb81f8a29",
       "source": "household_voice/scheduler.py"
     }
   },

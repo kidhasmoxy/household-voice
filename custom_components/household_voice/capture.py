@@ -1,4 +1,10 @@
-"""Bounded, explicitly armed original-utterance capture; no HA actions or disk I/O.
+"""Bounded original-utterance capture; no HA actions or disk I/O.
+
+The default remains explicitly armed two-turn capture. Separately opt-in
+provisional mode buffers only active STT audio and retains successful explicit
+inline announcements for at most ten seconds, through a one-use ContextVar
+capability. Ordinary and bare-command audio is discarded without WAV encoding.
+Provisional results are raw PCM; alignment, cropping and upload are not performed.
 
 Review contract (HA Core 2026.10.1, commit abe1fdd7cd6b4de1715c87b6fd87d92699514ef9):
 SpeechToTextEntity.async_process_audio_stream(metadata, stream) is the supported
@@ -49,6 +55,7 @@ import secrets
 import time
 from typing import Any
 import wave
+from .inline_capture import InlineCaptureStore
 
 RATE = 16000
 WIDTH = 2
@@ -138,6 +145,7 @@ class CaptureSessionManager:
         self._recordings: dict[str, _Recording] = {}
         self._streams: dict[str, set[object]] = {}
         self._closed = False
+        self.inline = InlineCaptureStore(clock=clock)
 
     def _bound(self, profile, source=None):
         _identity(profile)
@@ -152,6 +160,7 @@ class CaptureSessionManager:
             raise CaptureError("Capture manager has been shut down")
         _identity(trusted_source)
         self._bound(profile_id, trusted_source)
+        self.inline.invalidate(profile_id)
         if isinstance(ttl, bool) or not isinstance(ttl, (int, float)) or not math.isfinite(ttl) or not 0 < ttl <= 30:
             raise CaptureError("Arm TTL must be within 30 seconds")
         self.expire()
@@ -167,9 +176,13 @@ class CaptureSessionManager:
         """Cancel only the current arm/recording; optional nonce rejects late cancel."""
         _identity(trusted_source)
         self._bound(profile_id, trusted_source)
+        pending = self.inline.pending.get(profile_id)
+        had_inline = pending is not None and (nonce is None or pending.nonce == nonce)
+        if had_inline:
+            self.inline.invalidate(profile_id)
         arm = self._arms.get(profile_id)
         recording = self._recordings.get(profile_id)
-        changed = False
+        changed = had_inline
         if arm and (nonce is None or nonce == arm.nonce):
             del self._arms[profile_id]
             changed = True
@@ -179,6 +192,7 @@ class CaptureSessionManager:
         return changed
 
     def expire(self) -> None:
+        self.inline.expire()
         now = self._clock()
         for profile, arm in list(self._arms.items()):
             if now >= arm.expires_at:
@@ -190,20 +204,28 @@ class CaptureSessionManager:
     def shutdown(self) -> None:
         """Discard captures on adapter unload; do not cancel unrelated STT tasks."""
         self._closed = True
+        self.inline.shutdown()
         self._arms.clear()
         for recording in self._recordings.values():
             recording.discard("shutdown")
 
     async def process(self, profile_id: str, metadata, stream: AsyncIterable[bytes],
-                      delegate: Callable[[Any, AsyncIterable[bytes]], Awaitable[Any]]) -> CaptureOutcome:
+                      delegate: Callable[[Any, AsyncIterable[bytes]], Awaitable[Any]], *,
+                      provisional=False, inline_parser=None, generation=None) -> CaptureOutcome:
         """Proxy one STT call; consume the arm before the first asynchronous wait."""
         self._bound(profile_id)
         self.expire()
+        self.inline.invalidate_current()
+        self.inline.invalidate(profile_id)
         streams = self._streams.setdefault(profile_id, set())
         concurrent = bool(streams)
         stream_token = object()
         streams.add(stream_token)
         arm = self._arms.pop(profile_id, None)  # Exactly one attempt, even if unsupported.
+        is_provisional = (arm is None and provisional is True and callable(inline_parser)
+                          and generation is not None and not self._closed)
+        if is_provisional:
+            arm = CaptureArm(profile_id, self._profiles[profile_id], self._nonce_factory(), self._clock()+30)
         recording = None
         status = "not_armed"
         if concurrent:
@@ -213,7 +235,7 @@ class CaptureSessionManager:
         elif arm:
             if not _supported(metadata):
                 status = "unsupported_audio"
-            elif sum(r.reason is None for r in self._recordings.values()) >= self._limit:
+            elif sum(r.reason is None for r in self._recordings.values()) + len(self.inline.pending) >= self._limit:
                 status = "capture_capacity"
             else:
                 recording = _Recording(arm, self._clock() + 45)
@@ -263,7 +285,21 @@ class CaptureSessionManager:
                         recording.discard("invalid_transcript")
                 if not MIN_BYTES <= len(recording.audio) <= MAX_BYTES or len(recording.audio) % WIDTH:
                     recording.discard("invalid_audio_length")
-                if recording.reason is None:
+                if recording.reason is None and is_provisional:
+                    try:
+                        body = inline_parser(transcript)
+                    except Exception:
+                        body = None
+                    if not isinstance(body, str) or not body.strip() or body not in transcript:
+                        recording.discard('not_inline_announcement')
+                        status = recording.reason
+                    else:
+                        self.inline.publish(profile=profile_id, source=recording.arm.source_device,
+                            nonce=recording.arm.nonce, generation=generation, transcript=transcript,
+                            body=body, audio=recording.audio)
+                        recording.audio = bytearray()  # Ownership moved to the ten-second holder.
+                        status = 'inline_buffered'
+                elif recording.reason is None:
                     with io.BytesIO() as output:
                         with wave.open(output, "wb") as wav:
                             wav.setnchannels(1)

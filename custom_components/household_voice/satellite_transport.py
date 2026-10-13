@@ -35,6 +35,35 @@ def reset_uncertain_audio(hass, player_id, *, operator_confirmed_stopped=False):
         raise AudioTransportError('Confirm the previous audio has stopped before recovery')
     mass,native_id=MAAnnouncementTransport(hass,{player_id}).resolve(player_id)
     key=_player_key(hass,player_id,native_id)
+    return reset_uncertain_audio_identity(hass, provider_entry_id=key[0],
+        native_player_id=key[1], operator_confirmed_stopped=operator_confirmed_stopped)
+
+
+def _uncertain_identity(provider_entry_id, native_player_id):
+    if (not isinstance(provider_entry_id, str) or not 1 <= len(provider_entry_id) <= 128
+            or not isinstance(native_player_id, str) or not 1 <= len(native_player_id) <= 512
+            or any(ord(c) < 32 for c in provider_entry_id + native_player_id)):
+        raise AudioTransportError('Invalid stored player identity')
+    return provider_entry_id, native_player_id
+
+
+def restore_uncertain_audio(hass, *, provider_entry_id, native_player_id):
+    """Restore a trusted durable hold, even with an offline or renamed HA entity.
+
+    Only the receiver's local ledger calls this; no model or HTTP identifiers are
+    accepted here. The MA config-entry/native-player tuple is the transport key.
+    """
+    key = _uncertain_identity(provider_entry_id, native_player_id)
+    _UNCERTAIN.setdefault(hass, {})[key] = True
+    return True
+
+
+def reset_uncertain_audio_identity(hass, *, provider_entry_id, native_player_id,
+                                   operator_confirmed_stopped=False):
+    """Admin recovery for a trusted saved identity; never issue a physical stop."""
+    if operator_confirmed_stopped is not True:
+        raise AudioTransportError('Confirm the previous audio has stopped before recovery')
+    key = _uncertain_identity(provider_entry_id, native_player_id)
     lock=_LOCKS.get(hass,{}).get(key)
     if lock is not None and lock.locked():
         raise AudioTransportError('Cannot recover while a local announcement is active')

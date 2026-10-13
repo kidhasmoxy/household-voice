@@ -20,7 +20,7 @@ from urllib.parse import urlsplit
 class AnnouncementAdapter:
     def __init__(self, hass, options, resolve_audio, *, allowed_audio_origins,
                  execution_authorized=False, presence_freshness=300, transport=None,
-                 allowed_audio_path_prefix='/audio/'):
+                 allowed_audio_path_prefix='/audio/', focus_entry=None):
         self.hass, self.options, self.resolve_audio = hass, deepcopy(options), resolve_audio
         self.allowed_audio_origins = frozenset(allowed_audio_origins)
         if not re.fullmatch(r'/(?:[A-Za-z0-9_-]+/)*audio/', allowed_audio_path_prefix):
@@ -34,6 +34,7 @@ class AnnouncementAdapter:
         if self.presence_policy not in ('current_state','recent_hour','recent_five_minutes'):
             raise ValueError('Invalid phone presence policy')
         self.transport = transport
+        self.focus_entry = focus_entry
 
     def targets(self, target_rooms=None, include_home_phones=True):
         """Rooms come from a request; entities/services only from saved options."""
@@ -159,6 +160,10 @@ class AnnouncementAdapter:
                     from .satellite_transport import MAAnnouncementTransport
                     self.transport=MAAnnouncementTransport(self.hass,{item['target'] for item in configured if item['kind']=='speaker'},timeout=60,
                         spoken_media_policy=self.options.get('spoken_media_policy','pause_and_resume'))
+                if self.focus_entry is not None:
+                    from .room_focus import announcement_room_focus
+                    async with announcement_room_focus(self.hass, self.focus_entry, target['target']):
+                        return await self.transport.play(target['target'],url,volume=volume,chime=chime=='default',before_dispatch=before_dispatch)
                 return await self.transport.play(target['target'],url,volume=volume,chime=chime=='default',before_dispatch=before_dispatch)
             await self.hass.services.async_call(domain,service,data,blocking=True)
         except Exception:

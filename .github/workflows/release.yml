@@ -12,6 +12,7 @@ jobs:
       fail-fast: false
       matrix:
         home-assistant: ["2026.9.4", "2026.10.1"]
+        fixture: ["ha_embedded_smoke.py", "ha_native_alarm_smoke.py"]
     steps:
       - uses: actions/checkout@v4
         with:
@@ -23,7 +24,7 @@ jobs:
           --tmpfs /tmp:rw,mode=1777,size=256m --memory 1g --cpus 2
           -e PYTHONDONTWRITEBYTECODE=1 -v "$PWD:/source:ro"
           --entrypoint python ghcr.io/home-assistant/home-assistant:${{ matrix.home-assistant }}
-          /source/tests/ha_embedded_smoke.py
+          /source/tests/${{ matrix.fixture }}
   release:
     needs: home-assistant
     runs-on: ubuntu-latest

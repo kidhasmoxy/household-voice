@@ -5,7 +5,7 @@ from urllib.parse import urlsplit, urlunsplit
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 from uuid import uuid4
 
-OPERATIONS = {"pause", "resume", "add", "cancel", "dismiss", "snooze", "move", "enable", "disable", "rename", "delete"}
+OPERATIONS = {"pause", "resume", "add", "set", "cancel", "dismiss", "snooze", "move", "enable", "disable", "rename", "delete"}
 
 
 def normalize_url(value):
@@ -42,17 +42,19 @@ def validate_payload(service, data):
     if not isinstance(data, dict):
         raise ValueError("Service data must be an object")
     required = {"create_timer": {"label", "seconds", "source_room"},
-                "create_alarm": {"label", "local_time", "timezone", "weekdays", "source_room"},
+                "create_alarm": {"label", "local_time", "timezone", "weekdays", "source_room","target_assistant_id"},
                 "command": {"identifier", "operation", "expected_revision"}}
-    optional = {"create_timer": {"target_room"}, "create_alarm": {"target_room", "one_shot"},
-                "command": {"seconds", "target_room", "label"}}
+    optional = {"create_timer": {"target_room","target_assistant_id"}, "create_alarm": {"target_room", "one_shot"},
+                "command": {"seconds", "target_room", "label","target_assistant_id"}}
     if service not in required or not required[service].issubset(data) or set(data) - required[service] - optional[service] - {"config_entry_id", "request_id"}:
         raise ValueError("Unknown service, missing required fields, or extra fields")
     result = dict(data)
-    for field in ("label", "source_room", "target_room", "identifier", "config_entry_id"):
+    for field in ("label", "source_room", "target_room", "identifier", "config_entry_id","target_assistant_id"):
         if field in result:
             result[field] = text(result[field], field)
     result["request_id"] = text(result.get("request_id", str(uuid4())), "request_id", 128)
+    if 'target_assistant_id' in result and not re.fullmatch(r'assist_satellite\.[a-z0-9_]+',result['target_assistant_id']):
+        raise ValueError('Select an exact assistant entity')
     if service == "create_timer":
         number(result["seconds"], "seconds", 0, 604800, True)
     if service == "create_alarm":
@@ -70,6 +72,7 @@ def validate_payload(service, data):
         result["weekdays"] = sorted(set(days))
     if service == "command":
         op = result["operation"]
+        if op == "set": number(result.get("seconds"), "seconds", 0, 604800, True)
         if not isinstance(op, str) or op not in OPERATIONS:
             raise ValueError("Unsupported command")
         if type(result["expected_revision"]) is not int or result["expected_revision"] < 1:
@@ -77,8 +80,8 @@ def validate_payload(service, data):
         number(result.get("seconds", 0), "seconds", -604800, 604800)
         if op == "snooze" and not 0 < result.get("seconds", 0) <= 3600:
             raise ValueError("Snooze requires 1 to 3600 seconds")
-        if op == "move" and "target_room" not in result:
-            raise ValueError("Move requires target_room")
+        if op == "move" and not {'target_room','target_assistant_id'}.intersection(result):
+            raise ValueError("Move requires an assistant for alarms or a room for timers")
         if op == "rename" and "label" not in result:
             raise ValueError("Rename requires label")
     return result

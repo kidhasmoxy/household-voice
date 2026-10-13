@@ -25,6 +25,7 @@ class HouseholdVoiceManagerCard extends HTMLElement {
     <label id="target_room_label">Ring room<input name="target_room" maxlength="120" placeholder="Same as source"></label>
     <label id="minutes">Minutes<input name="minutes" type="number" min="0.01" max="10080" step="any" value="5"></label>
     <label class="alarm" hidden>Time<input name="local_time" type="time" value="07:00"></label>
+    <label>Assistant<select name="target_assistant_id"><option value="">Choose an assistant</option></select><span id="speaker-preview" class="muted"></span></label>
     <label class="alarm" hidden>Alarm timezone<input name="timezone"></label>
     <fieldset class="alarm" hidden><legend>Days</legend>${["Mon","Tue","Wed","Thu","Fri","Sat","Sun"].map((name,index)=>`<label class="check"><input name="day_${index}" type="checkbox" checked>${name}</label>`).join("")}</fieldset>
     <label class="alarm check" hidden><input name="one_shot" type="checkbox" checked>Only next occurrence</label>
@@ -36,16 +37,33 @@ class HouseholdVoiceManagerCard extends HTMLElement {
       const alarm = form.elements.kind.value === "alarm";
       this.shadowRoot.querySelector("#minutes").hidden = alarm;
       for (const node of this.shadowRoot.querySelectorAll(".alarm")) node.hidden = !alarm;
+      for (const name of ["source_room","target_room"]) this.shadowRoot.querySelector(`#${name}_label`).hidden = alarm;
+      form.elements.source_room.required = !alarm && !form.elements.target_assistant_id.value;
+      form.elements.target_assistant_id.required = alarm;
     };
+    form.elements.target_assistant_id.onchange = () => { this.updateSpeakerPreview(); form.elements.source_room.required=form.elements.kind.value!=="alarm" && !form.elements.target_assistant_id.value; };
     form.onsubmit = async (event) => {
       event.preventDefault();
       if (!form.reportValidity() || this.busy) return;
       const kind = form.elements.kind.value;
       const payload = {label: form.elements.label.value.trim(), source_room: form.elements.source_room.value.trim()};
-      if (form.elements.target_room.value.trim()) payload.target_room = form.elements.target_room.value.trim();
-      if (kind === "timer") payload.seconds = Number(form.elements.minutes.value) * 60;
-      else Object.assign(payload, {local_time: form.elements.local_time.value, timezone: form.elements.timezone.value.trim(),
-        weekdays: Array.from({length:7},(_,index)=>index).filter(index=>form.elements[`day_${index}`].checked), one_shot: form.elements.one_shot.checked});
+      if (kind === "timer" && form.elements.target_room.value.trim()) payload.target_room = form.elements.target_room.value.trim();
+      if (kind === "timer") {
+        payload.seconds = Number(form.elements.minutes.value) * 60;
+        const assistant=(this.state()?.attributes.assistants || []).find(row=>row.id===form.elements.target_assistant_id.value);
+        if (assistant) {
+          if (!this.scheduleReady(assistant)) { this.message("Choose an assistant with an available output.",true);return; }
+          if (payload.target_room && payload.target_room!==assistant.area_id) { this.message("Choose either an assistant or a different ring room.",true);return; }
+          Object.assign(payload,{target_assistant_id:assistant.id,source_room:assistant.area_id});
+        }
+      }
+      else {
+        const assistant = (this.state()?.attributes.assistants || []).find(row=>row.id===form.elements.target_assistant_id.value);
+        if (!assistant || !this.scheduleReady(assistant)) { this.message("Choose an assistant with an available built-in or paired speaker.", true); return; }
+        Object.assign(payload, {target_assistant_id:assistant.id, source_room:assistant.area_id,
+          local_time: form.elements.local_time.value, timezone: form.elements.timezone.value.trim(),
+          weekdays: Array.from({length:7},(_,index)=>index).filter(index=>form.elements[`day_${index}`].checked), one_shot: form.elements.one_shot.checked});
+      }
       await this.call(`create_${kind}`, payload);
     };
     this.renderRows();
@@ -72,7 +90,24 @@ class HouseholdVoiceManagerCard extends HTMLElement {
     const roomName = id => rooms.find(room=>room.id===id)?.name || id;
     let spec = {}; try { spec = typeof row.spec === "string" ? JSON.parse(row.spec) : row.spec || {}; } catch (_) {}
     const zone = row.kind === "alarm" ? ` · displayed in ${Intl.DateTimeFormat().resolvedOptions().timeZone}${spec.timezone ? ` (alarm: ${spec.timezone})` : ""}` : "";
-    return `${labels[row.state] || row.state} · ${roomName(row.source_room)} → ${roomName(row.target_room)} · ${timing}${zone}`;
+    const assistant = (this.state()?.attributes.assistants || []).find(item=>item.id===row.target_assistant_id);
+    const output = row.target_assistant_id ? `${assistant?.name || row.target_assistant_id} → ${this.scheduleSpeaker(assistant)} (${assistant?.status || "assistant missing"})` : row.kind === "alarm" ? "Legacy alarm — choose an assistant; existing routing retained" : `${roomName(row.source_room)} → ${roomName(row.target_room)}`;
+    return `${labels[row.state] || row.state} · ${output} · ${timing}${zone}`;
+  }
+  scheduleReady(row) { return Boolean(row?.schedule_output) || row?.status==='ready'; }
+  scheduleSpeaker(row) { return row?.schedule_output?.kind==='native' ? 'Built-in speaker' : row?.schedule_output?.entity_id || row?.speaker_id || 'Output unavailable'; }
+  updateSpeakerPreview() {
+    const selected=this.shadowRoot.querySelector("form").elements.target_assistant_id.value;
+    const row=(this.state()?.attributes.assistants || []).find(item=>item.id===selected);
+    this.shadowRoot.querySelector("#speaker-preview").textContent=row ? `${this.scheduleSpeaker(row)} · ${this.scheduleReady(row) ? "Available" : row.status}` : "Choose an assistant for built-in or paired speaker output. Leave blank for a room timer.";
+  }
+  updateAssistantChoices(assistants) {
+    const key=JSON.stringify(assistants); if (this.assistantChoicesKey===key) return;
+    this.assistantChoicesKey=key;
+    const select=this.shadowRoot.querySelector("form").elements.target_assistant_id, previous=select.value;
+    select.replaceChildren(); const blank=document.createElement("option"); blank.value=""; blank.textContent="Choose an assistant"; select.append(blank);
+    for (const row of assistants) { const node=document.createElement("option"); node.value=row.id; node.textContent=`${row.name || row.id} — ${this.scheduleSpeaker(row)}`; node.disabled=!this.scheduleReady(row); select.append(node); }
+    select.value=previous; this.updateSpeakerPreview();
   }
   updateRoomChoices(rooms) {
     const key = JSON.stringify(rooms);
@@ -83,7 +118,7 @@ class HouseholdVoiceManagerCard extends HTMLElement {
     for (const name of ["source_room","target_room"]) {
       const previous = form.elements[name].value;
       const element = document.createElement(rooms.length ? "select" : "input");
-      element.name = name; element.required = name === "source_room";
+      element.name = name; element.required = name === "source_room" && form.elements.kind.value!=="alarm" && !form.elements.target_assistant_id.value;
       if (rooms.length) {
         const blank = document.createElement("option"); blank.value=""; blank.textContent=name==="source_room"?"Choose a room":"Same as source"; element.append(blank);
         for (const room of rooms) { const option=document.createElement("option"); option.value=room.id; option.textContent=room.name; element.append(option); }
@@ -109,6 +144,7 @@ class HouseholdVoiceManagerCard extends HTMLElement {
     const root = this.shadowRoot.querySelector("#rows"); root.replaceChildren();
     if (!available) return;
     this.updateRoomChoices(state.attributes.rooms || []);
+    this.updateAssistantChoices(state.attributes.assistants || []);
     const rows = state.attributes.schedules || [];
     if (!rows.length) { const empty = document.createElement("p"); empty.textContent = "No household schedules."; root.append(empty); }
     for (const row of rows) {
@@ -132,7 +168,16 @@ class HouseholdVoiceManagerCard extends HTMLElement {
       if (row.state === "ringing") { button("Dismiss", "dismiss"); button("Snooze 5 min", "snooze", {seconds:300}); }
       if (row.kind === "alarm") { if (row.state === "disabled") button("Enable", "enable"); else if (["active", "ringing"].includes(row.state)) button("Disable", "disable"); }
       if (["active", "paused", "ringing"].includes(row.state)) button("Cancel", "cancel");
-      button("Rename", "rename"); button("Move room", "move"); button("Delete", "delete");
+      button("Rename", "rename");
+      if (row.kind === "alarm" || row.target_assistant_id) {
+        const choice=document.createElement("select"); choice.setAttribute("aria-label",`Assistant for ${row.label}`);
+        const blank=document.createElement("option"); blank.value=""; blank.textContent="Choose alarm assistant"; choice.append(blank);
+        for (const assistant of state.attributes.assistants || []) { const item=document.createElement("option"); item.value=assistant.id; item.textContent=`${assistant.name || assistant.id} → ${this.scheduleSpeaker(assistant)}`; item.disabled=!this.scheduleReady(assistant); choice.append(item); }
+        choice.value=row.target_assistant_id || ""; controls.append(choice);
+        const move=document.createElement("button"); move.textContent=row.target_assistant_id ? "Move assistant" : "Bind legacy alarm"; move.disabled=this.busy;
+        move.onclick=()=> { if (choice.value) this.call("command",{identifier:row.id,expected_revision:row.revision,operation:"move",target_assistant_id:choice.value}); }; controls.append(move);
+      } else button("Move room", "move");
+      button("Delete", "delete");
       box.append(controls); root.append(box);
     }
     const events = state.attributes.events || [];
@@ -140,6 +185,107 @@ class HouseholdVoiceManagerCard extends HTMLElement {
   }
 }
 if (!customElements.get("household-voice-manager-card")) customElements.define("household-voice-manager-card", HouseholdVoiceManagerCard);
+
+
+/* Source management is admin-only; the server independently enforces authority. */
+class HouseholdVoiceEchoMuseManager extends HTMLElement {
+  constructor() {
+    super(); this.attachShadow({mode:"open"}); this.generation=0;
+    this.shadowRoot.innerHTML=`<style>
+      :host{display:block;margin-top:24px}section{padding:20px;background:var(--card-background-color);border-radius:16px}
+      form,.controls{display:flex;flex-wrap:wrap;gap:10px;margin:14px 0}label{display:flex;flex-direction:column;gap:5px}
+      input,select,button{font:inherit;padding:9px;border:1px solid var(--divider-color);border-radius:8px;background:var(--card-background-color);color:var(--primary-text-color)}
+      p{line-height:1.5;color:var(--secondary-text-color)}pre{white-space:pre-wrap;overflow-wrap:anywhere;user-select:text}.row{border-top:1px solid var(--divider-color);padding:12px 0}[hidden]{display:none!important}
+    </style><section><h2>EchoMuse voice devices</h2>
+      <p>Pairing is optional: an unpaired assistant uses its own speaker. A paired assistant uses its selected room speaker. Enable the EchoMuse endpoint in the integration’s Configure menu when ready.</p>
+      <p>Set a trusted HTTPS external URL in Home Assistant’s network settings first. Enter the exact device ID shown by your EchoMuse controller. Creating a source leaves it disabled and does not install anything on the controller.</p>
+      <form><label>Assistant<select name="assistant" aria-label="Assistant" required></select></label>
+      <label>EchoMuse controller device ID<input name="controller" required maxlength="128" pattern="[A-Za-z0-9_.:\\-]{1,128}" autocomplete="off" spellcheck="false"></label>
+      <button type="submit">Create disabled source</button></form>
+      <div id="echo-secret" hidden><p>Copy this configuration into the selected controller’s Household Voice audio settings. The key is shown only here, once. Keep it private. Enable the source after configuring the controller.</p><pre id="echo-config"></pre><button id="echo-forget">I saved it — hide key</button></div>
+      <p id="echo-status" role="status" aria-live="polite"></p><button id="echo-refresh">Refresh sources</button><p id="echo-mode"></p><div id="echo-rows"></div>
+    </section>`;
+    this.shadowRoot.querySelector('#echo-forget').onclick=()=>this.forgetKey();
+    this.shadowRoot.querySelector('#echo-refresh').onclick=()=>this.load();
+    this.shadowRoot.querySelector('form').onsubmit=async event=>{
+      event.preventDefault(); const form=event.target;
+      if (!form.reportValidity() || this.busy || this.hasKey) return;
+      const assistant=form.elements.assistant.value;
+      if (!(this.assistants || []).some(row=>row.id===assistant)) return;
+      const controller=form.elements.controller.value.trim();
+      if (!/^[A-Za-z0-9_.:-]{1,128}$/.test(controller)) return;
+      await this.action('provision',{assistant_id:assistant,controller_device_id:controller,enabled:false});
+    };
+  }
+  configure(hass,entry,assistants) {
+    const changed=this.entry!==entry || this._hass?.connection!==hass?.connection || this._hass?.user?.id!==hass?.user?.id;
+    this._hass=hass; this.entry=entry; this.assistants=assistants;
+    this.hidden=!this.authorized();
+    if (changed || !this.authorized()) { this.generation++; this.busy=false; this.data=null; this.forgetKey(); }
+    this.choices(); this.render();
+    if (changed && this.authorized()) this.load();
+  }
+  authorized() { return this._hass?.user?.is_admin===true && Boolean(this.entry); }
+  disconnectedCallback() { this.generation++; this.busy=false; this.forgetKey(); }
+  forgetKey() {
+    this.hasKey=false; this.shadowRoot.querySelector('#echo-config').textContent='';
+    this.shadowRoot.querySelector('#echo-secret').hidden=true; this.render();
+  }
+  message(text) { this.shadowRoot.querySelector('#echo-status').textContent=text; }
+  choices() {
+    const select=this.shadowRoot.querySelector('form').elements.assistant, previous=select.value;
+    const key=JSON.stringify(this.assistants || []); if (key===this.choicesKey) return; this.choicesKey=key;
+    select.replaceChildren(); const blank=document.createElement('option'); blank.value=''; blank.textContent='Choose an assistant'; select.append(blank);
+    for (const row of this.assistants || []) { const item=document.createElement('option'); item.value=row.id; item.textContent=`${row.name || row.id} — ${row.speaker_id || 'Own speaker (unpaired)'}`; select.append(item); }
+    select.value=previous;
+  }
+  async load() {
+    if (!this.authorized() || this.busy) return;
+    const generation=++this.generation; this.busy=true; this.render();
+    try {
+      const data=await this._hass.callWS({type:'household_voice/echomuse',entry_id:this.entry,operation:'list'});
+      if (generation!==this.generation || !this.authorized()) return;
+      this.data=data; this.message('Sources refreshed. Status does not confirm audible playback.');
+    } catch (_) { if (generation===this.generation) { this.data=null; this.message('Unable to load EchoMuse sources. Check the integration and your connection, then refresh.'); } }
+    finally { if (generation===this.generation) { this.busy=false; this.render(); } }
+  }
+  async action(operation,fields) {
+    if (!this.authorized() || this.busy) return;
+    const generation=++this.generation; this.busy=true; this.render(); this.message('Saving…');
+    try {
+      const result=await this._hass.callWS({type:'household_voice/echomuse',entry_id:this.entry,operation,...fields});
+      if (generation!==this.generation || !this.authorized()) return;
+      if (operation==='provision') {
+        this.shadowRoot.querySelector('#echo-config').textContent=JSON.stringify(result.controller_config,null,2);
+        this.shadowRoot.querySelector('#echo-secret').hidden=false; this.hasKey=true;
+        this.shadowRoot.querySelector('form').elements.controller.value='';
+      }
+      this.message(operation==='recover' ? 'Home Assistant recovery saved. Also recover the controller before retrying audio.' : 'Saved. No test audio was played.');
+      const data=await this._hass.callWS({type:'household_voice/echomuse',entry_id:this.entry,operation:'list'});
+      if (generation===this.generation && this.authorized()) this.data=data;
+    } catch (_) { if (generation===this.generation) this.message('Request failed or its result is uncertain. Refresh before retrying. Check the HTTPS URL, source registration, active work and recovery status.'); }
+    finally { if (generation===this.generation) { this.busy=false; this.render(); } }
+  }
+  render() {
+    if (!this.shadowRoot) return;
+    this.shadowRoot.querySelector('form').querySelector('button').disabled=this.busy || this.hasKey || !this.authorized();
+    this.shadowRoot.querySelector('#echo-refresh').disabled=this.busy || !this.authorized();
+    this.shadowRoot.querySelector('#echo-mode').textContent=this.data ? `Endpoint ${this.data.enabled ? 'enabled' : 'disabled'}. Each source has its own enable switch.` : '';
+    const root=this.shadowRoot.querySelector('#echo-rows'); root.replaceChildren();
+    for (const row of this.data?.sources || []) {
+      const box=document.createElement('div'); box.className='row';
+      const title=document.createElement('div'); const assistant=(this.assistants || []).find(item=>item.id===row.assistant_id);
+      title.textContent=`${assistant?.name || row.assistant_id} · ${row.controller_device_id} · ${row.enabled ? 'Enabled' : 'Disabled'}${row.active ? ' · Active' : ''}${row.recovery_required ? ' · Recovery required' : ''}`; box.append(title);
+      const controls=document.createElement('div'); controls.className='controls';
+      const add=(label,operation,fields,confirm,disabled=false)=>{const button=document.createElement('button');button.textContent=label;button.disabled=this.busy || disabled;button.onclick=()=>{if (confirm && !window.confirm(confirm)) return;return this.action(operation,{key_id:row.key_id,...fields});};controls.append(button);};
+      add(row.enabled?'Disable':'Enable','enable',{enabled:!row.enabled},null,row.active || (!row.enabled && row.recovery_required));
+      add('Revoke','revoke',{},'Revoke this source key? Its controller will need a new configuration.',row.active || row.recovery_required);
+      if (row.recovery_required) add('Confirm output stopped & recover','recover',{confirm_external_output_stopped:true},'Have you confirmed that this controller’s external speaker output has stopped? This clears uncertain Home Assistant delivery state; it does not stop audio. You must also recover the controller.',row.active);
+      box.append(controls);root.append(box);
+    }
+  }
+}
+if (!customElements.get("household-voice-echomuse-manager")) customElements.define("household-voice-echomuse-manager",HouseholdVoiceEchoMuseManager);
 
 class HouseholdVoicePanel extends HTMLElement {
   constructor() {
@@ -162,7 +308,7 @@ class HouseholdVoicePanel extends HTMLElement {
       <a id="configure" href="/config/integrations/integration/household_voice" hidden>Configure speakers &amp; voice</a></div>
       <p id="guidance" hidden>Open the integration’s Configure menu to set speaker pairings, broadcast defaults, phone notifications and voice features.</p>
       <p id="status" role="status" aria-live="polite">Loading household schedules…</p>
-      <button id="retry" hidden>Retry loading schedules</button><div id="card"></div>
+      <button id="retry" hidden>Retry loading schedules</button><div id="card"></div><div id="echomuse"></div>
     </main>`;
     this.shadowRoot.querySelector("select").onchange = event => {
       this._selected = event.target.value; this.render();
@@ -187,6 +333,7 @@ class HouseholdVoicePanel extends HTMLElement {
     clearInterval(this._refresh);
     this._registryGeneration++;
     this._loading = false;
+    this._echo?.disconnectedCallback();
   }
   async loadRegistry() {
     if (!this._hass?.callWS) return;
@@ -241,6 +388,12 @@ class HouseholdVoicePanel extends HTMLElement {
       }
       this._card.hass = this._hass;
     }
+    const echoRoot=this.shadowRoot.querySelector('#echomuse'); echoRoot.hidden=!admin || !this._selected;
+    if (admin && this._selected) {
+      if (!this._echo) { this._echo=document.createElement('household-voice-echomuse-manager'); echoRoot.replaceChildren(this._echo); }
+      const attrs=this._hass.states[this._selected].attributes;
+      this._echo.configure(this._hass,attrs.config_entry_id,attrs.assistants || []);
+    } else this._echo?.configure(this._hass,null,[]);
   }
 }
 if (!customElements.get("household-voice-panel")) customElements.define("household-voice-panel", HouseholdVoicePanel);
