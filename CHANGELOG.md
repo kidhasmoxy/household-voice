@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.3.11
+## 0.3.12
 
 Soundtrack requests resolve albums using soundtrack/cast metadata, while preserving
 edition ambiguity and excluding spoken excerpts. Simple room-qualified requests

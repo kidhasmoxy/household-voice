@@ -156,7 +156,8 @@ async def verify_router(hass, entry):
         assert 'Enable music playback' in disabled.response.speech['plain']['speech']
         media_result = {'status':'error','reason':'media_playback_pending_or_uncertain',
             'executed':False,'retry_automatically':False,
-            'mutation_dispatch_started':True,'timeout_phase':'playback_dispatch'}
+            'mutation_dispatch_started':True,'playback_dispatch_started':True,
+            'timeout_phase':'playback_dispatch'}
         pending = await invoke(current_music_text)
         assert 'may still be preparing' in pending.response.speech['plain']['speech']
         timeout = pending.response.speech['plain']['extra_data']['household_media']
