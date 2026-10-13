@@ -22,6 +22,7 @@ import time
 from types import SimpleNamespace
 
 import probatio
+from .llm_compat import tool_result
 from homeassistant.core import callback
 from homeassistant.helpers import device_registry as dr, entity_registry as er, llm
 
@@ -146,7 +147,9 @@ class MediaTool(llm.Tool):
             "Use exact catalog titles and ask about ambiguous versions. Source/profile come from trusted runtime. "
             "selected_uri must be a returned MA catalog choice and is searched again before use. "
             "Administrator feature settings control execution; never claim playback from a dry-run plan.")
-        self.annotations = llm.ToolAnnotations(read_only=False, destructive=True, idempotent=False, open_world=False)
+        # ToolAnnotations was added in HA 2026.10; execution guards are independent.
+        if hasattr(llm, 'ToolAnnotations'):
+            self.annotations = llm.ToolAnnotations(read_only=False, destructive=True, idempotent=False, open_world=False)
 
     async def async_call(self, hass, tool_input, llm_context):
         async with self.api.call_lock:
@@ -168,16 +171,16 @@ class MediaTool(llm.Tool):
                 allow_nan=False).encode()).hexdigest()
             argument_signature = hashlib.sha256(json.dumps([self.name, args], sort_keys=True, allow_nan=False).encode()).hexdigest()
         except (ValueError, TypeError, AttributeError, probatio.Invalid):
-            return llm.ToolResult(data=_result("error", "invalid_media_arguments"), error=True)
+            return tool_result(llm, data=_result("error", "invalid_media_arguments"), error=True)
         try:
             registry, row, config_signature, enabled = _resolve(self.api.hass, self.api.entry, context, args.get("target_room"))
         except Exception:
-            return llm.ToolResult(data=_result("clarify", "verified_source_and_media_configuration_required"))
+            return tool_result(llm, data=_result("clarify", "verified_source_and_media_configuration_required"))
         signature = (argument_signature, config_signature)
         if cached := self.api.completed.get(call_key):
             if cached[0] != signature:
-                return llm.ToolResult(data=_result("error", "tool_call_id_reused_or_configuration_changed"), error=True)
-            return llm.ToolResult(data=deepcopy(cached[1]), error=cached[2])
+                return tool_result(llm, data=_result("error", "tool_call_id_reused_or_configuration_changed"), error=True)
+            return tool_result(llm, data=deepcopy(cached[1]), error=cached[2])
         # Reserve before any await: cancellation or ambiguous transport completion
         # must not silently replay a possible action with the same recent call ID.
         uncertain = _result("error", "media_result_uncertain")
@@ -214,7 +217,7 @@ class MediaTool(llm.Tool):
         except Exception:
             result, error = _result("error", "media_unavailable_or_result_uncertain"), True
         self.api.completed[call_key] = (signature, deepcopy(result), error)
-        return llm.ToolResult(data=result, error=error)
+        return tool_result(llm, data=result, error=error)
 
 
 class HouseholdMediaAPI(llm.API):

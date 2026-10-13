@@ -10,6 +10,7 @@ import json
 import probatio
 from homeassistant.core import callback
 from homeassistant.helpers import llm
+from .llm_compat import tool_result
 
 NAMES = ('household_broadcast', 'household_cancel_broadcast', 'household_broadcast_status')
 SCHEMAS = {
@@ -28,8 +29,10 @@ class BroadcastTool(llm.Tool):
             NAMES[1]: 'Cancel this voice device\'s active recording question or pending announcement targets. Already accepted audio or notifications cannot be retracted.',
             NAMES[2]: 'Check this voice device\'s latest announcement workflow and delivery outcomes. Service acceptance is not proof someone heard or received it.',
         }[name]
-        self.annotations = llm.ToolAnnotations(read_only=name==NAMES[2], destructive=name==NAMES[1],
-            idempotent=name==NAMES[2], open_world=False)
+        # ToolAnnotations was added in HA 2026.10; execution guards are independent.
+        if hasattr(llm, 'ToolAnnotations'):
+            self.annotations = llm.ToolAnnotations(read_only=name==NAMES[2], destructive=name==NAMES[1],
+                idempotent=name==NAMES[2], open_world=False)
 
     async def async_call(self, hass, tool_input, llm_context):
         try:
@@ -45,14 +48,14 @@ class BroadcastTool(llm.Tool):
                 raise ValueError()
             device = llm_context.device_id
             if not isinstance(device,str) or not device or llm_context.context is None:
-                return llm.ToolResult(data={'status':'clarify','reason':'trusted_voice_device_required'})
+                return tool_result(llm, data={'status':'clarify','reason':'trusted_voice_device_required'})
             if not isinstance(tool_input.id,str) or not 1<=len(tool_input.id)<=512:
                 raise ValueError()
             request_id = 'ha-broadcast-' + hashlib.sha256(json.dumps([self.api.entry.entry_id,
                 getattr(llm_context.context,'id',None), getattr(llm_context.context,'user_id',None),
                 device, tool_input.id], separators=(',',':')).encode()).hexdigest()
         except (ValueError,TypeError,probatio.Invalid):
-            return llm.ToolResult(data={'status':'error','reason':'invalid_broadcast_arguments'},error=True)
+            return tool_result(llm, data={'status':'error','reason':'invalid_broadcast_arguments'},error=True)
         try:
             runtime = self.api.coordinator.broadcast_runtime
             if self.name==NAMES[0]:
@@ -61,9 +64,9 @@ class BroadcastTool(llm.Tool):
                 result = await runtime.async_cancel(device)
             else:
                 result = await runtime.async_status(device)
-            return llm.ToolResult(data=result,error=result.get('status')=='error')
+            return tool_result(llm, data=result,error=result.get('status')=='error')
         except Exception:
-            return llm.ToolResult(data={'status':'error','reason':'broadcast_runtime_unavailable'},error=True)
+            return tool_result(llm, data={'status':'error','reason':'broadcast_runtime_unavailable'},error=True)
 
 
 class BroadcastAPI(llm.API):

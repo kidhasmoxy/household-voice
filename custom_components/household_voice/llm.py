@@ -20,6 +20,7 @@ from aiohttp import ClientError
 import probatio
 from homeassistant.core import callback
 from homeassistant.helpers import llm
+from .llm_compat import tool_result
 
 from .api import CoordinatorConflict, CoordinatorError
 from .contracts import validate_payload
@@ -97,8 +98,10 @@ class ScheduleTool(llm.Tool):
     def __init__(self, name, api):
         self.name, self.api = name, api
         self.description, self.parameters = DESCRIPTIONS[name], SCHEMAS[name]
-        self.annotations = llm.ToolAnnotations(read_only=name==NAMES[0], destructive=name==NAMES[3],
-                                              idempotent=name==NAMES[0], open_world=False)
+        # ToolAnnotations was added in HA 2026.10; execution guards are independent.
+        if hasattr(llm, 'ToolAnnotations'):
+            self.annotations = llm.ToolAnnotations(read_only=name==NAMES[0], destructive=name==NAMES[3],
+                                                  idempotent=name==NAMES[0], open_world=False)
 
     async def async_call(self, hass, tool_input, llm_context):
         # Serialize this API's calls, including repeated transport deliveries.
@@ -121,11 +124,11 @@ class ScheduleTool(llm.Tool):
                 llm_context.device_id, self.name, tool_input.id], separators=(',', ':')).encode()).hexdigest()
             signature = hashlib.sha256(json.dumps(args, sort_keys=True, allow_nan=False).encode()).hexdigest()
         except (ValueError, TypeError, probatio.Invalid):
-            return llm.ToolResult(data=_response('error', 'invalid_tool_arguments'), error=True)
+            return tool_result(llm, data=_response('error', 'invalid_tool_arguments'), error=True)
         if cached := self.api.completed.get(request_id):
             if cached[0]!=signature:
-                return llm.ToolResult(data=_response('error', 'tool_call_id_reused_with_different_arguments'), error=True)
-            return llm.ToolResult(data=deepcopy(cached[1]), error=cached[2])
+                return tool_result(llm, data=_response('error', 'tool_call_id_reused_with_different_arguments'), error=True)
+            return tool_result(llm, data=deepcopy(cached[1]), error=cached[2])
         try:
             data = await self.api.coordinator.client.schedules()
             registry = _registry(data)
@@ -136,18 +139,18 @@ class ScheduleTool(llm.Tool):
                 if plan['status']!='ready':
                     result = _response(plan['status'], plan['reason'], selection=_public_plan(plan),
                                        coordinator_mode=data.get('mode', 'unknown'))
-                    return llm.ToolResult(data=result)
+                    return tool_result(llm, data=result)
                 service, payload = 'command', plan['command']
             else:
                 source = _source(self.api.entry, llm_context, registry)
                 if source is None:
-                    return llm.ToolResult(data=_response('clarify', 'trusted_source_room_required',
+                    return tool_result(llm, data=_response('clarify', 'trusted_source_room_required',
                         question='This voice device needs a room mapping in Household Voice settings.'))
                 destination = args.pop('target_room', None)
                 if destination is not None:
                     destination = registry.aliases.get(destination.casefold().strip())
                     if destination is None:
-                        return llm.ToolResult(data=_response('clarify', 'unknown_target_room', question='Which room should it ring in?'))
+                        return tool_result(llm, data=_response('clarify', 'unknown_target_room', question='Which room should it ring in?'))
                 service = 'create_timer' if self.name==NAMES[1] else 'create_alarm'
                 payload = dict(args, source_room=source, request_id=request_id)
                 payload.setdefault('label', 'Timer' if service=='create_timer' else 'Alarm')
@@ -172,15 +175,15 @@ class ScheduleTool(llm.Tool):
             except Exception:
                 result['display_refresh_pending'] = True
                 self.api.completed[request_id] = (signature, deepcopy(result), False)
-            return llm.ToolResult(data=result)
+            return tool_result(llm, data=result)
         except CoordinatorConflict:
-            return llm.ToolResult(data=_response('clarify', 'schedule_changed',
+            return tool_result(llm, data=_response('clarify', 'schedule_changed',
                 question='That schedule changed. Please confirm which schedule to change.'), error=False)
         except (CoordinatorError, ClientError, TimeoutError):
-            return llm.ToolResult(data=_response('error', 'coordinator_unavailable_or_result_uncertain',
+            return tool_result(llm, data=_response('error', 'coordinator_unavailable_or_result_uncertain',
                 retry_automatically=False), error=True)
         except (ValueError, TypeError, KeyError):
-            return llm.ToolResult(data=_response('error', 'invalid_request_or_coordinator_snapshot'), error=True)
+            return tool_result(llm, data=_response('error', 'invalid_request_or_coordinator_snapshot'), error=True)
 
 
 class HouseholdScheduleAPI(llm.API):

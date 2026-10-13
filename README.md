@@ -5,7 +5,7 @@ playback, recorded announcements, and room speaker configuration. The durable
 coordinator runs inside Home Assistant. No companion app, container, cloud
 account, or paid subscription is required for the core features.
 
-This is the **0.2.1 prerelease**. Automated tests cover implementation
+This is the **0.2.2 prerelease**. Automated tests cover implementation
 contracts; actual microphone capture, speaker delivery, phone presence, firmware,
 and audiobook resume require validation on your equipment. Keep an independent
 alarm available until your installation passes those tests. Home Assistant must
@@ -13,8 +13,8 @@ be running for alarms and announcements to play.
 
 ## Install and update
 
-Requires Home Assistant 2026.10.1 or newer; later versions need compatibility
-validation. Music Assistant and a compatible voice satellite are required for
+Requires Home Assistant 2026.9.4 or newer. CI validates 2026.9.4 and 2026.10.1;
+other versions need compatibility validation. Music Assistant and a compatible voice satellite are required for
 their respective audio features.
 
 1. In HACS, add `https://github.com/kidhasmoxy/household-voice` as a custom repository
@@ -68,7 +68,7 @@ speaker recovery requires confirmation that earlier pending audio has stopped.
 
 The integration stores SQLite schedule/delivery state and its signing key in
 `.storage/household_voice`. Transient recordings live in
-`.cache/household_voice/recordings`; HA 2026.10.1 configuration backups exclude
+`.cache/household_voice/recordings`; HA 2026.9.4 and 2026.10.1 configuration backups exclude
 `.cache/*`. Backup hooks temporarily freeze the coordinator during configuration
 copying, so timer execution can pause while a backup runs. Stored schedules recover
 afterward according to the missed-alarm policy. Voice capture is
@@ -95,9 +95,10 @@ Run `python -m unittest discover -s tests -v` and
 `python -m compileall -q custom_components` from the repository root. These checks
 exercise durable scheduler behavior and packaging, not real HA audio. Run
 `python scripts/build_release.py` to create the deterministic install ZIP.
-CI also runs `tests/ha_embedded_smoke.py` inside Home Assistant 2026.10.1 with
+CI also runs `tests/ha_embedded_smoke.py` inside Home Assistant 2026.9.4 and 2026.10.1 with
 network access disabled. It checks local lifecycle, state persistence, frontend,
-and signed synthetic audio; it does not contact household endpoints.
+signed synthetic audio, and construction of all 17 registered LLM tools; it does
+not contact household endpoints.
 
 After intentional source edits, review the diff and run
 `python scripts/update_manifest.py` to refresh hashes of the existing allowlist.

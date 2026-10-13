@@ -1,6 +1,6 @@
 {
   "name": "Household Voice",
-  "homeassistant": "2026.10.1",
+  "homeassistant": "2026.9.4",
   "zip_release": true,
   "filename": "household_voice.zip"
 }

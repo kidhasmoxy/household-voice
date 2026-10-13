@@ -19,7 +19,7 @@ from homeassistant.auth import auth_manager_from_config
 from homeassistant.bootstrap import async_load_base_functionality
 from homeassistant.config_entries import ConfigEntries, SOURCE_USER
 from homeassistant.const import __version__
-from homeassistant.core import HomeAssistant
+from homeassistant.core import Context, HomeAssistant
 from homeassistant.helpers import llm
 from homeassistant.setup import async_setup_component
 
@@ -59,6 +59,30 @@ async def main():
             assert coordinator.data['maintenance']['healthy']
             assert 'household-voice' in hass.data['frontend_panels']
             assert 'household_voice_schedules_'+entry.entry_id in {api.id for api in llm.async_get_apis(hass)}
+            # Registration is insufficient: instantiate every API to catch versioned
+            # tool contracts (for example ToolAnnotations introduced in HA 2026.10).
+            context = llm.LLMContext(platform='fixture', context=Context(), language='en',
+                assistant='conversation', device_id=None)
+            tool_count = 0
+            for api in llm.async_get_apis(hass):
+                if not api.id.startswith('household_voice_'):
+                    continue
+                instance = await llm.async_get_api(hass, api.id, context)
+                tool_count += len(instance.tools)
+                # Exercise each API's safe read/clarification path as well as construction.
+                result = await instance.async_call_tool(llm.ToolInput(
+                    tool_name=instance.tools[0].name, tool_args={}, id='compat-'+api.id))
+                if hasattr(llm, 'ToolResult'):
+                    assert isinstance(result, llm.ToolResult)
+                    assert isinstance(result.data, dict)
+                else:
+                    assert type(result) is dict
+                    json.dumps(result)
+                assert all(tool.name and tool.parameters for tool in instance.tools)
+                if hasattr(llm, 'ToolAnnotations'):
+                    assert all(isinstance(tool.annotations, llm.ToolAnnotations) for tool in instance.tools)
+            assert tool_count == 17, tool_count
+            proof['registered_tool_instances'] = tool_count
             proof['setup_panel_tools_local_authority'] = True
             # Repeated installation cannot introduce a second local writer.
             duplicate = await hass.config_entries.flow.async_init('household_voice', context={'source': SOURCE_USER})

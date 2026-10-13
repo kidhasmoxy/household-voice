@@ -13,6 +13,7 @@ import time
 import uuid
 
 import probatio
+from .llm_compat import tool_result
 from homeassistant.core import callback
 from homeassistant.helpers import device_registry as dr, llm
 from homeassistant.helpers.storage import Store
@@ -71,8 +72,10 @@ class ResearchTool(llm.Tool):
         self.name, self.api = name, api
         self.parameters, self.description = SCHEMAS[name], DESCRIPTIONS[name]
         read_only=name in (*NAMES[:3],NAMES[5])
-        self.annotations = llm.ToolAnnotations(read_only=read_only, destructive=False,
-            idempotent=read_only, open_world=read_only)
+        # ToolAnnotations was added in HA 2026.10; execution guards are independent.
+        if hasattr(llm, 'ToolAnnotations'):
+            self.annotations = llm.ToolAnnotations(read_only=read_only, destructive=False,
+                idempotent=read_only, open_world=read_only)
 
     async def async_call(self, hass, tool_input, llm_context):
         try:
@@ -154,15 +157,15 @@ class ResearchTool(llm.Tool):
                     result = await self.api.sessions.command(room, "start", request_id, recipe=recipe)
                 else:
                     result = await self.api.sessions.command(room, args["operation"], request_id)
-            return llm.ToolResult(data=result)
+            return tool_result(llm, data=result)
         except RecipeError as error:
             reason = str(error)
-            return llm.ToolResult(data={"status":"clarify", "reason":reason, "retry_automatically":False})
+            return tool_result(llm, data={"status":"clarify", "reason":reason, "retry_automatically":False})
         except (ValueError, TypeError, KeyError, AttributeError, probatio.Invalid):
-            return llm.ToolResult(data={"status":"error", "reason":"invalid_research_arguments_or_response"}, error=True)
+            return tool_result(llm, data={"status":"error", "reason":"invalid_research_arguments_or_response"}, error=True)
         except Exception:
             # Do not expose provider URLs, errors, request bodies or credentials.
-            return llm.ToolResult(data={"status":"error", "reason":"research_or_recipe_storage_unavailable", "retry_automatically":False}, error=True)
+            return tool_result(llm, data={"status":"error", "reason":"research_or_recipe_storage_unavailable", "retry_automatically":False}, error=True)
 
 
 class HouseholdResearchAPI(llm.API):
