@@ -9,7 +9,7 @@ from homeassistant.util import ulid as ulid_util
 
 from .const import DOMAIN
 from .conversation_router import (acknowledgement, broad_music_query, command,
-                                  inline_announcement, music_acknowledgement)
+                                  inline_announcement, music_acknowledgement, named_music_query)
 from .intent_scope import bind_request
 from .knowledge_router import knowledge_question
 from .knowledge_policy import family_prompt
@@ -168,6 +168,8 @@ class HouseholdConversationRouter(conversation.ConversationEntity):
                 result.continue_conversation=selection['continue_conversation']
                 return result
             if (query := broad_music_query(user_input.text, user_input.language, _MUSIC_STYLES)) is not None:
+                return await self._media_reply(user_input, query)
+            if (query := named_music_query(user_input.text, user_input.language)) is not None:
                 return await self._media_reply(user_input, query)
             if (self.entry.options.get('knowledge_enabled', False)
                     and knowledge_question(user_input.text, user_input.language)):

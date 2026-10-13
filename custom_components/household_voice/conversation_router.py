@@ -43,6 +43,37 @@ def music_acknowledgement(result):
     return 'I could not confirm your music request. Please check Music Assistant.'
 
 
+def named_music_query(text, language='en'):
+    """Route a simple named music request through catalog matching, without an LLM.
+
+    This only extracts a query, never a URI or destination. Spoken content,
+    room modifiers and compound instructions retain the existing agent path.
+    Catalog ambiguity is still handled by the guarded media planner.
+    """
+    if (not isinstance(text, str) or len(text) > 512 or not isinstance(language, str)
+            or language.lower().split('-')[0] != 'en'):
+        return None
+    value = ' '.join(text.split()).rstrip('.!?')
+    match = re.fullmatch(
+        r'(?:please )?(?:(?:can|could|would) you (?:please )?)?'
+        r'(?:play me|play|put on|let me hear) (.+?)(?: please)?', value, re.I)
+    if not match:
+        return None
+    query = match[1]
+    # Never silently drop a requested destination, timeframe, media category,
+    # resume instruction or second action. Names containing "and" are allowed.
+    if (not 1 <= len(query) <= 120 or re.search(r'[\n\r;:!?"“”]', query)
+            or re.search(r'\b(?:audiobooks?|audio books?|books?|stories|story|podcasts?|'
+                         r'episodes?|chapters?|resume|continue|timer|alarm|announcement|'
+                         r'playlist|album|station|radio)\b', query, re.I)
+            or re.search(r'\b(?:in|on|from|for|at|by|after|before|through|using)\s', query, re.I)
+            or re.search(r'\b(?:and|then)\s+(?:play|turn|set|stop|pause|resume|announce|'
+                         r'broadcast|open|close|lock|unlock|send|make)\b', query, re.I)
+            or query.casefold() in ('music', 'some music', 'something', 'anything', 'it', 'that', 'more')):
+        return None
+    return query
+
+
 COMMANDS = {
     'start': frozenset(('make an announcement', 'make announcement', 'start an announcement',
                         'start announcement', 'broadcast an announcement', 'broadcast', 'announce',

@@ -1,5 +1,25 @@
 # Changelog
 
+## 0.3.8
+
+Genre fallback starts a verified seed track with radio mode off, then enables
+Music Assistant's native autoplay. Refill runs in Music Assistant after startup;
+the voice flow no longer waits for a generated radio playlist. Simple named music
+requests also use the guarded catalog path directly, removing the language-model
+round trip for artist names and ordinary spelling variations.
+
+Autoplay is disabled before finite replacements and spoken-content resume. Queue
+identity and configuration are checked around native commands. Music Assistant
+2.10.6 can still finish an already-running refill after disable; its public API
+offers no atomic cancellation barrier. No queue-clearing or deletion workaround
+is used. Autoplay follows the user's existing Music Assistant continuation mode;
+it is not a guarantee that every later track matches the requested genre.
+
+The performance target is actual playback within five seconds. Provider startup,
+catalog misses, and the speech pipeline can still exceed it; this release does
+not equate a quick acknowledgement with audible playback or impose a false
+five-second success claim.
+
 ## 0.3.7
 
 Clear genre/mood music commands use the existing trusted Music Assistant path

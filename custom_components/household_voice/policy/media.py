@@ -303,6 +303,7 @@ def plan_media(request: MediaRequest, registry: RoomRegistry, context: MediaCont
         service = {'resume': 'media_play', 'pause': 'media_pause', 'stop': 'media_stop'}[request.operation]
         actions.append(_action('media_player.'+service, player))
         return _result('ready', 'existing_queue_control', actions=actions,
+                       spoken_content=spoken, autoplay_enabled=False if spoken and request.operation=='resume' else None,
                        preconditions={'queue_generation': queue.generation, 'revalidate_before_execution': True},
                        progress_policy='preserve_existing_queue', **target)
     intent = _intent(request, context)
@@ -370,6 +371,7 @@ def plan_media(request: MediaRequest, registry: RoomRegistry, context: MediaCont
                            username=context.username, enqueue='replace', radio_mode=False if spoken else request.radio_mode))
     return _result('ready', 'broad_music_collection_selected' if broad else 'catalog_item_selected',
                    actions=actions, selected=_choice(item), spoken_content=spoken,
+                   autoplay_enabled=False,
                    playback_kind=('continuous_station' if broad and item.media_type == 'radio' else
                                   'artist_top_tracks' if not spoken and item.media_type == 'artist' else 'collection'),
                    progress_policy='provider_managed_resume_no_seek_or_reset' if item.media_type=='audiobook' else 'no_progress_write',

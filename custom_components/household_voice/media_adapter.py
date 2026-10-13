@@ -328,7 +328,7 @@ class MusicAssistantAdapter:
         return result
 
     async def _genre_fallback(self, result, request, session, context):
-        """Prefer a verified, provider-supported mix; otherwise keep station/choice.
+        """Prefer a verified seed with background autoplay; otherwise keep station/choice.
 
         No track becomes a genre seed merely because its title matches a genre.
         All candidates come from a fresh configured-user MA search. Raw genre
@@ -393,13 +393,14 @@ class MusicAssistantAdapter:
                 continue
             item = self.bindings.item(**parsed, radio_mode_supported=True)
             seed_request = self.bindings.request(query=item.title, media_type='track',
-                target_room=request.target_room, selected_uri=item.uri, radio_mode=True)
+                target_room=request.target_room, selected_uri=item.uri, radio_mode=False)
             catalog = self.bindings.catalog(query=item.title, username=session.username,
                 config_entry_id=session.config_entry_id, observed_at=self.clock(), items=(item,), complete=True)
             planned = self.bindings.plan(seed_request, self.registry, context, now=self.clock(), catalog=catalog)
             if planned.get('status') != 'ready':
                 return planned
-            return dict(planned, reason='verified_genre_mix_selected', playback_kind='generated_genre_mix',
+            return dict(planned, reason='verified_genre_seed_selected', playback_kind='genre_seed_autoplay',
+                        autoplay_enabled=True,
                         requested_genre=request.query, evidence_policy='profile_scoped_genre_metadata_and_provider_similar_tracks')
         return result
 
@@ -505,8 +506,23 @@ class MusicAssistantAdapter:
                                 'mode': 'execution_enabled', 'executed': False, 'actions': []})
                     issued = 0
                     try:
+                        autoplay = result.get('autoplay_enabled')
+                        autoplay_setter = getattr(self.hass.services, 'async_set_queue_autoplay', None)
+                        autoplay_queue = None
+                        if autoplay is not None:
+                            if type(autoplay) is not bool or autoplay_setter is None:
+                                raise MediaAdapterError('Guarded autoplay control unavailable')
+                            autoplay_queue = await self._queue_mode(player)
+                            if autoplay_queue is None:
+                                raise MediaAdapterError('Verified autoplay queue required')
+                            if autoplay is False:
+                                # Finite replacements must not inherit an old
+                                # seed's refill setting. For spoken content this
+                                # also prevents automatic next-book playback.
+                                changed = await autoplay_setter(player, autoplay_queue, False)
+                                issued += int(changed is True)
                         for domain, service, data in actions:
-                            if dynamic_queue is not None and issued:
+                            if dynamic_queue is not None and (domain, service) != ('music_assistant', 'play_media'):
                                 latest_mode = await self._queue_mode(player)
                                 if (latest_mode is None or latest_mode['queue_id'] != dynamic_queue
                                         or latest_mode['is_dynamic']):
@@ -515,6 +531,16 @@ class MusicAssistantAdapter:
                                         'playback_confirmed':False, 'retry_automatically':False, 'actions':[]})
                             await self._call(domain, service, data, session)
                             issued += 1
+                        if autoplay is True:
+                            latest_mode = await self._queue_mode(player)
+                            if (latest_mode is None or latest_mode['queue_id'] != autoplay_queue['queue_id']
+                                    or latest_mode['is_dynamic']):
+                                raise MediaAdapterError('Queue changed before autoplay')
+                            # The hook verifies this exact seed still owns the
+                            # queue before changing its background refill flag.
+                            changed = await autoplay_setter(player, latest_mode, True,
+                                expected_source_uri=result['selected']['uri'])
+                            issued += int(changed is True)
                     except Exception:
                         # No rollback/replay can safely restore progress after a partial playback action.
                         return self._record({'status': 'error', 'reason': 'media_action_failed',

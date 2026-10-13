@@ -5,7 +5,7 @@ playback, recorded announcements, and room speaker configuration. The durable
 coordinator runs inside Home Assistant. No companion app, container, cloud
 account, or paid subscription is required for the core features.
 
-This is the **0.3.7 prerelease**. Automated tests cover implementation
+This is the **0.3.8 prerelease**. Automated tests cover implementation
 contracts; actual microphone capture, speaker delivery, phone presence, firmware,
 and audiobook resume require validation on your equipment. Keep an independent
 alarm available until your installation passes those tests. Home Assistant must
@@ -60,10 +60,18 @@ firmware update, not part of a HACS installation.
   and a user-selected sleep playlist. No household profile or library is bundled.
 - Broad music requests choose a relevant playlist and name the selection. When
   no playlist fits, the adapter tries a metadata-verified genre seed on a provider
-  supporting similar tracks, then a matching continuous station. Generated mixes
-  depend on provider capabilities and available genre metadata. Artist requests
+  supporting similar tracks, then a matching continuous station. A genre seed
+  starts as a normal track, then native Music Assistant autoplay supplies the
+  continuation without foreground mix generation. Continuation follows the MA
+  autoplay mode; automatic mode may fall back to the library. Artist requests
   explicitly play their top tracks; clear spelling variations can match ordinary
   music names. Ambiguous choices still ask, and books/stories retain exact matching.
+  Simple named music and genre requests bypass the language model while retaining
+  the same profile, room, and catalog guards. Five seconds to playback is the
+  target, not a provider or microphone-to-speaker latency guarantee.
+  Autoplay is disabled before finite replacements and spoken resume. On MA 2.10.6
+  an already-running refill can still append after disable; no public cancellation
+  barrier is available, so seamless switching during refill remains a beta limit.
 - Recorded broadcasts: ask what to announce, capture the next utterance, replay
   the original recording with a chime on configured speakers, and send its exact
   transcript to configured phones whose presence satisfies the selected home policy.

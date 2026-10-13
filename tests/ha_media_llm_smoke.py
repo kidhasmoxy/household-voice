@@ -73,7 +73,9 @@ scope_module = module._fixture_scope
 native_queue_mode_reader = module._GuardedServices.async_read_queue_mode
 
 async def fixture_queue_mode(guard, player):
-    return {'queue_id':'fixture-queue', 'is_dynamic':False, 'shuffle_enabled':False, 'repeat_mode':'off'}
+    return {'queue_id':'fixture-queue', 'is_dynamic':False, 'shuffle_enabled':False, 'repeat_mode':'off', 'autoplay_enabled':False,
+        'queue_item_id':'fixture-item', 'items':1, 'source_uris':['fixture://track/1'],
+        'current_provider_uri':'fixture://track/1'}
 PLAYER = "media_player.fixture_ma"
 TTS = "media_player.fixture_sonos"
 BOOK = "library://audiobook/101"
@@ -164,7 +166,10 @@ class MediaLLMTests(unittest.IsolatedAsyncioTestCase):
         calls = []
         async def send(command, **args):
             calls.append((command,args))
-            return {'queue_id':'active-queue','is_dynamic':True,'shuffle_enabled':True,'repeat_mode':'off'}
+            return {'queue_id':'active-queue','is_dynamic':True,'shuffle_enabled':True,'repeat_mode':'off',
+                'autoplay_enabled':False, 'items':1, 'sources':[],
+                'current_item':{'queue_item_id':'item-one','media_item':{'uri':'fixture-domain://track/7'},
+                    'streamdetails':{'provider':'fixture-instance','item_id':'7','media_type':'track'}}}
         client = types.SimpleNamespace(send_command=send,
             players=Registry({'native-player':player}),
             player_queues=Registry({'active-queue':types.SimpleNamespace(queue_id='active-queue')}))
@@ -175,6 +180,7 @@ class MediaLLMTests(unittest.IsolatedAsyncioTestCase):
         with patch.dict(sys.modules, {'homeassistant.components.music_assistant.helpers':helper}):
             result = await native_queue_mode_reader(guard, PLAYER)
             self.assertTrue(result['is_dynamic'])
+            self.assertEqual(result['current_provider_uri'], 'fixture-instance://track/7')
             self.assertEqual(calls, [('player_queues/get',{'queue_id':'active-queue'})])
             async def changed(command, **args):
                 player.active_source = 'different-queue'
@@ -205,6 +211,33 @@ class MediaLLMTests(unittest.IsolatedAsyncioTestCase):
                 self.assertLessEqual(deadlines[0], after + 65)
                 await guard.async_call('music_assistant', 'play_media', data)
                 self.assertEqual(len(deadlines), 1)
+
+    async def test_autoplay_hook_rejects_changed_queue_seed_and_failed_readback(self):
+        signature = module._resolve(self.hass, self.entry, self.context, 'kitchen')[2]
+        guard = module._GuardedServices(self.api, self.context, 'kitchen', signature)
+        expected = await fixture_queue_mode(guard, PLAYER)
+        helper = types.ModuleType('homeassistant.components.music_assistant.helpers')
+        for scenario in ('valid', 'changed_queue', 'wrong_seed', 'failed_readback', 'changed_config'):
+            with self.subTest(scenario=scenario):
+                mode = deepcopy(expected)
+                calls = []
+                if scenario == 'changed_queue': mode['queue_item_id'] = 'new-user-item'
+                async def reader(player): return deepcopy(mode)
+                guard.async_read_queue_mode = reader
+                async def send(command, **args):
+                    calls.append((command,args))
+                    if scenario != 'failed_readback': mode['autoplay_enabled'] = args['autoplay_enabled']
+                helper.get_music_assistant_client = lambda hass, entry_id: types.SimpleNamespace(send_command=send)
+                if scenario == 'changed_config': self.entry.options['media_rooms'][0]['username'] = 'other-user'
+                with patch.dict(sys.modules, {'homeassistant.components.music_assistant.helpers':helper}):
+                    if scenario == 'valid':
+                        self.assertTrue(await guard.async_set_queue_autoplay(PLAYER,expected,True,expected_source_uri='fixture://track/1'))
+                    else:
+                        with self.assertRaises(module.MediaConfigurationError):
+                            await guard.async_set_queue_autoplay(PLAYER,expected,True,
+                                expected_source_uri='fixture://track/2' if scenario=='wrong_seed' else 'fixture://track/1')
+                self.entry.options['media_rooms'][0]['username'] = 'configured-user'
+                self.assertEqual(len(calls), 1 if scenario in ('valid','failed_readback') else 0)
 
     async def test_changed_configuration_cannot_extend_mix_deadline_or_dispatch(self):
         signature = module._resolve(self.hass, self.entry, self.context, 'kitchen')[2]
@@ -376,9 +409,16 @@ class MediaLLMTests(unittest.IsolatedAsyncioTestCase):
         self.entry.options.update(live_actions_enabled=True, media_enabled=True)
         self.services.search_result = search()
         calls = []
+        mode = await fixture_queue_mode(None, PLAYER)
+        mode['source_uris'] = ['fixture-instance://track/9']
+        mode['current_provider_uri'] = 'fixture-instance://track/9'
+        async def queue_mode(guard, player): return deepcopy(mode)
         async def send_command(command, **kwargs):
             calls.append((command, kwargs))
             if command == 'music/verify_item_uri': return True
+            if command == 'player_queues/autoplay':
+                mode['autoplay_enabled'] = kwargs['autoplay_enabled']
+                return None
             raw = item('Fixture Instrumental', 'track', 'fixture-instance://track/9')
             raw.update(metadata={'genres':['Jazz']}, provider_mappings=[
                 {'provider_instance':'fixture-instance','available':True,'item_id':'9'}])
@@ -387,16 +427,17 @@ class MediaLLMTests(unittest.IsolatedAsyncioTestCase):
         provider = types.SimpleNamespace(instance_id='fixture-instance', available=True,
                                          supported_features=['similar_tracks'])
         helper.get_music_assistant_client = lambda hass, entry_id: types.SimpleNamespace(send_command=send_command, providers=[provider])
-        with patch.dict(sys.modules, {'homeassistant.components.music_assistant.helpers':helper}):
+        with patch.dict(sys.modules, {'homeassistant.components.music_assistant.helpers':helper}), patch.object(module._GuardedServices, 'async_read_queue_mode', queue_mode):
             with scope_module.bind_request('Put on some jazz.', 'en', self.context.context, self.context.device_id):
                 result = await self.call(args={'query':'jazz'})
         self.assertEqual(result.data['status'], 'action_accepted')
-        self.assertEqual(result.data['announcement'], 'Playing a jazz mix.')
+        self.assertEqual(result.data['announcement'], 'Playing Fixture Instrumental, with more music to follow.')
         self.assertEqual(calls, [('music/search', {'search_query':'jazz','media_types':['track'],
             'providers':['library','fixture-instance'],'limit':20,'user':'configured-user','require_schema':35}),
-            ('music/verify_item_uri', {'uri':'fixture-instance://track/9','user':'configured-user','require_schema':35})])
+            ('music/verify_item_uri', {'uri':'fixture-instance://track/9','user':'configured-user','require_schema':35}),
+            ('player_queues/autoplay', {'queue_id':'fixture-queue','autoplay_enabled':True})])
         self.assertEqual(self.services.calls[-1][2]['media_id'], 'fixture-instance://track/9')
-        self.assertTrue(self.services.calls[-1][2]['radio_mode'])
+        self.assertFalse(self.services.calls[-1][2]['radio_mode'])
 
     async def test_domain_artist_is_resolved_to_allowed_instance_before_top_tracks(self):
         self.entry.options.update(live_actions_enabled=True, media_enabled=True)

@@ -161,9 +161,16 @@ async def verify_router(hass, entry):
         missing = await invoke(current_music_text, source=None)
         assert 'configured voice assistant' in missing.response.speech['plain']['speech']
         assert len(media_calls) == count and len(fallback.calls) == before
-        for text in ('Play Fleetwood Mac.', 'Play jazz in the Kitchen.', 'Play the album Jazz.'):
+        for current_music_text, current_music_query in [('Play Fleetwood Mac.', 'Fleetwood Mac'),
+                                                       ('Play Fleetwod Mac.', 'Fleetwod Mac')]:
+            media_result = {'status':'action_accepted','executed':True,
+                'announcement':'Playing top tracks by Fleetwood Mac.'}
+            named = await invoke(current_music_text)
+            assert named.response.speech['plain']['speech'] == media_result['announcement']
+        assert len(media_calls) == count + 2 and len(fallback.calls) == before
+        for text in ('Play jazz in the Kitchen.', 'Play the album Jazz.'):
             await invoke(text)
-        assert len(fallback.calls) == before + 3 and len(media_calls) == count
+        assert len(fallback.calls) == before + 2 and len(media_calls) == count + 2
     from custom_components.household_voice import llm as schedule_tools
     from custom_components.household_voice.intent_scope import constrain_arguments
     fake_client = SimpleNamespace()
