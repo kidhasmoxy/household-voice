@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.2.3
+
+Implements Home Assistant's LLM platform discovery callback. Household Voice
+keeps its four explicitly selectable tool APIs; discovery does not duplicate
+them into the built-in Assist API. The actual-HA fixture verifies this contract.
+
 ## 0.2.2
 
 Supports Home Assistant 2026.9.4 without requiring a core upgrade. Both the

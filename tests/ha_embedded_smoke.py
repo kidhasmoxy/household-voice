@@ -82,6 +82,23 @@ async def main():
                 if hasattr(llm, 'ToolAnnotations'):
                     assert all(isinstance(tool.annotations, llm.ToolAnnotations) for tool in instance.tools)
             assert tool_count == 17, tool_count
+            # Exercise HA's lazy platform discovery, which also discovers llm.py.
+            # Named Household Voice APIs must not silently inject duplicate tools
+            # or prompts into the default Assist API.
+            from homeassistant.components import llm as llm_component
+            from custom_components.household_voice import llm as schedule_platform
+            assert await async_setup_component(hass, 'llm', {})
+            platforms = await hass.data[llm_component.DATA_PLATFORMS].async_get_platforms()
+            assert platforms['household_voice'] is schedule_platform
+            with patch.object(schedule_platform, 'async_get_tools', wraps=schedule_platform.async_get_tools) as discovery, \
+                    patch.object(llm_component._LOGGER, 'exception') as discovery_error:
+                assist = await llm.async_get_api(hass, llm.LLM_API_ASSIST, context)
+                discovery.assert_called_once_with(hass, context, llm.LLM_API_ASSIST)
+                discovery_error.assert_not_called()
+            assert not any(tool.name.startswith('household_') for tool in assist.tools)
+            assert 'Household Voice' not in assist.api_prompt
+            assert len([api for api in llm.async_get_apis(hass) if api.id.startswith('household_voice_')]) == 4
+            proof['real_llm_platform_discovery_no_duplicate_assist_tools'] = True
             proof['registered_tool_instances'] = tool_count
             proof['setup_panel_tools_local_authority'] = True
             # Repeated installation cannot introduce a second local writer.

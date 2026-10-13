@@ -28,6 +28,17 @@ from .policy.routing import RoomRegistry
 from .policy.schedule_tools import ScheduleContext, ScheduleRecord, ScheduleRequest, ScheduleSnapshot, plan_schedule
 
 
+@callback
+def async_get_tools(hass, llm_context, api_id):
+    """Do not inject named Household Voice APIs into HA's default Assist API.
+
+    HA discovers this module as an LLM platform because it is named llm.py.
+    Our tools are registered separately as explicitly selectable APIs below.
+    None is the platform contract for contributing no tools or prompt.
+    """
+    return None
+
+
 INTEGRATION = 'household_voice'
 NAMES = ('household_list_schedules', 'household_create_timer', 'household_create_alarm', 'household_change_schedule')
 OPERATIONS = ('stop', 'pause', 'resume', 'add', 'cancel', 'dismiss', 'snooze', 'move', 'enable', 'disable', 'rename', 'delete')
