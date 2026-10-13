@@ -234,6 +234,18 @@ class MusicAssistantAdapter:
         return await self.hass.services.async_call(domain, service, data, blocking=True,
                                                    return_response=response, context=session.ha_context)
 
+    async def _queue_mode(self, player):
+        reader = getattr(self.hass.services, 'async_read_queue_mode', None)
+        if reader is None:
+            return None  # Older injected adapters retain their existing action path.
+        value = await reader(player)
+        if (not isinstance(value, dict) or type(value.get('is_dynamic')) is not bool
+                or type(value.get('shuffle_enabled')) is not bool
+                or value.get('repeat_mode') not in ('off', 'one', 'all')):
+            raise MediaAdapterError('Unverified queue playback mode')
+        _text(value.get('queue_id'), 512)
+        return value
+
     async def _artist_top_tracks(self, result, session):
         """Expand only a profile-authorized provider artist, never a library union.
 
@@ -462,6 +474,25 @@ class MusicAssistantAdapter:
                     result = await self._artist_top_tracks(result, session)
                 if result.get('status')=='ready' and self.enable_execution:
                     actions = self._validated_actions(result, session, player)
+                    dynamic_queue = None
+                    replacements = [action for action in actions if action[0:2] == ('music_assistant', 'play_media')]
+                    if replacements:
+                        mode = await self._queue_mode(player)
+                        if mode and mode['is_dynamic']:
+                            if result.get('spoken_content') and mode['repeat_mode'] != 'off':
+                                return self._record({'status':'unavailable', 'reason':'dynamic_spoken_queue_requires_repeat_off',
+                                    'mode':'execution_enabled', 'executed':False, 'actions':[], 'retry_automatically':False})
+                            dynamic_queue = mode['queue_id']
+                            # MA 2.10.6 rejects standalone mode changes while
+                            # dynamic. Its REPLACE _apply_shuffle resets dynamic
+                            # shuffle to False before resolving ordered media.
+                            # Replace first; then apply finite-queue preferences.
+                            # A new radio mix owns shuffle/repeat itself.
+                            actions = replacements + ([] if replacements[0][2]['radio_mode'] else
+                                [action for action in actions if action not in replacements])
+                            result = dict(result, actions=[{'action':domain+'.'+service,
+                                'target':{'entity_id':player}, 'data':{key:value for key,value in data.items() if key!='entity_id'}}
+                                for domain, service, data in actions])
                     if result.get('reason')=='existing_queue_control':
                         latest = await self._call('music_assistant', 'get_queue', {'entity_id': player}, session, response=True)
                         current = parse_queue(latest, player, session.username, self.bindings, self.clock())
@@ -475,6 +506,13 @@ class MusicAssistantAdapter:
                     issued = 0
                     try:
                         for domain, service, data in actions:
+                            if dynamic_queue is not None and issued:
+                                latest_mode = await self._queue_mode(player)
+                                if (latest_mode is None or latest_mode['queue_id'] != dynamic_queue
+                                        or latest_mode['is_dynamic']):
+                                    return self._record({'status':'error', 'reason':'media_queue_changed_after_replacement',
+                                        'mode':'execution_enabled', 'executed':False, 'actions_issued':issued,
+                                        'playback_confirmed':False, 'retry_automatically':False, 'actions':[]})
                             await self._call(domain, service, data, session)
                             issued += 1
                     except Exception:

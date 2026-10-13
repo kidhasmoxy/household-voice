@@ -200,14 +200,52 @@ def _public(plan):
 
 
 class _GuardedServices:
-    def __init__(self, api, context, target, signature):
+    def __init__(self, api, context, target, signature, *, execution_deadline=None):
         self.api, self.context, self.target, self.signature = api, context, target, signature
+        self.execution_deadline = execution_deadline
+        self._mix_execution_started = False
     def has_service(self, domain, service):
         return self.api.hass.services.has_service(domain, service)
     async def async_call(self, domain, service, data, **kwargs):
         if _resolve(self.api.hass, self.api.entry, self.context, self.target)[2] != self.signature:
             raise MediaConfigurationError()
+        if (domain == 'music_assistant' and service == 'play_media'
+                and data.get('radio_mode') is True and self.execution_deadline is not None
+                and not self._mix_execution_started):
+            # A cold generated mix can take about 48 seconds at MA. Keep lookup
+            # bounded to 35 seconds, then allow this one validated dispatch up
+            # to 65 seconds (100 seconds total maximum). Never extend searches,
+            # normal playback, retries, or subsequent calls on this guard.
+            self._mix_execution_started = True
+            self.execution_deadline.reschedule(asyncio.get_running_loop().time() + 65)
         return await self.api.hass.services.async_call(domain, service, data, **kwargs)
+
+    async def async_read_queue_mode(self, player_entity_id):
+        """Read the configured player's actual active queue, with grouping guards."""
+        _, row, signature, _ = _resolve(self.api.hass, self.api.entry, self.context, self.target)
+        if signature != self.signature or player_entity_id != row['music_player']:
+            raise MediaConfigurationError()
+        entity = er.async_get(self.api.hass).async_get(player_entity_id)
+        player_id = getattr(entity, 'unique_id', None)
+        if not _text(player_id, 512):
+            raise MediaConfigurationError()
+        from homeassistant.components.music_assistant.helpers import get_music_assistant_client
+        client = get_music_assistant_client(self.api.hass, row['config_entry_id'])
+        def queue_id_now():
+            player = client.players.get(player_id)
+            if player is None:
+                raise MediaConfigurationError()
+            queue = client.player_queues.get(player.active_source) if player.active_source else None
+            return queue.queue_id if queue is not None else player_id
+        queue_id = queue_id_now()
+        async with asyncio.timeout(12):
+            snapshot = await client.send_command('player_queues/get', queue_id=queue_id)
+        current_entity = er.async_get(self.api.hass).async_get(player_entity_id)
+        if (_resolve(self.api.hass, self.api.entry, self.context, self.target)[2] != self.signature
+                or getattr(current_entity, 'unique_id', None) != player_id or queue_id_now() != queue_id
+                or not isinstance(snapshot, dict) or snapshot.get('queue_id') != queue_id):
+            raise MediaConfigurationError()
+        return {key:snapshot.get(key) for key in ('queue_id', 'is_dynamic', 'repeat_mode', 'shuffle_enabled')}
 
     async def async_read_artist_top_tracks(self, uri):
         """Read one already-authorized provider; never a profile-wide library union."""
@@ -377,10 +415,12 @@ class MediaTool(llm.Tool):
                 while len(self.api.adapters) > 32:
                     self.api.adapters.popitem(last=False)
             # API call_lock serializes this update and retains adapter player locks.
-            adapter.hass.services = _GuardedServices(self.api, context, row["room_id"], config_signature)
-            # One bounded tool call includes search/optional expansion/actions.
-            # A timeout is uncertain, never permission to replay a playback.
-            async with asyncio.timeout(35):
+            # Ordinary requests retain their 35-second bound. Only dispatch of
+            # a verified generated mix gets a separate 65-second action budget.
+            # A timeout is uncertain, never permission to replay playback.
+            async with asyncio.timeout(35) as deadline:
+                adapter.hass.services = _GuardedServices(self.api, context, row["room_id"],
+                    config_signature, execution_deadline=deadline)
                 plan = await adapter.async_handle({"operation": OPERATIONS[self.name], **args}, context)
             result = _public(plan)
             error = result["status"] == "error"

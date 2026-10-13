@@ -70,6 +70,10 @@ def load_module():
 
 module = load_module()
 scope_module = module._fixture_scope
+native_queue_mode_reader = module._GuardedServices.async_read_queue_mode
+
+async def fixture_queue_mode(guard, player):
+    return {'queue_id':'fixture-queue', 'is_dynamic':False, 'shuffle_enabled':False, 'repeat_mode':'off'}
 PLAYER = "media_player.fixture_ma"
 TTS = "media_player.fixture_sonos"
 BOOK = "library://audiobook/101"
@@ -121,6 +125,9 @@ def options():
 
 class MediaLLMTests(unittest.IsolatedAsyncioTestCase):
     def setUp(self):
+        queue_patch = patch.object(module._GuardedServices, 'async_read_queue_mode', fixture_queue_mode)
+        queue_patch.start()
+        self.addCleanup(queue_patch.stop)
         self.entry = types.SimpleNamespace(entry_id="voice-entry", title="Fixture", options=options())
         self.services = Services()
         self.hass = types.SimpleNamespace(services=self.services,
@@ -148,6 +155,83 @@ class MediaLLMTests(unittest.IsolatedAsyncioTestCase):
         self.assertIs(self.services.calls[0][3]["context"], self.context.context)
         self.assertNotIn("actions", result.data)
         self.assertNotIn("username", result.data)
+
+    async def test_native_queue_reader_binds_entity_instance_and_active_queue(self):
+        self.hass.entities.values[PLAYER].unique_id = 'native-player'
+        signature = module._resolve(self.hass, self.entry, self.context)[2]
+        guard = module._GuardedServices(self.api, self.context, 'kitchen', signature)
+        player = types.SimpleNamespace(active_source='active-queue')
+        calls = []
+        async def send(command, **args):
+            calls.append((command,args))
+            return {'queue_id':'active-queue','is_dynamic':True,'shuffle_enabled':True,'repeat_mode':'off'}
+        client = types.SimpleNamespace(send_command=send,
+            players=Registry({'native-player':player}),
+            player_queues=Registry({'active-queue':types.SimpleNamespace(queue_id='active-queue')}))
+        client.players.get = client.players.async_get
+        client.player_queues.get = client.player_queues.async_get
+        helper = types.ModuleType('homeassistant.components.music_assistant.helpers')
+        helper.get_music_assistant_client = lambda hass, entry_id: client
+        with patch.dict(sys.modules, {'homeassistant.components.music_assistant.helpers':helper}):
+            result = await native_queue_mode_reader(guard, PLAYER)
+            self.assertTrue(result['is_dynamic'])
+            self.assertEqual(calls, [('player_queues/get',{'queue_id':'active-queue'})])
+            async def changed(command, **args):
+                player.active_source = 'different-queue'
+                return {'queue_id':'active-queue','is_dynamic':True,'shuffle_enabled':True,'repeat_mode':'off'}
+            client.send_command = changed
+            with self.assertRaises(module.MediaConfigurationError):
+                await native_queue_mode_reader(guard, PLAYER)
+
+    async def test_only_generated_mix_dispatch_gets_one_execution_budget(self):
+        signature = module._resolve(self.hass, self.entry, self.context, 'kitchen')[2]
+        deadlines = []
+        guard = module._GuardedServices(self.api, self.context, 'kitchen', signature,
+            execution_deadline=types.SimpleNamespace(reschedule=deadlines.append))
+        await guard.async_call('music_assistant', 'search', {})
+        await guard.async_call('music_assistant', 'play_media', {'radio_mode': False})
+        self.assertEqual(deadlines, [])
+        before = asyncio.get_running_loop().time()
+        await guard.async_call('music_assistant', 'play_media', {'radio_mode': True})
+        after = asyncio.get_running_loop().time()
+        self.assertEqual(len(deadlines), 1)
+        self.assertGreaterEqual(deadlines[0], before + 65)
+        self.assertLessEqual(deadlines[0], after + 65)
+        await guard.async_call('music_assistant', 'play_media', {'radio_mode': True})
+        self.assertEqual(len(deadlines), 1)
+
+    async def test_changed_configuration_cannot_extend_mix_deadline_or_dispatch(self):
+        signature = module._resolve(self.hass, self.entry, self.context, 'kitchen')[2]
+        deadlines = []
+        guard = module._GuardedServices(self.api, self.context, 'kitchen', signature,
+            execution_deadline=types.SimpleNamespace(reschedule=deadlines.append))
+        self.entry.options['media_rooms'][0]['username'] = 'changed-user'
+        with self.assertRaises(module.MediaConfigurationError):
+            await guard.async_call('music_assistant', 'play_media', {'radio_mode': True})
+        self.assertEqual(deadlines, [])
+        self.assertEqual(self.services.calls, [])
+
+    async def test_action_timeout_returns_uncertainty_and_same_call_cannot_replay(self):
+        self.entry.options.update(live_actions_enabled=True, media_enabled=True)
+        original_call = self.services.async_call
+        async def slow_play(domain, service, data, **kwargs):
+            result = await original_call(domain, service, data, **kwargs)
+            if service == 'play_media':
+                await asyncio.sleep(1)
+            return result
+        self.services.async_call = slow_play
+        timeout = asyncio.timeout
+        args = {'query': 'Fixture Book', 'kind': 'book'}
+        with patch.object(module.asyncio, 'timeout', side_effect=lambda seconds: timeout(.1)):
+            first = await self.call(args=args, call_id='timed-out-action')
+        self.assertEqual(first.data['reason'], 'media_unavailable_or_result_uncertain')
+        self.assertTrue(first.error)
+        self.assertFalse(first.data['executed'])
+        self.assertFalse(first.data['retry_automatically'])
+        self.assertNotIn('announcement', first.data)
+        second = await self.call(args=args, call_id='timed-out-action')
+        self.assertEqual(first.data, second.data)
+        self.assertEqual(sum(call[1] == 'play_media' for call in self.services.calls), 1)
 
     async def test_default_sleep_playlist_context_factory(self):
         self.services.search_result = search(item("Configured Sleep Playlist", "playlist", "library://playlist/12"), "playlists")
@@ -597,6 +681,8 @@ class MediaLLMTests(unittest.IsolatedAsyncioTestCase):
 
 
 async def real_ha_smoke():
+    queue_patch = patch.object(module._GuardedServices, 'async_read_queue_mode', fixture_queue_mode)
+    queue_patch.start()
     import logging
     import tempfile
     from types import MappingProxyType
@@ -763,6 +849,7 @@ async def real_ha_smoke():
                 "profile_scoped_artist_top_tracks_with_mock_native_client": True,
                 "physical_actions": False, "live_ha_contacted": False, "real_ma_contacted": False}, sort_keys=True), flush=True)
         finally:
+            queue_patch.stop()
             await hass.async_stop(force=True)
 
 

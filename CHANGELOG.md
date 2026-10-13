@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.3.6
+
+Repairs transitions out of Music Assistant dynamic endless queues. Queue mode is
+read from the configured Music Assistant instance before replacing media, so
+manual shuffle/repeat preparation does not reject an otherwise valid request.
+Finite replacement retains ordered artist and spoken-content playback. The
+adapter does not retry a failed or uncertain playback action.
+
+Catalog lookup and normal actions retain the 35-second tool budget. Only a
+validated generated mix may receive a separate 65-second playback allowance,
+for at most 100 seconds total. This accommodates slow provider preparation;
+it does not make cold mix generation fast or add automatic retries.
+
 ## 0.3.5
 
 Music requests prefer a relevant playlist and return its name for a brief spoken
