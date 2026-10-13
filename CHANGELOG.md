@@ -1,5 +1,25 @@
 # Changelog
 
+## 0.3.5
+
+Music requests prefer a relevant playlist and return its name for a brief spoken
+acknowledgement. If no suitable playlist is found, the adapter tries a generated
+genre mix using fresh genre metadata and a provider that supports similar tracks;
+otherwise it can use a matching continuous station. It asks when the catalog
+cannot support a reliable choice. Provider support and metadata remain required
+for generated mixes; no paid fallback or new subscription is added.
+
+Artist requests explicitly resolve up to 25 top tracks through a provider
+authorized by the configured Music Assistant profile. Ordinary music names allow
+high-confidence punctuation and spelling matches while close alternatives still
+ask for clarification. Audiobook and sleep-story selection remains exact and
+preserves provider-managed progress.
+
+Adds bounded Music Assistant lookups and a 35-second media-tool deadline without
+automatically replaying an uncertain playback action. This bounds the tool, not
+the complete speech or language-model pipeline. Compatibility fixtures exercise
+the new client calls in actual HA runtimes with synthetic music services.
+
 ## 0.3.4
 
 Repairs Music Assistant catalog handling for nested artist/album metadata with

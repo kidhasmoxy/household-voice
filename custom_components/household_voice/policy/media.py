@@ -10,6 +10,7 @@ https://www.home-assistant.io/actions/music_assistant.search/
 https://www.music-assistant.io/music-providers/audiobookshelf/
 """
 from dataclasses import dataclass
+from difflib import SequenceMatcher
 import math
 import re
 from typing import Literal
@@ -33,6 +34,28 @@ def _text(value, name, *, empty=False, limit=512):
 
 def _normal(value):
     return ' '.join(value.casefold().split())
+
+
+def _music_name(value):
+    """Ignore harmless punctuation, never remove version/edition qualifiers."""
+    return ' '.join(re.findall(r'\w+', value.casefold()))
+
+
+def _music_recommendation(query, items):
+    """Bounded typo tolerance; near ties and short names still need a choice."""
+    name = _music_name(query)
+    scores = []
+    for item in items:
+        if not item.available or item.spoken_content:
+            continue
+        score = max(SequenceMatcher(None, name, _music_name(title)).ratio()
+                    for title in (item.title, *item.aliases))
+        scores.append((score, item))
+    scores.sort(key=lambda pair: pair[0], reverse=True)
+    if (not scores or len(name) < 5 or scores[0][0] < .88
+            or (len(scores) > 1 and scores[0][0] - scores[1][0] < .12)):
+        return []
+    return [scores[0][1]]
 
 
 def _timestamp(value):
@@ -311,20 +334,28 @@ def plan_media(request: MediaRequest, registry: RoomRegistry, context: MediaCont
     if broad:
         # This is a recommendation, not an attempt to disambiguate an exact title.
         # The MA adapter preserves search order within collection result groups.
-        matches = [i for i in eligible.values() if _broad_match(query, i)][:1]
+        relevant = [i for i in eligible.values() if _broad_match(query, i)]
+        # Prefer a playlist to a station, preserving provider ranking within
+        # each group. A station is a continuous stream, not a generated mix.
+        matches = sorted(relevant, key=lambda i: i.media_type != 'playlist')[:1]
     elif request.selected_uri:
         matches = [eligible[request.selected_uri]] if request.selected_uri in eligible else []
         if not matches:
             return _result('clarify', 'selection_not_in_catalog', question='Please choose one of the catalog results.', **target)
     else:
         matches = [i for i in eligible.values() if _normal(query) in {_normal(i.title), *(_normal(a) for a in i.aliases)} or query==i.uri]
+        if not matches and request.kind == 'music' and not spoken:
+            matches = _music_recommendation(query, eligible.values())
     if not matches:
-        # Approximate search results are suggestions only, even when only one exists.
+        # Results without an exact match, relevant broad collection, or clear
+        # music-only spelling winner remain suggestions, even if only one exists.
         options = sorted(eligible.values(), key=lambda i: (_normal(i.title), i.provider, i.uri))
         return _result('clarify', 'no_relevant_music_collection' if broad else 'no_exact_catalog_match',
                        question='Which music playlist or station would you like?' if broad else 'Which catalog result did you mean?',
                        choices=[_choice(i) for i in options[:5]], candidate_count=len(options), **target)
-    if len(matches)>1 or (not catalog.complete and not request.selected_uri and not broad):
+    confident_music = (request.kind == 'music' and not spoken
+                       and matches == _music_recommendation(query, eligible.values()))
+    if len(matches)>1 or (not catalog.complete and not request.selected_uri and not broad and not confident_music):
         options = sorted(matches, key=lambda i: (_normal(i.title), i.provider, i.uri))
         return _result('clarify', 'ambiguous_or_partial_catalog', question='Which version should I play?',
                        choices=[_choice(i) for i in options[:5]], candidate_count=len(options), **target)
@@ -339,6 +370,8 @@ def plan_media(request: MediaRequest, registry: RoomRegistry, context: MediaCont
                            username=context.username, enqueue='replace', radio_mode=False if spoken else request.radio_mode))
     return _result('ready', 'broad_music_collection_selected' if broad else 'catalog_item_selected',
                    actions=actions, selected=_choice(item), spoken_content=spoken,
+                   playback_kind=('continuous_station' if broad and item.media_type == 'radio' else
+                                  'artist_top_tracks' if not spoken and item.media_type == 'artist' else 'collection'),
                    progress_policy='provider_managed_resume_no_seek_or_reset' if item.media_type=='audiobook' else 'no_progress_write',
                    preconditions={'catalog_observed_at': catalog.observed_at, 'config_entry_id': context.config_entry_id,
                                   'revalidate_before_execution': True, 'serialize_target_queue': True}, **target)

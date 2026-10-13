@@ -76,6 +76,35 @@ def _item(raw, expected=None, depth=0):
     return dict(uri=uri, title=name, media_type=kind, provider=match[1], artists=names, album=album)
 
 
+def _provider_item(raw, kind, provider):
+    """Bind a returned item to an available mapping on one authorized instance.
+
+    MA top-tracks resolves provider tracks to library equivalents. Library URIs
+    must not escape as an unconstrained playback choice; use the actual mapping
+    item ID returned by MA to retain the selected provider and its ranking.
+    """
+    parsed = _item(raw, kind)
+    mappings = raw.get('provider_mappings')
+    if not isinstance(mappings, list) or len(mappings) > 32:
+        raise MediaAdapterError('Unverified provider mapping')
+    available = [mapping for mapping in mappings if isinstance(mapping, dict)
+                 and mapping.get('provider_instance') == provider and mapping.get('available') is True]
+    if not available:
+        return None
+    mapping = available[0]
+    if parsed['provider'] not in ('library', provider, mapping.get('provider_domain')):
+        raise MediaAdapterError('Catalog item crossed provider scope')
+    item_id = mapping.get('item_id')
+    # For already instance-bound items the URI is sufficient. Library/domain
+    # results require the actual available mapping's ID, never a guessed ID.
+    if parsed['provider'] != provider:
+        uri = f'{provider}://{kind}/{_text(item_id)}'
+        if not URI.fullmatch(uri):
+            raise MediaAdapterError('Malformed mapped catalog URI')
+        parsed.update(uri=uri, provider=provider)
+    return parsed
+
+
 @dataclass(frozen=True)
 class PlannerBindings:
     """Pass plan_media and the five named dataclass factories from pure media.py."""
@@ -205,6 +234,163 @@ class MusicAssistantAdapter:
         return await self.hass.services.async_call(domain, service, data, blocking=True,
                                                    return_response=response, context=session.ha_context)
 
+    async def _artist_top_tracks(self, result, session):
+        """Expand only a profile-authorized provider artist, never a library union.
+
+        MA 2.10.6 artist playback follows a global preference. Its explicit
+        top_tracks endpoint does not support user impersonation. The scoped
+        search and exact URI verification authorize this provider-specific artist;
+        the guarded reader restricts that endpoint to this same provider, and every returned
+        playable URI must remain in that namespace.
+        """
+        selected = result['selected']
+        match = URI.fullmatch(selected['uri'])
+        reader = getattr(self.hass.services, 'async_read_artist_top_tracks', None)
+        if match is None or reader is None:
+            return dict(result, status='unavailable', reason='profile_scoped_artist_top_tracks_unavailable', actions=[])
+        candidates_reader = getattr(self.hass.services, 'async_read_artist_candidates', None)
+        if candidates_reader is not None:
+            response, providers = await candidates_reader(selected['title'], match[1])
+            if (not isinstance(response, dict) or not isinstance(response.get('artists'), list)
+                    or len(response['artists']) > 20 or not isinstance(providers, list)):
+                raise MediaAdapterError('Malformed artist provider search')
+            candidates = []
+            normalize = lambda name: ' '.join(re.findall(r'\w+', name.casefold()))
+            for raw in response['artists']:
+                original = _item(raw, 'artist')
+                if normalize(original['title']) != normalize(selected['title']):
+                    continue
+                for provider in providers:
+                    parsed = _provider_item(raw, 'artist', provider)
+                    if parsed is not None:
+                        candidates.append((original['provider'] == 'library', parsed))
+            if not candidates:
+                return dict(result, status='unavailable', reason='profile_scoped_artist_top_tracks_unavailable', actions=[])
+            # Same exact artist, authorized provider ranking; never broaden to
+            # a similarly named artist after a library artist has been chosen.
+            verifier = getattr(self.hass.services, 'async_authorize_provider_uri', None)
+            parsed = None
+            seen = set()
+            # Prefer fresh provider artists over cached library mappings: old
+            # library metadata can contain stale provider IDs.
+            for _, candidate in sorted(candidates, key=lambda row: row[0]):
+                if candidate['uri'] in seen:
+                    continue
+                seen.add(candidate['uri'])
+                if len(seen) > 3:
+                    break
+                if verifier is not None and await verifier(candidate['uri']) is True:
+                    parsed = candidate
+                    break
+            if parsed is None:
+                return dict(result, status='unavailable', reason='profile_scoped_artist_top_tracks_unavailable', actions=[])
+            selected = dict(selected, **{key: parsed[key] for key in ('uri', 'title', 'provider')})
+            result = deepcopy(result)
+            result['selected'] = selected
+            match = URI.fullmatch(selected['uri'])
+        elif match[1] == 'library':
+            return dict(result, status='unavailable', reason='profile_scoped_artist_top_tracks_unavailable', actions=[])
+        rows = await reader(selected['uri'])
+        if not isinstance(rows, list) or len(rows) > 300:
+            raise MediaAdapterError('Malformed artist top tracks')
+        tracks = []
+        for row in rows:
+            if not isinstance(row, dict):
+                raise MediaAdapterError('Malformed top track')
+            parsed = _provider_item(row, 'track', match[1])
+            if parsed is None:
+                continue
+            if any(term in (parsed['title'] + ' ' + (parsed['album'] or '')).casefold()
+                   for term in ('audiobook', 'sleep stor', 'bedtime stor', 'podcast')):
+                continue
+            if parsed['uri'] not in tracks:
+                tracks.append(parsed['uri'])
+        tracks = tracks[:25]
+        if not tracks:
+            return dict(result, status='unavailable', reason='artist_top_tracks_unavailable', actions=[])
+        result = deepcopy(result)
+        result['top_track_uris'] = tracks
+        result['track_count'] = len(tracks)
+        result['reason'] = 'artist_top_tracks_selected'
+        result['actions'][-1]['data'].update(media_id=tracks, media_type='track', radio_mode=False)
+        return result
+
+    async def _genre_fallback(self, result, request, session, context):
+        """Prefer a verified, provider-supported mix; otherwise keep station/choice.
+
+        No track becomes a genre seed merely because its title matches a genre.
+        All candidates come from a fresh configured-user MA search. Raw genre
+        metadata, an available mapping on a similar-tracks provider, and an
+        explicit configured-user URI authorization are all required; unknown
+        metadata never grants radio mode.
+        """
+        reader = getattr(self.hass.services, 'async_read_genre_candidates', None)
+        if reader is None:
+            return result
+        try:
+            response, supported = await reader(request.query)
+        except Exception:
+            # This is a read-only enhancement. A provider lookup failure must
+            # not discard an already verified continuous station fallback.
+            if result.get('playback_kind') == 'continuous_station':
+                return result
+            return dict(result, status='unavailable', reason='genre_mix_lookup_unavailable', actions=[])
+        if (not isinstance(response, dict) or not isinstance(response.get('tracks'), list)
+                or len(response['tracks']) > 20 or not isinstance(supported, list)):
+            raise MediaAdapterError('Malformed genre seed evidence')
+        genre = ' '.join(request.query.casefold().split())
+        verifier = getattr(self.hass.services, 'async_authorize_provider_uri', None)
+        verified_candidates = set()
+        for raw in response['tracks']:
+            if not isinstance(raw, dict):
+                raise MediaAdapterError('Malformed genre track')
+            metadata, mappings = raw.get('metadata'), raw.get('provider_mappings')
+            if not isinstance(metadata, dict) or not isinstance(mappings, list) or len(mappings) > 32:
+                continue
+            genres = metadata.get('genres')
+            if (not isinstance(genres, list) or len(genres) > 100 or
+                    genre not in {' '.join(value.casefold().split()) for value in genres if isinstance(value, str)}):
+                continue
+            quality = ' '.join([str(raw.get('name', '')), str(raw.get('version', '')),
+                *[str(artist.get('name', '')) for artist in raw.get('artists', []) if isinstance(artist, dict)]]).casefold()
+            if re.search(r'\b(?:karaoke|tribute|covers?|soundalike|in the style of)\b', quality):
+                continue
+            parsed = None
+            for provider in supported:
+                if request.provider and request.provider.casefold() != provider.casefold():
+                    continue
+                parsed = _provider_item(raw, 'track', provider)
+                if parsed is not None:
+                    uri = parsed['uri']
+                    if uri in verified_candidates or len(verified_candidates) >= 3:
+                        parsed = None
+                        continue
+                    verified_candidates.add(uri)
+                    try:
+                        if verifier is not None and await verifier(uri) is True:
+                            break
+                    except TimeoutError:
+                        # No action was issued; do not let an optional seed
+                        # authorization timeout discard a verified station.
+                        return result
+                    parsed = None
+            if parsed is None:
+                continue
+            if any(term in (parsed['title'] + ' ' + (parsed['album'] or '')).casefold()
+                   for term in ('audiobook', 'sleep stor', 'bedtime stor', 'podcast')):
+                continue
+            item = self.bindings.item(**parsed, radio_mode_supported=True)
+            seed_request = self.bindings.request(query=item.title, media_type='track',
+                target_room=request.target_room, selected_uri=item.uri, radio_mode=True)
+            catalog = self.bindings.catalog(query=item.title, username=session.username,
+                config_entry_id=session.config_entry_id, observed_at=self.clock(), items=(item,), complete=True)
+            planned = self.bindings.plan(seed_request, self.registry, context, now=self.clock(), catalog=catalog)
+            if planned.get('status') != 'ready':
+                return planned
+            return dict(planned, reason='verified_genre_mix_selected', playback_kind='generated_genre_mix',
+                        requested_genre=request.query, evidence_policy='profile_scoped_genre_metadata_and_provider_similar_tracks')
+        return result
+
     async def async_handle(self, request_data, caller):
         """Construct, resolve and optionally execute a fresh plan under a player lock."""
         if not isinstance(request_data, dict):
@@ -268,6 +454,12 @@ class MusicAssistantAdapter:
                         else:
                             return self._record({'status': 'clarify', 'reason': 'queue_profile_unverified',
                                                  'mode': 'dry_run', 'executed': False, 'actions': []})
+                if request.selection_mode == 'broad_music' and (
+                        result.get('playback_kind') == 'continuous_station'
+                        or result.get('reason') == 'no_relevant_music_collection'):
+                    result = await self._genre_fallback(result, request, session, context)
+                if result.get('status') == 'ready' and result.get('playback_kind') == 'artist_top_tracks':
+                    result = await self._artist_top_tracks(result, session)
                 if result.get('status')=='ready' and self.enable_execution:
                     actions = self._validated_actions(result, session, player)
                     if result.get('reason')=='existing_queue_control':
@@ -317,12 +509,22 @@ class MusicAssistantAdapter:
             if name=='music_assistant.play_media':
                 required = {'media_id', 'media_type', 'username', 'enqueue', 'radio_mode'}
                 selected = result.get('selected', {})
-                if (set(data)!=required or data['media_id']!=selected.get('uri') or data['media_type']!=selected.get('media_type')
+                top_tracks = result.get('top_track_uris')
+                expected_id = top_tracks if top_tracks is not None else selected.get('uri')
+                expected_type = 'track' if top_tracks is not None else selected.get('media_type')
+                if top_tracks is not None and (result.get('playback_kind') != 'artist_top_tracks'
+                        or selected.get('media_type') != 'artist' or not isinstance(top_tracks, list)
+                        or not 1 <= len(top_tracks) <= 25 or data.get('radio_mode') is not False):
+                    raise MediaAdapterError('Invalid artist top track plan')
+                if (set(data)!=required or data['media_id']!=expected_id or data['media_type']!=expected_type
                         or data['username']!=session.username or data['enqueue']!='replace' or type(data['radio_mode']) is not bool):
                     raise MediaAdapterError('Unsafe playback plan')
-                match = URI.fullmatch(data['media_id']) if isinstance(data['media_id'], str) else None
-                if not match or match[2]!=data['media_type'] or match[1].lower() in ('http', 'https', 'file', 'ftp', 'data', 'javascript'):
-                    raise MediaAdapterError('Playback requires a catalog URI')
+                for uri in (top_tracks if top_tracks is not None else [data['media_id']]):
+                    match = URI.fullmatch(uri) if isinstance(uri, str) else None
+                    if not match or match[2]!=data['media_type'] or match[1].lower() in ('http', 'https', 'file', 'ftp', 'data', 'javascript'):
+                        raise MediaAdapterError('Playback requires a catalog URI')
+                    if top_tracks is not None and match[1] != URI.fullmatch(selected['uri'])[1]:
+                        raise MediaAdapterError('Top track provider changed')
             elif name=='media_player.shuffle_set':
                 if set(data)!={'shuffle'} or type(data['shuffle']) is not bool:
                     raise MediaAdapterError('Invalid shuffle plan')

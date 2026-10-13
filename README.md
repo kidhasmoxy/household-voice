@@ -5,7 +5,7 @@ playback, recorded announcements, and room speaker configuration. The durable
 coordinator runs inside Home Assistant. No companion app, container, cloud
 account, or paid subscription is required for the core features.
 
-This is the **0.3.4 prerelease**. Automated tests cover implementation
+This is the **0.3.5 prerelease**. Automated tests cover implementation
 contracts; actual microphone capture, speaker delivery, phone presence, firmware,
 and audiobook resume require validation on your equipment. Keep an independent
 alarm available until your installation passes those tests. Home Assistant must
@@ -58,6 +58,12 @@ firmware update, not part of a HACS installation.
   commands, restart recovery, bounded ringing, and an HA management page.
 - Configured Music Assistant search/play/resume for music, stations, audiobooks,
   and a user-selected sleep playlist. No household profile or library is bundled.
+- Broad music requests choose a relevant playlist and name the selection. When
+  no playlist fits, the adapter tries a metadata-verified genre seed on a provider
+  supporting similar tracks, then a matching continuous station. Generated mixes
+  depend on provider capabilities and available genre metadata. Artist requests
+  explicitly play their top tracks; clear spelling variations can match ordinary
+  music names. Ambiguous choices still ask, and books/stories retain exact matching.
 - Recorded broadcasts: ask what to announce, capture the next utterance, replay
   the original recording with a chime on configured speakers, and send its exact
   transcript to configured phones whose presence satisfies the selected home policy.

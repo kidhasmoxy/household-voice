@@ -173,6 +173,144 @@ class MediaLLMTests(unittest.IsolatedAsyncioTestCase):
         result = await self.call(args={'query': 'jazz', 'selection_mode': 'broad_music'})
         self.assertTrue(result.error)
 
+    async def test_polite_genre_variations_keep_source_bound_selection(self):
+        self.services.search_result = search(item('Jazz Chill', 'playlist', 'fixture://playlist/42'), 'playlists')
+        for prompt in ('Could you play some jazz please?', 'Put on some jazz.', 'Please play me some jazz.'):
+            with scope_module.bind_request(prompt, 'en', self.context.context, self.context.device_id):
+                result = await self.call(args={'query':'jazz','kind':'music'})
+            self.assertEqual(result.data['selected']['title'], 'Jazz Chill')
+            self.assertEqual(result.data['playback_kind'], 'collection')
+
+    async def test_common_moods_and_room_phrasing_select_relevant_playlists(self):
+        samples = [
+            ('Play some upbeat music.', 'upbeat', 'Upbeat Favorites'),
+            ('Put on relaxing music.', 'relaxing', 'Relaxing Evening'),
+            ('Play jazz in the living room.', 'jazz', 'Jazz Chill'),
+            *[(f'Play some {mood} music.', mood, f'{mood.title()} Favorites')
+              for mood in ('happy', 'party', 'workout', 'focus', 'dinner', 'romantic', 'calming')],
+        ]
+        for prompt, mood, title in samples:
+            with self.subTest(prompt=prompt):
+                self.services.search_result = search(item(title, 'playlist', 'fixture://playlist/42'), 'playlists')
+                with scope_module.bind_request(prompt, 'en', self.context.context, self.context.device_id):
+                    result = await self.call(args={'query':mood, 'kind':'music'})
+                self.assertEqual(result.data['selected']['title'], title)
+                self.assertEqual(self.services.calls[-1][2]['media_type'], ['playlist', 'radio'])
+                self.assertEqual(result.data['room'], 'kitchen')
+
+    async def test_mood_words_do_not_relax_named_artist_album_or_spoken_requests(self):
+        for prompt, args in [
+            ('Play the album Happy.', {'query':'happy', 'media_type':'album'}),
+            ('Play the artist Party.', {'query':'party', 'media_type':'artist'}),
+            ('Play the audiobook Focus.', {'query':'focus', 'kind':'book'}),
+            ('Play the sleep story Romantic.', {'query':'romantic', 'kind':'sleep_story'}),
+            ('Play Happy Together.', {'query':'happy'}),
+            ('Play some upbeat music.', {'query':'upbeat', 'selected_uri':'fixture://playlist/42'}),
+        ]:
+            with self.subTest(prompt=prompt):
+                with scope_module.bind_request(prompt, 'en', self.context.context, self.context.device_id):
+                    self.assertNotIn('selection_mode', module._with_music_selection(args, self.context, 'play'))
+
+    async def test_artist_reader_uses_selected_provider_and_rechecks_routing(self):
+        self.entry.options.update(live_actions_enabled=True, media_enabled=True)
+        self.services.search_result = search(item('Fleetwood Mac','artist','fixture://artist/7'), 'artists')
+        calls = []
+        async def send_command(command, **kwargs):
+            calls.append((command, kwargs))
+            if command == 'music/verify_item_uri': return True
+            if command == 'music/search':
+                artist = item('Fleetwood Mac','artist','fixture://artist/7')
+                artist['provider_mappings'] = [{'provider_instance':'fixture','available':True,'item_id':'7'}]
+                return {'artists': [artist]}
+            track = item('Fixture Song', 'track', 'fixture://track/9')
+            track['provider_mappings'] = [{'provider_instance':'fixture','available':True}]
+            return [track]
+        helper = types.ModuleType('homeassistant.components.music_assistant.helpers')
+        provider = types.SimpleNamespace(instance_id='fixture', domain='fixture', available=True,
+                                         supported_features=['artist_toptracks'])
+        helper.get_music_assistant_client = lambda hass, entry_id: types.SimpleNamespace(send_command=send_command, providers=[provider])
+        from unittest.mock import patch
+        with patch.dict(sys.modules, {'homeassistant.components.music_assistant.helpers': helper}):
+            result = await self.call(args={'query':'Fleetwood Mac','media_type':'artist'})
+        self.assertEqual(result.data['status'], 'action_accepted')
+        self.assertEqual(result.data['playback_kind'], 'artist_top_tracks')
+        self.assertEqual(result.data['track_count'], 1)
+        self.assertEqual(result.data['announcement'], 'Playing top tracks by Fleetwood Mac.')
+        self.assertEqual(calls, [('music/search', {'search_query':'Fleetwood Mac', 'media_types':['artist'],
+            'providers':['library','fixture'], 'limit':20, 'user':'configured-user','require_schema':35}),
+            ('music/verify_item_uri', {'uri':'fixture://artist/7','user':'configured-user','require_schema':35}),
+            ('music/artists/top_tracks', {'item_id':'7',
+            'provider_instance_id_or_domain':'fixture','provider_filter':'fixture'})])
+        self.assertEqual(self.services.calls[-1][2]['media_id'], ['fixture://track/9'])
+        async def changed(command, **kwargs):
+            self.entry.options['media_rooms'][0]['username'] = 'changed-user'
+            return []
+        helper.get_music_assistant_client = lambda hass, entry_id: types.SimpleNamespace(send_command=changed, providers=[provider])
+        before = len(self.services.calls)
+        with patch.dict(sys.modules, {'homeassistant.components.music_assistant.helpers': helper}):
+            result = await self.call(args={'query':'Fleetwood Mac','media_type':'artist'})
+        self.assertEqual(result.data['status'], 'error')
+        self.assertEqual([call[1] for call in self.services.calls[before:]], ['search'])
+
+    async def test_genre_raw_search_is_profile_scoped_and_uses_supported_provider_mapping(self):
+        self.entry.options.update(live_actions_enabled=True, media_enabled=True)
+        self.services.search_result = search()
+        calls = []
+        async def send_command(command, **kwargs):
+            calls.append((command, kwargs))
+            if command == 'music/verify_item_uri': return True
+            raw = item('Fixture Instrumental', 'track', 'fixture-instance://track/9')
+            raw.update(metadata={'genres':['Jazz']}, provider_mappings=[
+                {'provider_instance':'fixture-instance','available':True,'item_id':'9'}])
+            return {'tracks':[raw]}
+        helper = types.ModuleType('homeassistant.components.music_assistant.helpers')
+        provider = types.SimpleNamespace(instance_id='fixture-instance', available=True,
+                                         supported_features=['similar_tracks'])
+        helper.get_music_assistant_client = lambda hass, entry_id: types.SimpleNamespace(send_command=send_command, providers=[provider])
+        with patch.dict(sys.modules, {'homeassistant.components.music_assistant.helpers':helper}):
+            with scope_module.bind_request('Put on some jazz.', 'en', self.context.context, self.context.device_id):
+                result = await self.call(args={'query':'jazz'})
+        self.assertEqual(result.data['status'], 'action_accepted')
+        self.assertEqual(result.data['announcement'], 'Playing a jazz mix.')
+        self.assertEqual(calls, [('music/search', {'search_query':'jazz','media_types':['track'],
+            'providers':['library','fixture-instance'],'limit':20,'user':'configured-user','require_schema':35}),
+            ('music/verify_item_uri', {'uri':'fixture-instance://track/9','user':'configured-user','require_schema':35})])
+        self.assertEqual(self.services.calls[-1][2]['media_id'], 'fixture-instance://track/9')
+        self.assertTrue(self.services.calls[-1][2]['radio_mode'])
+
+    async def test_domain_artist_is_resolved_to_allowed_instance_before_top_tracks(self):
+        self.entry.options.update(live_actions_enabled=True, media_enabled=True)
+        self.services.search_result = search(item('Fleetwood Mac','artist','fixture-domain://artist/7'), 'artists')
+        calls = []
+        provider = types.SimpleNamespace(instance_id='fixture-instance',domain='fixture-domain',
+            available=True,supported_features=['artist_toptracks'])
+        async def send_command(command, **kwargs):
+            calls.append((command, kwargs))
+            if command == 'music/verify_item_uri': return True
+            kind = 'artist' if command == 'music/search' else 'track'
+            raw = item('Fleetwood Mac' if kind == 'artist' else 'Fixture Song',kind,f'fixture-domain://{kind}/7')
+            raw['provider_mappings'] = [{'provider_instance':'fixture-instance','provider_domain':'fixture-domain',
+                                        'item_id':'7','available':True}]
+            return {'artists':[raw]} if kind == 'artist' else [raw]
+        helper = types.ModuleType('homeassistant.components.music_assistant.helpers')
+        helper.get_music_assistant_client = lambda hass, entry_id: types.SimpleNamespace(send_command=send_command,providers=[provider])
+        with patch.dict(sys.modules, {'homeassistant.components.music_assistant.helpers':helper}):
+            result = await self.call(args={'artist':'Fleetwood Mac','media_type':'artist'})
+        self.assertEqual(result.data['status'], 'action_accepted')
+        self.assertEqual(calls[0][1]['user'], 'configured-user')
+        self.assertEqual(calls[0][1]['providers'], ['library','fixture-instance'])
+        self.assertEqual(calls[2][1]['provider_filter'], 'fixture-instance')
+        self.assertEqual(self.services.calls[-1][2]['media_id'], ['fixture-instance://track/7'])
+
+    async def test_failed_play_does_not_speak_a_success_announcement(self):
+        self.entry.options.update(live_actions_enabled=True, media_enabled=True)
+        self.services.search_result = search(item('Jazz Chill','playlist','fixture://playlist/1'),'playlists')
+        self.services.fail = 'play_media'
+        with scope_module.bind_request('Play some jazz.', 'en', self.context.context, self.context.device_id):
+            result = await self.call(args={'query':'jazz'})
+        self.assertEqual(result.data['status'], 'error')
+        self.assertNotIn('announcement', result.data)
+
     async def test_promptless_router_context_executes_broad_music_with_live_shaped_metadata(self):
         self.living_area()
         self.entry.options.update(live_actions_enabled=True, media_enabled=True)
@@ -191,6 +329,7 @@ class MediaLLMTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.services.calls[0][2]['media_type'], ['playlist','radio'])
         self.assertEqual(self.services.calls[-1][2]['entity_id'], PLAYER)
         self.assertEqual(self.services.calls[-1][2]['media_id'], 'apple_music--fixture://playlist/pl.fixture')
+        self.assertEqual(result.data['announcement'], 'Playing Jazz Chill.')
 
     async def test_router_original_named_request_overrides_provider_prompt(self):
         self.context.user_prompt = 'Play some jazz.'
@@ -506,6 +645,8 @@ async def real_ha_smoke():
                     album = item('Rumours', 'album', 'library://album/12')
                     album['artists'] = [item('Fleetwood Mac', 'artist', 'library://artist/7')]
                     return search(album, 'albums')
+                if call.data['name'] == 'Fleetwood Mac':
+                    return search(item('Fleetwood Mac','artist','library://artist/7'),'artists')
                 return search()
             hass.services.async_register("music_assistant", "search", fixture_search, supports_response=SupportsResponse.ONLY)
             context = llm.LLMContext(platform="fixture", context=Context(), language="en", assistant="conversation", device_id=device.id)
@@ -580,6 +721,36 @@ async def real_ha_smoke():
             assert calls[-1]['media_type']==['playlist','radio']
             assert actions[-1][2]['entity_id']==player.entity_id
             assert actions[-1][2]['media_id']=='apple_music--fixture://playlist/pl.fixture'
+            assert jazz.data['announcement'] == 'Playing Jazz Chill.'
+            # Real HA registries, LLM schema and action dispatch around a mocked
+            # native MA client; no network or physical music is used in CI.
+            raw_calls = []
+            async def raw_command(command, **kwargs):
+                raw_calls.append((command, kwargs))
+                if command == 'music/verify_item_uri': return True
+                if command == 'music/search' and kwargs['media_types'] == ['artist']:
+                    raw = item('Fleetwood Mac','artist','fixture-domain://artist/7')
+                    raw['provider_mappings'] = [{'provider_instance':'fixture-instance',
+                        'provider_domain':'fixture-domain','item_id':'7','available':True}]
+                    return {'artists':[raw]}
+                raw = item('Fixture Song','track','library://track/8')
+                raw.update(metadata={'genres':['Jazz']}, provider_mappings=[
+                    {'provider_instance':'fixture-instance','item_id':'9','available':True}])
+                return {'tracks':[raw]} if command == 'music/search' else [raw]
+            helper = types.ModuleType('homeassistant.components.music_assistant.helpers')
+            provider = types.SimpleNamespace(instance_id='fixture-instance', domain='fixture-domain',
+                available=True, supported_features=['artist_toptracks','similar_tracks'])
+            helper.get_music_assistant_client = lambda ha, entry_id: types.SimpleNamespace(
+                send_command=raw_command, providers=[provider])
+            with patch.dict(sys.modules, {'homeassistant.components.music_assistant.helpers':helper}):
+                artist_result = await instance.async_call_tool(llm.ToolInput(tool_name=module.NAMES[0],
+                    tool_args={'query':'Fleetwood Mac','media_type':'artist'}, id='artist-top-tracks'))
+            assert artist_result.data['status'] == 'action_accepted' and len(actions) == 9
+            assert artist_result.data['announcement'] == 'Playing top tracks by Fleetwood Mac.'
+            assert raw_calls[0][1]['user'] == 'configured-user'
+            assert raw_calls[0][1]['providers'] == ['library','fixture-instance']
+            assert raw_calls[2][1]['provider_filter'] == 'fixture-instance'
+            assert actions[-1][2]['media_id'] == ['fixture-instance://track/9']
             unregister()
             assert api_id not in {api.id for api in llm.async_get_apis(hass)}
             print(json.dumps({"ha_version": __version__, "real_ha_media_llm_runtime": True, "registry_ownership_validated": True,
@@ -589,6 +760,7 @@ async def real_ha_smoke():
                 "router_bound_book_cannot_resume_verified_music_queue": True,
                 "ha_area_name_resolves_legacy_room_id": True,
                 "router_bound_promptless_broad_music_with_nested_metadata": True,
+                "profile_scoped_artist_top_tracks_with_mock_native_client": True,
                 "physical_actions": False, "live_ha_contacted": False, "real_ma_contacted": False}, sort_keys=True), flush=True)
         finally:
             await hass.async_stop(force=True)
