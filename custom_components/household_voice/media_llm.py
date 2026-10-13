@@ -23,7 +23,7 @@ from types import SimpleNamespace
 
 import probatio
 from .llm_compat import api_name, tool_result
-from .intent_scope import constrain_arguments, trusted_request_text, ScopeConflict
+from .intent_scope import constrain_arguments, trusted_request_text, record_media_result, ScopeConflict
 from .conversation_router import qualified_music_request
 from homeassistant.core import callback
 from homeassistant.helpers import area_registry as ar, device_registry as dr, entity_registry as er, llm
@@ -40,7 +40,6 @@ FILTERS = {"query": str, "kind": probatio.In(media.KINDS), "media_type": probati
 FIELDS = {name: (set(FILTERS) if OPERATIONS[name] == "play" else
                 set(FILTERS) - {"shuffle"} if OPERATIONS[name] == "resume" else {"target_room"}) for name in NAMES}
 SCHEMAS = {name: probatio.Schema({probatio.Optional(key): FILTERS[key] for key in FIELDS[name]}) for name in NAMES}
-MUSIC_FOREGROUND_SECONDS = 4.5
 
 
 class MediaConfigurationError(ValueError):
@@ -232,12 +231,21 @@ def _public(plan, *, requested_acknowledgement=False):
 
 
 class _GuardedServices:
-    def __init__(self, api, context, target, signature, *, execution_deadline=None):
+    def __init__(self, api, context, target, signature):
         self.api, self.context, self.target, self.signature = api, context, target, signature
-        self.execution_deadline = execution_deadline
         self.playback_dispatch_started = False
         self.mutation_dispatch_started = False
         self.phase = 'catalog_lookup'
+        self.native_timeout_phase = None
+    async def _native_response(self, operation):
+        try:
+            result = await operation
+            # A successful fallback must not inherit an earlier lookup timeout.
+            self.native_timeout_phase = None
+            return result
+        except TimeoutError:
+            self.native_timeout_phase = self.phase
+            raise
     def has_service(self, domain, service):
         return self.api.hass.services.has_service(domain, service)
     async def async_call(self, domain, service, data, **kwargs):
@@ -252,17 +260,9 @@ class _GuardedServices:
             # Mark before awaiting HA: cancellation cannot retract an action
             # already handed to HA or the remote Music Assistant server.
             self.mutation_dispatch_started = True
-        if (domain == 'music_assistant' and service == 'play_media'
-                and not self.playback_dispatch_started):
-            # HA verifies every URI; MA resolves the collection and prepares
-            # its first stream before returning. Cold ordinary playback can be
-            # as slow as a generated mix. Non-music operations retain lookup
-            # 35s + dispatch 65s. Fast music has no reschedulable deadline.
-            # Searches, retries and subsequent calls never extend the budget.
+        if (domain, service) == ('music_assistant', 'play_media'):
             self.playback_dispatch_started = True
-            if self.execution_deadline is not None:
-                self.execution_deadline.reschedule(asyncio.get_running_loop().time() + 65)
-        return await self.api.hass.services.async_call(domain, service, data, **kwargs)
+        return await self._native_response(self.api.hass.services.async_call(domain, service, data, **kwargs))
 
     async def async_play_shuffled_album(self, data):
         """MA ordered albums need shuffle on play_media itself, not a prior toggle.
@@ -289,9 +289,9 @@ class _GuardedServices:
         client = get_music_assistant_client(self.api.hass, row['config_entry_id'])
         self.phase = 'playback_dispatch'
         self.mutation_dispatch_started = self.playback_dispatch_started = True
-        await client.send_command('player_queues/play_media', queue_id=current['queue_id'],
+        await self._native_response(client.send_command('player_queues/play_media', queue_id=current['queue_id'],
             media=[data['media_id']], option='replace', radio_mode=False, shuffle=True,
-            user=row['username'], require_schema=35)
+            user=row['username'], require_schema=35))
         after = await self.async_read_queue_mode(row['music_player'])
         if after.get('queue_id') != current['queue_id'] or after.get('shuffle_enabled') is not True:
             raise MediaConfigurationError()
@@ -315,8 +315,7 @@ class _GuardedServices:
             return queue.queue_id if queue is not None else player_id
         queue_id = queue_id_now()
         self.phase = 'queue_lookup'
-        async with asyncio.timeout(12):
-            snapshot = await client.send_command('player_queues/get', queue_id=queue_id)
+        snapshot = await self._native_response(client.send_command('player_queues/get', queue_id=queue_id))
         current_entity = er.async_get(self.api.hass).async_get(player_entity_id)
         if (_resolve(self.api.hass, self.api.entry, self.context, self.target)[2] != self.signature
                 or getattr(current_entity, 'unique_id', None) != player_id or queue_id_now() != queue_id
@@ -366,8 +365,7 @@ class _GuardedServices:
         client = get_music_assistant_client(self.api.hass, row['config_entry_id'])
         self.phase = 'autoplay_control'
         self.mutation_dispatch_started = True
-        async with asyncio.timeout(3):
-            await client.send_command('player_queues/autoplay', queue_id=before['queue_id'], autoplay_enabled=enabled)
+        await self._native_response(client.send_command('player_queues/autoplay', queue_id=before['queue_id'], autoplay_enabled=enabled))
         after = await self.async_read_queue_mode(player_entity_id)
         if (any(after.get(key) != before.get(key) for key in identity)
                 or after.get('autoplay_enabled') is not enabled):
@@ -390,9 +388,8 @@ class _GuardedServices:
         # profile-scoped URI verification authorized this exact provider artist. Do
         # not omit this provider filter or expand a library artist here.
         self.phase = 'artist_top_tracks'
-        async with asyncio.timeout(12):
-            result = await client.send_command('music/artists/top_tracks', item_id=item_id,
-                provider_instance_id_or_domain=provider, provider_filter=provider)
+        result = await self._native_response(client.send_command('music/artists/top_tracks', item_id=item_id,
+            provider_instance_id_or_domain=provider, provider_filter=provider))
         if _resolve(self.api.hass, self.api.entry, self.context, self.target)[2] != self.signature:
             raise MediaConfigurationError()
         return result
@@ -412,10 +409,9 @@ class _GuardedServices:
         if not providers:
             return {'artists': []}, []
         self.phase = 'artist_search'
-        async with asyncio.timeout(12):
-            response = await client.send_command('music/search', search_query=query,
-                media_types=['artist'], providers=['library', *providers], limit=20,
-                user=row['username'], require_schema=35)
+        response = await self._native_response(client.send_command('music/search', search_query=query,
+            media_types=['artist'], providers=['library', *providers], limit=20,
+            user=row['username'], require_schema=35))
         if _resolve(self.api.hass, self.api.entry, self.context, self.target)[2] != self.signature:
             raise MediaConfigurationError()
         return response, providers
@@ -428,9 +424,8 @@ class _GuardedServices:
         from homeassistant.components.music_assistant.helpers import get_music_assistant_client
         client = get_music_assistant_client(self.api.hass, row['config_entry_id'])
         self.phase = 'catalog_authorization'
-        async with asyncio.timeout(12):
-            allowed = await client.send_command('music/verify_item_uri', uri=uri,
-                user=row['username'], require_schema=35)
+        allowed = await self._native_response(client.send_command('music/verify_item_uri', uri=uri,
+            user=row['username'], require_schema=35))
         if _resolve(self.api.hass, self.api.entry, self.context, self.target)[2] != self.signature:
             raise MediaConfigurationError()
         return allowed is True
@@ -448,10 +443,9 @@ class _GuardedServices:
         if not supported:
             return {'tracks': []}, []
         self.phase = 'genre_search'
-        async with asyncio.timeout(12):
-            response = await client.send_command('music/search', search_query=query,
-                media_types=['track'], providers=['library', *supported], limit=20,
-                user=row['username'], require_schema=35)
+        response = await self._native_response(client.send_command('music/search', search_query=query,
+            media_types=['track'], providers=['library', *supported], limit=20,
+            user=row['username'], require_schema=35))
         if _resolve(self.api.hass, self.api.entry, self.context, self.target)[2] != self.signature:
             raise MediaConfigurationError()
         return response, supported
@@ -476,9 +470,17 @@ class MediaTool(llm.Tool):
             self.annotations = llm.ToolAnnotations(read_only=False, destructive=True, idempotent=False, open_world=False)
 
     async def async_call(self, hass, tool_input, llm_context):
-        return await self._call(tool_input, llm_context, started_at=asyncio.get_running_loop().time())
+        try:
+            result = await self._call(tool_input, llm_context)
+        except asyncio.CancelledError:
+            record_media_result(llm_context, OPERATIONS[self.name], _result('error', 'media_result_uncertain'))
+            raise
+        # HA 2026.9 returns a dictionary; newer HA wraps the same public data.
+        data = result.data if hasattr(result, 'data') else result
+        record_media_result(llm_context, OPERATIONS[self.name], data)
+        return result
 
-    async def _call(self, tool_input, context, *, started_at):
+    async def _call(self, tool_input, context):
         try:
             args = tool_input.tool_args
             if not isinstance(args, dict) or set(args) - FIELDS[self.name]:
@@ -517,20 +519,15 @@ class MediaTool(llm.Tool):
         except Exception:
             return tool_result(llm, data=_result("clarify", "verified_source_and_media_configuration_required"))
         signature = (argument_signature, config_signature)
-        fast_music = (OPERATIONS[self.name] == "play" and args.get("kind", "music") == "music"
+        music_request = (OPERATIONS[self.name] == "play" and args.get("kind", "music") == "music"
                       and args.get("media_type") != "audiobook")
         if pending := self.api.pending.get(call_key):
             if pending[0] != signature:
                 return tool_result(llm, data=_result("error", "tool_call_id_reused_or_configuration_changed"), error=True)
-            try:
-                async with asyncio.timeout_at(started_at + MUSIC_FOREGROUND_SECONDS if fast_music else None):
-                    # A duplicate's cancellation must not cancel the original.
-                    result, error = await asyncio.shield(pending[1])
-                return tool_result(llm, data=deepcopy(result), error=error)
-            except TimeoutError:
-                return tool_result(llm, data=_result('error', 'media_result_uncertain',
-                    timeout_phase='waiting_for_existing_call',
-                    message="The earlier music request is still being handled. I couldn't confirm the result."), error=True)
+            # Await the original response; cancelling this waiter cannot cancel
+            # the original request or create a second playback dispatch.
+            result, error = await asyncio.shield(pending[1])
+            return tool_result(llm, data=deepcopy(result), error=error)
         if cached := self.api.completed.get(call_key):
             if cached[0] != signature:
                 return tool_result(llm, data=_result("error", "tool_call_id_reused_or_configuration_changed"), error=True)
@@ -547,42 +544,47 @@ class MediaTool(llm.Tool):
         self.api.pending[call_key] = (signature, asyncio.get_running_loop().create_future())
         services = None
         try:
-            async with asyncio.timeout_at(started_at + MUSIC_FOREGROUND_SECONDS if fast_music else None):
-                async with self.api.call_lock:
-                    key = (config_signature, row["room_id"], context.device_id)
-                    adapter = self.api.adapters.get(key)
-                    if adapter is None:
-                        def context_factory(**values):
-                            return media.MediaContext(**values, default_sleep_playlist=row["default_sleep_playlist"])
-                        bindings = PlannerBindings(media.plan_media, media.MediaRequest, context_factory,
-                            media.CatalogItem, media.CatalogSnapshot, media.QueueSnapshot)
-                        async def resolve_session(caller):
-                            _, current, current_signature, _ = _resolve(self.api.hass, self.api.entry, caller, row["room_id"])
-                            if current_signature != config_signature:
-                                raise MediaConfigurationError()
-                            return TrustedMediaSession(caller.device_id, current["username"], current["config_entry_id"],
-                                caller.context, frozenset({current["music_player"]}))
-                        adapter = MusicAssistantAdapter(SimpleNamespace(services=None), bindings, registry, resolve_session,
-                            resolve_queue_profile=self.api.resolve_queue_profile,
-                            enable_execution=self.api.execution_authorized is not False and enabled, clock=self.api.clock)
-                        self.api.adapters[key] = adapter
-                        while len(self.api.adapters) > 32:
-                            self.api.adapters.popitem(last=False)
-                    # API call_lock serializes this update and retains adapter player locks.
-                    # The outer fast-music deadline cannot be extended by dispatch.
-                    # Books and other operations retain their existing startup budget.
-                    async with asyncio.timeout(35) as deadline:
-                        services = _GuardedServices(self.api, context, row["room_id"],
-                            config_signature, execution_deadline=None if fast_music else deadline)
-                        adapter.hass.services = services
-                        plan = await adapter.async_handle({"operation": OPERATIONS[self.name], **args}, context)
-            result = _public(plan, requested_acknowledgement=fast_music)
+            async with self.api.call_lock:
+                key = (config_signature, row["room_id"], context.device_id)
+                adapter = self.api.adapters.get(key)
+                if adapter is None:
+                    def context_factory(**values):
+                        return media.MediaContext(**values, default_sleep_playlist=row["default_sleep_playlist"])
+                    bindings = PlannerBindings(media.plan_media, media.MediaRequest, context_factory,
+                        media.CatalogItem, media.CatalogSnapshot, media.QueueSnapshot)
+                    async def resolve_session(caller):
+                        _, current, current_signature, _ = _resolve(self.api.hass, self.api.entry, caller, row["room_id"])
+                        if current_signature != config_signature:
+                            raise MediaConfigurationError()
+                        return TrustedMediaSession(caller.device_id, current["username"], current["config_entry_id"],
+                            caller.context, frozenset({current["music_player"]}))
+                    adapter = MusicAssistantAdapter(SimpleNamespace(services=None), bindings, registry, resolve_session,
+                        resolve_queue_profile=self.api.resolve_queue_profile,
+                        enable_execution=self.api.execution_authorized is not False and enabled, clock=self.api.clock)
+                    self.api.adapters[key] = adapter
+                    while len(self.api.adapters) > 32:
+                        self.api.adapters.popitem(last=False)
+                # Serialize mutable adapter service bindings and player actions.
+                # A slow provider is not a failed request. Await native HA/MA
+                # completion, disconnect/error, or caller cancellation; performance
+                # targets must not cancel legitimate catalog/stream preparation.
+                services = _GuardedServices(self.api, context, row["room_id"], config_signature)
+                adapter.hass.services = services
+                plan = await adapter.async_handle({"operation": OPERATIONS[self.name], **args}, context)
+                if services.native_timeout_phase and plan.get("status") in ("error", "unavailable"):
+                    services.phase = services.native_timeout_phase
+                    raise TimeoutError()
+            result = _public(plan, requested_acknowledgement=music_request)
             error = result["status"] == "error"
         except asyncio.CancelledError:
             self.api.complete_call(call_key, signature, uncertain, True)
             raise
-        except TimeoutError:
-            if services is not None and services.mutation_dispatch_started:
+        except Exception as exc:
+            if services is not None and services.native_timeout_phase:
+                services.phase = services.native_timeout_phase
+            if not isinstance(exc, TimeoutError) and not (services is not None and services.native_timeout_phase):
+                result = _result("error", "media_unavailable_or_result_uncertain")
+            elif services is not None and services.mutation_dispatch_started:
                 result = _result("error", "media_playback_pending_or_uncertain",
                     playback_dispatch_started=services.playback_dispatch_started,
                     mutation_dispatch_started=True,
@@ -591,7 +593,7 @@ class MediaTool(llm.Tool):
                              if services.playback_dispatch_started else
                              "Music Assistant took too long. I couldn't confirm your request."),
                     response_instruction="Say the message once. Do not retry playback or claim no matching music was found.")
-            elif fast_music:
+            elif music_request:
                 result = _result("error", "media_provider_timeout",
                     timeout_phase=services.phase if services is not None else 'waiting_for_media_lock',
                     mutation_dispatch_started=False, playback_dispatch_started=False,
@@ -600,8 +602,6 @@ class MediaTool(llm.Tool):
             else:
                 result = _result("error", "media_unavailable_or_result_uncertain")
             error = True
-        except Exception:
-            result, error = _result("error", "media_unavailable_or_result_uncertain"), True
         self.api.complete_call(call_key, signature, result, error)
         return tool_result(llm, data=result, error=error)
 

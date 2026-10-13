@@ -189,28 +189,21 @@ class MediaLLMTests(unittest.IsolatedAsyncioTestCase):
             with self.assertRaises(module.MediaConfigurationError):
                 await native_queue_mode_reader(guard, PLAYER)
 
-    async def test_artist_playlist_and_mix_dispatch_each_get_one_execution_budget(self):
+    async def test_artist_playlist_and_mix_dispatch_track_mutations_without_deadlines(self):
         signature = module._resolve(self.hass, self.entry, self.context, 'kitchen')[2]
         for data in ({'media_id':['library://track/1','library://track/2'], 'radio_mode':False},
                      {'media_id':'library://playlist/1', 'radio_mode':False},
                      {'media_id':'library://track/1', 'radio_mode':True}):
             with self.subTest(data=data):
-                deadlines = []
-                guard = module._GuardedServices(self.api, self.context, 'kitchen', signature,
-                    execution_deadline=types.SimpleNamespace(reschedule=deadlines.append))
-                await guard.async_call('music_assistant', 'search', {})
-                await guard.async_call('media_player', 'shuffle_set', {'shuffle':False})
-                self.assertEqual(deadlines, [])
-                self.assertFalse(guard.playback_dispatch_started)
-                before = asyncio.get_running_loop().time()
-                await guard.async_call('music_assistant', 'play_media', data)
-                after = asyncio.get_running_loop().time()
-                self.assertTrue(guard.playback_dispatch_started)
-                self.assertEqual(len(deadlines), 1)
-                self.assertGreaterEqual(deadlines[0], before + 65)
-                self.assertLessEqual(deadlines[0], after + 65)
-                await guard.async_call('music_assistant', 'play_media', data)
-                self.assertEqual(len(deadlines), 1)
+                guard = module._GuardedServices(self.api, self.context, 'kitchen', signature)
+                with patch.object(module.asyncio, 'timeout', side_effect=AssertionError('No artificial deadline')):
+                    await guard.async_call('music_assistant', 'search', {})
+                    self.assertFalse(guard.mutation_dispatch_started)
+                    await guard.async_call('media_player', 'shuffle_set', {'shuffle':False})
+                    self.assertTrue(guard.mutation_dispatch_started)
+                    self.assertFalse(guard.playback_dispatch_started)
+                    await guard.async_call('music_assistant', 'play_media', data)
+                    self.assertTrue(guard.playback_dispatch_started)
 
     async def test_autoplay_hook_rejects_changed_queue_seed_and_failed_readback(self):
         signature = module._resolve(self.hass, self.entry, self.context, 'kitchen')[2]
@@ -239,39 +232,27 @@ class MediaLLMTests(unittest.IsolatedAsyncioTestCase):
                 self.entry.options['media_rooms'][0]['username'] = 'configured-user'
                 self.assertEqual(len(calls), 1 if scenario in ('valid','failed_readback') else 0)
 
-    async def test_changed_configuration_cannot_extend_mix_deadline_or_dispatch(self):
+    async def test_changed_configuration_cannot_dispatch(self):
         signature = module._resolve(self.hass, self.entry, self.context, 'kitchen')[2]
-        deadlines = []
-        guard = module._GuardedServices(self.api, self.context, 'kitchen', signature,
-            execution_deadline=types.SimpleNamespace(reschedule=deadlines.append))
+        guard = module._GuardedServices(self.api, self.context, 'kitchen', signature)
         self.entry.options['media_rooms'][0]['username'] = 'changed-user'
         with self.assertRaises(module.MediaConfigurationError):
             await guard.async_call('music_assistant', 'play_media', {'radio_mode': True})
-        self.assertEqual(deadlines, [])
         self.assertEqual(self.services.calls, [])
         self.assertFalse(guard.playback_dispatch_started)
 
     async def test_action_timeout_returns_uncertainty_and_same_call_cannot_replay(self):
         self.entry.options.update(live_actions_enabled=True, media_enabled=True)
         original_call = self.services.async_call
-        async def slow_play(domain, service, data, **kwargs):
+        async def provider_timeout(domain, service, data, **kwargs):
             result = await original_call(domain, service, data, **kwargs)
             if service == 'play_media':
-                await asyncio.sleep(1)
+                raise TimeoutError('Native provider timeout')
             return result
-        self.services.async_call = slow_play
-        timeout = asyncio.timeout
-        class ShortTimeout:
-            def __init__(self, seconds): self.timer = timeout(.1)
-            async def __aenter__(self):
-                await self.timer.__aenter__()
-                return self
-            async def __aexit__(self, *exc): return await self.timer.__aexit__(*exc)
-            def reschedule(self, deadline): self.timer.reschedule(asyncio.get_running_loop().time() + .1)
+        self.services.async_call = provider_timeout
         args = {'query': 'Fixture Playlist', 'kind': 'music', 'media_type':'playlist'}
         self.services.search_result = search(item('Fixture Playlist','playlist','library://playlist/1'),'playlists')
-        with patch.object(module.asyncio, 'timeout', side_effect=ShortTimeout):
-            first = await self.call(args=args, call_id='timed-out-action')
+        first = await self.call(args=args, call_id='timed-out-action')
         self.assertEqual(first.data['reason'], 'media_playback_pending_or_uncertain')
         self.assertTrue(first.error)
         self.assertTrue(first.data['playback_dispatch_started'])
@@ -287,35 +268,61 @@ class MediaLLMTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(first.data, second.data)
         self.assertEqual(sum(call[1] == 'play_media' for call in self.services.calls), 1)
 
-    async def test_lookup_retains_35_second_budget_and_does_not_claim_dispatch(self):
-        self.entry.options.update(live_actions_enabled=True, media_enabled=True)
-        async def slow_search(*args, **kwargs): await asyncio.sleep(1)
-        self.services.async_call = slow_search
-        timeout = asyncio.timeout
-        budgets = []
-        def short_lookup(seconds):
-            budgets.append(seconds)
-            return timeout(.05)
-        with patch.object(module.asyncio, 'timeout', side_effect=short_lookup):
-            result = await self.call(args={'query':'Fixture Book','kind':'book'})
-        self.assertEqual(budgets, [35])
-        self.assertEqual(result.data['reason'], 'media_unavailable_or_result_uncertain')
-        self.assertNotIn('playback_dispatch_started', result.data)
+    async def test_successful_native_fallback_clears_prior_timeout_phase(self):
+        signature = module._resolve(self.hass, self.entry, self.context, 'kitchen')[2]
+        guard = module._GuardedServices(self.api, self.context, 'kitchen', signature)
+        async def timeout(): raise TimeoutError('Provider timeout')
+        async def success(): return True
+        guard.phase = 'genre_search'
+        with self.assertRaises(TimeoutError): await guard._native_response(timeout())
+        self.assertEqual(guard.native_timeout_phase, 'genre_search')
+        self.assertTrue(await guard._native_response(success()))
+        self.assertIsNone(guard.native_timeout_phase)
 
-    async def test_music_lookup_deadline_has_no_mutations_and_caches_failure(self):
-        cancelled = asyncio.Event()
+    async def test_tool_receipts_record_wrapped_and_native_dict_results_including_cached_errors(self):
+        self.entry.options.update(live_actions_enabled=True, media_enabled=True)
+        self.services.search_result = search(item('Fixture Playlist','playlist','library://playlist/1'),'playlists')
+        for native in (False, True):
+            with self.subTest(native=native):
+                args = {'query':'Fixture Playlist','kind':'music'}
+                patches = {'ToolResult': None} if native else {}
+                with patch.multiple(module.llm, **patches) if patches else patch.dict({}, {}):
+                    with scope_module.bind_request('Play Fixture Playlist', 'en', self.context.context, self.context.device_id) as evidence:
+                        first = await self.call(args=args, call_id='receipt-' + str(native))
+                        second = await self.call(args=args, call_id='receipt-' + str(native))
+                        await self.call(args={'query': object()}, call_id='invalid-receipt-' + str(native))
+                self.assertEqual(len(evidence.media_results), 3)
+                self.assertEqual(evidence.media_results[0], evidence.media_results[1])
+                self.assertEqual(evidence.media_results[0]['operation'], 'play')
+                self.assertEqual(evidence.media_results[0]['status'], 'action_accepted')
+                self.assertTrue(evidence.media_results[0]['executed'])
+                self.assertEqual(evidence.media_results[0]['selected']['title'], 'Fixture Playlist')
+                self.assertEqual(evidence.media_results[2]['reason'], 'invalid_media_arguments')
+                self.assertNotIn('actions', evidence.media_results[0])
+
+    async def test_cancelled_tool_records_uncertainty_before_scope_exit(self):
+        entered = asyncio.Event()
         async def slow_search(*args, **kwargs):
-            try:
-                await asyncio.sleep(1)
-            finally:
-                cancelled.set()
+            entered.set()
+            await asyncio.Event().wait()
         self.services.async_call = slow_search
+        with scope_module.bind_request('Play Adele', 'en', self.context.context, self.context.device_id) as evidence:
+            task = asyncio.create_task(self.call(args={'query':'Adele'}, call_id='receipt-cancelled'))
+            await entered.wait()
+            task.cancel()
+            with self.assertRaises(asyncio.CancelledError): await task
+            cached = await self.call(args={'query':'Adele'}, call_id='receipt-cancelled')
+        self.assertEqual(len(evidence.media_results), 2)
+        self.assertEqual(evidence.media_results[0], evidence.media_results[1])
+        self.assertEqual(evidence.media_results[0]['reason'], 'media_result_uncertain')
+        self.assertFalse(self.api.pending)
+
+    async def test_native_lookup_timeout_has_no_mutations_and_caches_failure(self):
+        async def provider_timeout(*args, **kwargs):
+            raise TimeoutError('Native provider timeout')
+        self.services.async_call = provider_timeout
         args = {'query':'Adele', 'kind':'music'}
-        start = asyncio.get_running_loop().time()
-        with patch.object(module, 'MUSIC_FOREGROUND_SECONDS', .1):
-            result = await self.call(args=args, call_id='slow-lookup')
-        self.assertLess(asyncio.get_running_loop().time() - start, .5)
-        self.assertTrue(cancelled.is_set())
+        result = await self.call(args=args, call_id='slow-lookup')
         self.assertEqual(result.data['reason'], 'media_provider_timeout')
         self.assertEqual(result.data['timeout_phase'], 'catalog_lookup')
         self.assertFalse(result.data['mutation_dispatch_started'])
@@ -323,68 +330,69 @@ class MediaLLMTests(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn('announcement', result.data)
         self.assertEqual((await self.call(args=args, call_id='slow-lookup')).data, result.data)
 
-    async def test_artist_dependency_timeout_preserves_nonsecret_phase(self):
-        self.assertEqual(module.MUSIC_FOREGROUND_SECONDS, 4.5)
+    async def test_artist_dependency_native_timeout_preserves_nonsecret_phase(self):
         self.services.search_result = search(item('Adele','artist','fixture://artist/1'),'artists')
-        async def slow_candidates(guard, *args):
+        async def provider_timeout(guard, *args):
             guard.phase = 'artist_search'
-            await asyncio.sleep(1)
-        with patch.object(module._GuardedServices, 'async_read_artist_candidates', slow_candidates), \
-             patch.object(module, 'MUSIC_FOREGROUND_SECONDS', .1):
+            guard.native_timeout_phase = guard.phase
+            raise TimeoutError('Native provider timeout')
+        with patch.object(module._GuardedServices, 'async_read_artist_candidates', provider_timeout):
             result = await self.call(args={'query':'Adele','kind':'music'})
         self.assertEqual(result.data['reason'], 'media_provider_timeout')
         self.assertEqual(result.data['timeout_phase'], 'artist_search')
         self.assertEqual([c[1] for c in self.services.calls], ['search'])
 
-    async def test_music_deadline_includes_lock_wait_and_never_replays_timed_out_waiter(self):
-        args = {'query':'Adele', 'kind':'music'}
-        await self.api.call_lock.acquire()
-        try:
-            with patch.object(module, 'MUSIC_FOREGROUND_SECONDS', .1):
-                result = await self.call(args=args, call_id='waiting')
-        finally:
-            self.api.call_lock.release()
-        self.assertEqual(result.data['reason'], 'media_provider_timeout')
-        self.assertEqual(result.data['timeout_phase'], 'waiting_for_media_lock')
-        self.assertEqual(self.services.calls, [])
-        self.assertEqual((await self.call(args=args, call_id='waiting')).data, result.data)
-        self.assertEqual(self.services.calls, [])
-
-    async def test_music_lock_wait_does_not_reset_lookup_budget(self):
-        async def slow_search(*args, **kwargs): await asyncio.sleep(1)
-        self.services.async_call = slow_search
-        await self.api.call_lock.acquire()
-        start = asyncio.get_running_loop().time()
-        with patch.object(module, 'MUSIC_FOREGROUND_SECONDS', .15):
-            task = asyncio.create_task(self.call(args={'query':'Adele','kind':'music'}))
-            await asyncio.sleep(.08)
-            self.api.call_lock.release()
-            result = await task
-        self.assertEqual(result.data['timeout_phase'], 'catalog_lookup')
-        self.assertLess(asyncio.get_running_loop().time() - start, .21)
-
-    async def test_music_dispatch_and_queue_control_share_fixed_budget(self):
+    async def test_legitimate_music_longer_than_five_seconds_completes_once(self):
         self.entry.options.update(live_actions_enabled=True, media_enabled=True)
         self.services.search_result = search(item('Fixture Playlist','playlist','library://playlist/1'),'playlists')
         original_call = self.services.async_call
-        for slow_service, phase, played in [('shuffle_set','queue_control',False), ('play_media','playback_dispatch',True)]:
-            async def slow(domain, service, data, **kwargs):
-                result = await original_call(domain, service, data, **kwargs)
-                if service == slow_service:
-                    await asyncio.sleep(1)
-                return result
-            self.services.async_call = slow
-            start = asyncio.get_running_loop().time()
-            with patch.object(module, 'MUSIC_FOREGROUND_SECONDS', .1):
-                result = await self.call(args={'query':'Fixture Playlist','kind':'music'}, call_id=slow_service)
-            self.assertLess(asyncio.get_running_loop().time() - start, .5)
-            self.assertEqual(result.data['reason'], 'media_playback_pending_or_uncertain')
-            self.assertEqual(result.data['timeout_phase'], phase)
-            self.assertTrue(result.data['mutation_dispatch_started'])
-            self.assertEqual(result.data['playback_dispatch_started'], played)
-            self.assertFalse(result.data['playback_confirmed'])
-            self.assertNotIn('announcement', result.data)
-            self.assertFalse(self.api.call_lock.locked())
+        async def slow_play(domain, service, data, **kwargs):
+            result = await original_call(domain, service, data, **kwargs)
+            if service == 'play_media':
+                await asyncio.sleep(5.1)
+            return result
+        self.services.async_call = slow_play
+        args = {'query':'Fixture Playlist', 'kind':'music'}
+        started = asyncio.get_running_loop().time()
+        with patch.object(module.asyncio, 'timeout', side_effect=AssertionError('No artificial deadline')), \
+                patch.object(module.asyncio, 'timeout_at', side_effect=AssertionError('No artificial deadline')):
+            result = await self.call(args=args, call_id='slow-valid')
+        self.assertGreaterEqual(asyncio.get_running_loop().time() - started, 5)
+        self.assertEqual(result.data['status'], 'action_accepted')
+        self.assertFalse(result.data['playback_confirmed'])
+        self.assertTrue(result.data['announcement'].startswith('Requested '))
+        self.assertEqual((await self.call(args=args, call_id='slow-valid')).data, result.data)
+        self.assertEqual(sum(c[1]=='play_media' for c in self.services.calls), 1)
+
+    async def test_music_waits_for_lock_and_cancelled_waiter_cannot_replay(self):
+        args = {'query':'Adele', 'kind':'music'}
+        await self.api.call_lock.acquire()
+        task = asyncio.create_task(self.call(args=args, call_id='waiting'))
+        await asyncio.sleep(.05)
+        self.assertFalse(task.done())
+        task.cancel()
+        with self.assertRaises(asyncio.CancelledError): await task
+        self.api.call_lock.release()
+        result = await self.call(args=args, call_id='waiting')
+        self.assertEqual(result.data['reason'], 'media_result_uncertain')
+        self.assertEqual(self.services.calls, [])
+        self.assertFalse(self.api.pending)
+
+    async def test_native_queue_control_timeout_remains_uncertain(self):
+        self.entry.options.update(live_actions_enabled=True, media_enabled=True)
+        self.services.search_result = search(item('Fixture Playlist','playlist','library://playlist/1'),'playlists')
+        original_call = self.services.async_call
+        async def provider_timeout(domain, service, data, **kwargs):
+            result = await original_call(domain, service, data, **kwargs)
+            if service == 'shuffle_set': raise TimeoutError('Native provider timeout')
+            return result
+        self.services.async_call = provider_timeout
+        result = await self.call(args={'query':'Fixture Playlist','kind':'music'})
+        self.assertEqual(result.data['reason'], 'media_playback_pending_or_uncertain')
+        self.assertEqual(result.data['timeout_phase'], 'queue_control')
+        self.assertTrue(result.data['mutation_dispatch_started'])
+        self.assertFalse(result.data['playback_dispatch_started'])
+        self.assertFalse(self.api.call_lock.locked())
 
     async def test_external_cancellation_keeps_reservation_and_duplicate_cannot_cancel_original(self):
         entered = asyncio.Event()
@@ -407,22 +415,26 @@ class MediaLLMTests(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(self.api.pending)
         self.assertFalse(self.api.call_lock.locked())
 
-    async def test_duplicate_deadline_does_not_cancel_or_replay_original(self):
-        entered = asyncio.Event()
+    async def test_duplicate_waits_for_original_completion_without_replay(self):
+        entered, release = asyncio.Event(), asyncio.Event()
+        original_call = self.services.async_call
         async def slow_search(*args, **kwargs):
             entered.set()
-            await asyncio.sleep(10)
+            await release.wait()
+            return await original_call(*args, **kwargs)
         self.services.async_call = slow_search
         args = {'query':'Adele','kind':'music'}
         first = asyncio.create_task(self.call(args=args, call_id='in-flight'))
         await entered.wait()
-        with patch.object(module, 'MUSIC_FOREGROUND_SECONDS', .1):
-            duplicate = await self.call(args=args, call_id='in-flight')
-        self.assertEqual(duplicate.data['timeout_phase'], 'waiting_for_existing_call')
+        duplicate = asyncio.create_task(self.call(args=args, call_id='in-flight'))
+        await asyncio.sleep(.05)
         self.assertFalse(first.done())
+        self.assertFalse(duplicate.done())
         self.assertEqual(len(self.api.pending), 1)
-        first.cancel()
-        with self.assertRaises(asyncio.CancelledError): await first
+        release.set()
+        original_result, duplicate_result = await asyncio.gather(first, duplicate)
+        self.assertEqual(original_result.data, duplicate_result.data)
+        self.assertEqual(len(self.services.calls), 1)
         self.assertFalse(self.api.pending)
 
     async def test_pending_reservations_are_bounded_and_survive_completed_cache_churn(self):
@@ -584,7 +596,8 @@ class MediaLLMTests(unittest.IsolatedAsyncioTestCase):
                                          supported_features=['artist_toptracks'])
         helper.get_music_assistant_client = lambda hass, entry_id: types.SimpleNamespace(send_command=send_command, providers=[provider])
         from unittest.mock import patch
-        with patch.dict(sys.modules, {'homeassistant.components.music_assistant.helpers': helper}):
+        with patch.dict(sys.modules, {'homeassistant.components.music_assistant.helpers': helper}), \
+                patch.object(module.asyncio, 'timeout', side_effect=AssertionError('No artist read cutoff')):
             result = await self.call(args={'query':'Fleetwood Mac','media_type':'artist'})
         self.assertEqual(result.data['status'], 'action_accepted')
         self.assertEqual(result.data['playback_kind'], 'artist_top_tracks')

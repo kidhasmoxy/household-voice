@@ -8,9 +8,8 @@ from homeassistant.helpers import device_registry as dr, entity_registry as er, 
 from homeassistant.util import ulid as ulid_util
 
 from .const import DOMAIN
-from .conversation_router import (acknowledgement, broad_music_query, command,
-                                  inline_announcement, music_acknowledgement, named_music_query,
-                                  qualified_music_request)
+from .conversation_router import (acknowledgement, command, inline_announcement,
+                                  music_acknowledgement, media_action_request, music_request)
 from .intent_scope import bind_request
 from .knowledge_router import knowledge_question
 from .knowledge_policy import family_prompt
@@ -140,6 +139,7 @@ class HouseholdConversationRouter(conversation.ConversationEntity):
             return self._reply(user_input, 'The conversation routing configuration loops back to this router.')
         token = _ACTIVE_ROUTERS.set(active | {self.entry.entry_id})
         try:
+            unresolved_media_constraint = None
             operation = command(user_input.text, user_input.language)
             body = inline_announcement(user_input.text, user_input.language)
             if body is not None:
@@ -176,12 +176,20 @@ class HouseholdConversationRouter(conversation.ConversationEntity):
                     result.conversation_id=selection['conversation_id']
                 result.continue_conversation=selection['continue_conversation']
                 return result
-            if (request := qualified_music_request(user_input.text, user_input.language, _MUSIC_STYLES)) is not None:
-                return await self._media_reply(user_input, request)
-            if (query := broad_music_query(user_input.text, user_input.language, _MUSIC_STYLES)) is not None:
-                return await self._media_reply(user_input, query)
-            if (query := named_music_query(user_input.text, user_input.language)) is not None:
-                return await self._media_reply(user_input, query)
+            if (request := music_request(user_input.text, user_input.language, _MUSIC_STYLES)) is not None:
+                if target := request.get('target_room'):
+                    try:
+                        resolve_media_room(self.hass, self.entry, user_input.as_llm_context(DOMAIN), target)
+                    except Exception:
+                        if 'room' in target.casefold().split():
+                            return await self._media_reply(user_input, request)
+                        # A syntactic suffix can be part of a title (Back in
+                        # Black). Delegate the original complete utterance; do
+                        # not remove the suffix or substitute the source room.
+                        unresolved_media_constraint = dict(request)
+                        request = None
+                if request is not None:
+                    return await self._media_reply(user_input, request)
             if (self.entry.options.get('knowledge_enabled', False)
                     and knowledge_question(user_input.text, user_input.language)):
                 return await self._knowledge_reply(user_input)
@@ -197,11 +205,30 @@ class HouseholdConversationRouter(conversation.ConversationEntity):
                 if self.entry.options.get('knowledge_enabled', False):
                     policy = family_prompt(self.entry.options)
                     extra_prompt = '\n\n'.join(part for part in (extra_prompt, policy) if part)
-                with bind_request(user_input.text, user_input.language, user_input.context, user_input.device_id):
-                    return await conversation.async_converse(self.hass, text=user_input.text,
+                with bind_request(user_input.text, user_input.language, user_input.context, user_input.device_id,
+                                  media_constraints=unresolved_media_constraint) as evidence:
+                    delegated = await conversation.async_converse(self.hass, text=user_input.text,
                         conversation_id=user_input.conversation_id, context=user_input.context,
                         language=user_input.language, agent_id=fallback, device_id=user_input.device_id,
                         satellite_id=user_input.satellite_id, extra_system_prompt=extra_prompt)
+                if media_action_request(user_input.text, user_input.language):
+                    receipts = evidence.media_results
+                    if not receipts or evidence.media_results_overflow:
+                        return self._reply(user_input, 'I could not confirm that the audio request was carried out.')
+                    uncertain = [receipt for receipt in receipts if receipt.get('status') == 'error'
+                        and (receipt.get('mutation_dispatch_started') or receipt.get('actions_issued', 0)
+                             or receipt.get('reason') in ('media_playback_pending_or_uncertain', 'media_result_uncertain'))]
+                    outcome = dict(uncertain[-1] if uncertain else receipts[-1])
+                    if outcome.get('operation') != 'play' and outcome.get('status') == 'action_accepted':
+                        speech = 'Okay.'
+                    else:
+                        speech = music_acknowledgement(outcome)
+                    reply = self._reply(user_input, speech)
+                    reply.response.async_set_speech(speech, extra_data={'household_media':{
+                        key:outcome[key] for key in ('status','reason','operation','executed',
+                            'playback_confirmed','retry_automatically','timeout_phase') if key in outcome}})
+                    return reply
+                return delegated
             except Exception:
                 return self._reply(user_input, 'The fallback conversation agent is unavailable. Please try again.')
         finally:

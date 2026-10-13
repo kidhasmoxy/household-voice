@@ -1,5 +1,24 @@
 # Changelog
 
+## 0.3.13
+
+Removes integration-added media response, lookup and dispatch deadlines. Slow
+valid requests can complete instead of failing to satisfy a latency target.
+Caller cancellation and native transport errors remain; uncertain actions are
+never automatically replayed. A slow provider can still hold the existing media
+serialization lock until completion, disconnect or caller cancellation.
+
+Structured English music requests preserve title, artist, album, room and shuffle
+across typed albums, artist clauses, polite wording and reordered modifiers.
+Unsupported constraints and combined home commands remain with the configured
+agent rather than being dropped. Room identities are still resolved from trusted
+configuration before any playback.
+
+Supported Household Voice media fallback responses now use request-bound tool
+receipts. A model's unverified claim does not establish playback. This guard
+does not cover every native Assist action; semantic follow-ups and full playback
+acceptance remain beta work. No model subscription or controller is added.
+
 ## 0.3.12
 
 Soundtrack requests resolve albums using soundtrack/cast metadata, while preserving

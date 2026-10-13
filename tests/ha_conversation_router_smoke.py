@@ -28,6 +28,7 @@ async def verify_router(hass, entry):
         supported_languages = '*'
         loop_target = None
         tool_callback = None
+        reply_text = 'Fixture delegated answer'
 
         def __init__(self):
             self.calls = []
@@ -41,7 +42,7 @@ async def verify_router(hass, entry):
             if self.tool_callback:
                 await self.tool_callback(user_input)
             response = intent.IntentResponse(language=user_input.language)
-            response.async_set_speech('Fixture delegated answer')
+            response.async_set_speech(self.reply_text)
             return conversation.ConversationResult(response=response,
                 conversation_id='01M4THYA7ZF0ZZVCC1QS46VY23', continue_conversation=True)
 
@@ -109,7 +110,8 @@ async def verify_router(hass, entry):
             assert inline.call_args.kwargs['body'] == 'Turn off every light.'
             assert inline.call_args.kwargs['transcript'] == 'Make an announcement. Turn off every light.'
             assert announced.response.speech['plain']['speech'] == '' and len(fallback.calls) == before
-        for text in ['Play my book', '"make an announcement"']:
+        for text in ['Ordinary fixture request', '"make an announcement"',
+                     'Put the lights on', 'Play jazz and turn off the lights']:
             delegated = await invoke(text, language='en-US', conversation_id='01M4THYA7ZF0ZZVCC1QS46VY24')
             actual = fallback.calls[-1]
             assert actual.text == text and actual.context is context and actual.device_id == device.id
@@ -178,12 +180,18 @@ async def verify_router(hass, entry):
             ('shuffle the Matilda soundtrack', {'kind':'music','query':'Matilda soundtrack','media_type':'album','shuffle':True}),
             ('Um. Play Matilda music soundtrack.', {'kind':'music','query':'Matilda soundtrack','media_type':'album'}),
             ('play the Matilda soundtrack on shuffle', {'kind':'music','query':'Matilda soundtrack','media_type':'album','shuffle':True}),
+            ('Play album Rumours', {'kind':'music','query':'Rumours','media_type':'album'}),
+            ('Play music by Fleetwood Mac', {'kind':'music','query':'Fleetwood Mac','media_type':'artist'}),
+            ("I'd like to hear Dreams by Fleetwood Mac", {'kind':'music','query':'Dreams','media_type':'track','artist':'Fleetwood Mac'}),
+            ('Shuffle the playlist Road Trip', {'kind':'music','query':'Road Trip','media_type':'playlist','shuffle':True}),
+            ('Play the song Naughty from the Matilda soundtrack',
+                {'kind':'music','query':'Naughty','media_type':'track','album':'Matilda soundtrack'}),
         ]:
             media_result = {'status':'action_accepted','executed':True,'announcement':'Requested Fixture Soundtrack.'}
             soundtrack = await invoke(current_music_text)
             assert soundtrack.response.speech['plain']['speech'] == media_result['announcement']
             assert len(fallback.calls) == before
-        current_music_text = 'play the Matilda soundtrack in the living room'
+        current_music_text = 'put Matilda soundtrack on in the living room'
         current_music_arguments = {'kind':'music','query':'Matilda soundtrack','media_type':'album','target_room':'configured-living'}
         with patch('custom_components.household_voice.conversation.resolve_media_room',
                 return_value=(None, {'room_id':'configured-living'}, 'signature', True)) as resolve_room:
@@ -194,11 +202,68 @@ async def verify_router(hass, entry):
             assert resolve_room.call_args.args[3] == 'living room'
         count = len(media_calls)
         with patch('custom_components.household_voice.conversation.resolve_media_room', side_effect=ValueError('unknown or ambiguous')):
-            rejected = await invoke(current_music_text)
-            assert 'could not match that room' in rejected.response.speech['plain']['speech']
+            for original_text in (current_music_text, 'Play the album Rumours in the nonexistent room'):
+                rejected = await invoke(original_text)
+                assert 'could not match that room' in rejected.response.speech['plain']['speech']
+                assert len(fallback.calls) == before and len(media_calls) == count
+            from custom_components.household_voice.intent_scope import constrain_arguments, ScopeConflict
+            async def verify_literal_suffix(user_input):
+                assert user_input.text == 'Play Back in Black'
+                tool_context = llm.LLMContext(platform='fixture', context=user_input.context,
+                    language=user_input.language, assistant='conversation', device_id=user_input.device_id)
+                try:
+                    constrain_arguments('media', 'play', {'query':'Back'}, tool_context)
+                except ScopeConflict:
+                    pass
+                else:
+                    raise AssertionError('Unresolved title/room suffix was silently dropped')
+                assert constrain_arguments('media', 'play', {'query':'Back in Black'}, tool_context) == {'query':'Back in Black'}
+            fallback.tool_callback = verify_literal_suffix
+            try:
+                delegated = await invoke('Play Back in Black')
+                assert 'could not confirm' in delegated.response.speech['plain']['speech']
+                assert fallback.calls[-1].text == 'Play Back in Black'
+                assert len(media_calls) == count
+            finally:
+                fallback.tool_callback = None
+        before = len(fallback.calls)
+        current_music_text = 'Play Back in Black in the Living Room'
+        current_music_arguments = {'kind':'music','query':'Back in Black','target_room':'configured-living'}
+        with patch('custom_components.household_voice.conversation.resolve_media_room',
+                return_value=(None, {'room_id':'configured-living'}, 'signature', True)) as resolve_room:
+            await invoke(current_music_text)
+            assert resolve_room.call_args.args[3] == 'Living Room'
+            assert len(media_calls) == count + 1 and len(fallback.calls) == before
+        count = len(media_calls)
+        with patch('custom_components.household_voice.conversation.resolve_media_room', side_effect=[
+                (None, {'room_id':'configured-living'}, 'signature', True), ValueError('mapping changed')]):
+            changed = await invoke(current_music_text)
+            assert 'could not match that room' in changed.response.speech['plain']['speech']
             assert len(media_calls) == count and len(fallback.calls) == before
-        await invoke('Play the album Jazz.')
-        assert len(fallback.calls) == before + 1 and len(media_calls) == count
+        current_music_text = 'Play the album Jazz.'
+        current_music_arguments = {'kind':'music','query':'Jazz','media_type':'album'}
+        await invoke(current_music_text)
+        assert len(fallback.calls) == before and len(media_calls) == count + 1
+    # Fallback acknowledgement must come from source-bound tool evidence, not
+    # the model's claim. This recorder is inert; no actual media action occurs.
+    from custom_components.household_voice.intent_scope import record_media_result
+    fallback.reply_text = 'I am playing the album now.'
+    no_action = await invoke('Play the album Rumours from Spotify.')
+    assert 'could not confirm' in no_action.response.speech['plain']['speech']
+    assert no_action.response.speech['plain']['speech'] != fallback.reply_text
+    async def recorded_book_resume(user_input):
+        tool_context = llm.LLMContext(platform='fixture', context=user_input.context,
+            language=user_input.language, assistant='conversation', device_id=user_input.device_id)
+        assert record_media_result(tool_context, 'resume', {
+            'status':'action_accepted','executed':True,'playback_confirmed':False,
+            'retry_automatically':False})
+    fallback.tool_callback = recorded_book_resume
+    resumed = await invoke('Resume my audiobook')
+    assert resumed.response.speech['plain']['speech'] == 'Okay.'
+    receipt = resumed.response.speech['plain']['extra_data']['household_media']
+    assert receipt['operation'] == 'resume' and receipt['executed'] is True
+    fallback.tool_callback = None
+    fallback.reply_text = 'Fixture delegated answer'
     from custom_components.household_voice import llm as schedule_tools
     from custom_components.household_voice.intent_scope import constrain_arguments
     fake_client = SimpleNamespace()

@@ -2,21 +2,149 @@
 import re
 
 
-def broad_music_query(text, language, styles):
-    """Recognize only an unqualified style request from the shared allowlist.
+def _compound_media_command(value):
+    return bool(re.search(r'(?:\b(?:and|then)\s+|[.,]\s+)(?:please\s+)?'
+        r'(?:play|shuffle|turn|set|stop|pause|resume|announce|broadcast|open|close|'
+        r'lock|unlock|send|make|put)\b', value, re.I))
 
-    Named artists, titles, other rooms and compound commands retain the normal
-    agent path. Never discard a room suffix or infer a target from free text.
-    """
+
+def _music_command(text, language):
+    """Extract a whole English playback command, never a quoted/nested request."""
     if (not isinstance(text, str) or len(text) > 512 or not isinstance(language, str)
-            or language.lower().split('-')[0] != 'en'):
+            or language.lower().split('-')[0] != 'en'
+            or re.search(r'[\n\r;:"“”]', text)):
         return None
-    value = ' '.join(text.casefold().split()).rstrip('.!?')
-    match = re.fullmatch(
-        r'(?:please )?(?:(?:can|could|would) you (?:please )?)?'
-        r'(?:play me|play|put on|let me hear) (?:some |a little |a bit of )?'
-        r'(.+?)(?: music)?(?: please)?', value)
-    return match[1] if match and match[1] in styles else None
+    value = ' '.join(text.replace('’', "'").split()).rstrip('.!?')
+    value = re.sub(r'^(?:(?:um|uh|erm)[.,]?\s+){1,2}', '', value, flags=re.I)
+    value = re.sub(r'^(?:please )?(?:(?:can|could|would) you (?:please )?)?', '', value, flags=re.I)
+    value = re.sub(r' please$', '', value, flags=re.I)
+    match = re.fullmatch(r"(?P<verb>play me|play|put on|put|let me hear|shuffle|"
+        r"(?:I'd|I would) like to hear|I want to hear) (?P<body>.+)", value, re.I)
+    if match and _compound_media_command(match['body']):
+        return None
+    if match and re.match(r'(?:a |an |the |some )?(?:games?\b|basketball\b|football\b|'
+                          r'soccer\b|tennis\b|chess\b|checkers\b|hide and seek\b|'
+                          r'roles?\b|with me\b)', match['body'], re.I):
+        return None
+    if match and match['verb'].casefold() == 'shuffle' and re.match(
+            r'(?:on|off|this|that|these|current)\b', match['body'], re.I):
+        return None
+    if (match and match['verb'].casefold().startswith('put')
+            and not re.match(r'(?:the |my )?(?:album|playlist|artist|band|song|track|music)\b', match['body'], re.I)
+            and re.search(r'\b(?:lights?|heating|heat|fans?|blinds?|shades?|curtains?|doors?|locks?|'
+                          r'thermostat|air conditioner|oven|stove|kettle|dishwasher)\b', match['body'], re.I)):
+        return None
+    return (match['verb'].casefold(), match['body']) if match else None
+
+
+def _style_query(body, styles):
+    value = re.sub(r'^(?:some |a little |a bit of )', '', body.casefold())
+    value = re.sub(r' music$', '', value)
+    return value if value in styles else None
+
+
+def _media_name(value, *, allow_in=False):
+    """Conservative literal slot validation; unsupported constraints go to the agent."""
+    if (not 1 <= len(value) <= 120 or re.search(r'[;:!?"“”]', value)
+            or re.search(r'\b(?:audiobooks?|audio books?|books?|stories|story|podcasts?|'
+                         r'episodes?|chapters?|resume|continue|timer|alarm|announcement|'
+                         r'playlist|album|station|radio|artist|band|song|track|soundtrack)\b', value, re.I)
+            or (not allow_in and re.search(r'\bin\b', value, re.I))
+            or re.search(r'\b(?:on|from|for|at|by|after|before|through|using|with|without|'
+                         r'except|excluding|only|instead|then|next|repeat|not)\b', value, re.I)
+            or re.search(r'\b(?:and|then)\s+(?:play|shuffle|turn|set|stop|pause|resume|announce|'
+                         r'broadcast|open|close|lock|unlock|send|make)\b', value, re.I)
+            or value.casefold() in ('music','some music','something','anything','it','that','this','more')):
+        return None
+    return value
+
+
+def music_request(text, language='en', styles=()):
+    """Parse everyday playback into literal catalog slots and a literal room name.
+
+    This does not resolve content, a provider, an entity or a profile. The normal
+    MediaRequest and source-bound API authorize every parsed request. Complex or
+    ambiguous constraints remain intact for the fallback agent.
+    """
+    command = _music_command(text, language)
+    if command is None:
+        return None
+    verb, body = command
+    if re.search(r'[!?]', body):
+        return None
+    request = {}
+    shuffle = verb == 'shuffle'
+    # Room and shuffle modifiers can occur in either order. Neither is discarded.
+    if re.search(r' on shuffle$', body, re.I):
+        body = re.sub(r' on shuffle$', '', body, flags=re.I)
+        shuffle = True
+    # Last suffix wins syntactically, so a title such as Back in Black remains
+    # intact before an explicit final destination. The caller must verify that
+    # suffix against HA; an unresolved suffix delegates the original utterance.
+    room = re.fullmatch(r'(?P<content>.+) in (?:the )?(?P<room>.+)', body, re.I)
+    if room:
+        body, target = room['content'], room['room']
+        if (not 1 <= len(target) <= 80 or re.search(r"[^\w\s\-'&]", target)
+                or re.search(r'\b(?:and|then|everywhere|all rooms|on|by|from|for|after|before|'
+                             r'with|without|except|excluding|only|instead|shuffle)\b', target, re.I)):
+            return None
+        request['target_room'] = target
+    if re.search(r' on shuffle$', body, re.I):
+        body = re.sub(r' on shuffle$', '', body, flags=re.I)
+        shuffle = True
+    if verb == 'put':
+        if not body.casefold().endswith(' on'):
+            return None
+        body = body[:-3]
+    # An artist clause constrains a track/album; music/songs by an artist instead
+    # selects that artist. Explicit typed categories are never discarded.
+    by = re.fullmatch(r'(?P<title>.+?) by (?P<artist>.+)', body, re.I)
+    artist = None
+    if by:
+        body, artist = by['title'], _media_name(by['artist'], allow_in=room is not None)
+        if artist is None:
+            return None
+        if body.casefold() in ('music','songs','some music','some songs'):
+            request.update(query=artist, media_type='artist')
+            if shuffle: request['shuffle'] = True
+            return request
+    typed = re.fullmatch(r'(?:the |my |an? )?(album|playlist|artist|band|song|track) (.+)', body, re.I)
+    media_type = None
+    if typed:
+        media_type = {'band':'artist','song':'track'}.get(typed[1].casefold(), typed[1].casefold())
+        body = typed[2]
+    # A named track from a soundtrack retains both title and album constraints.
+    album = re.fullmatch(r'(?P<title>.+?) from (?:the )?(?P<album>.+?) soundtrack', body, re.I)
+    if album:
+        if media_type not in (None, 'track') or _media_name(album['album'], allow_in=room is not None) is None:
+            return None
+        body = album['title']
+        media_type = 'track'
+        request['album'] = album['album'] + ' soundtrack'
+    soundtrack = re.fullmatch(r'(?:the )?(.+?) (?:music )?soundtrack', body, re.I)
+    if soundtrack:
+        if media_type not in (None, 'album') or _media_name(soundtrack[1], allow_in=room is not None) is None:
+            return None
+        query, media_type = soundtrack[1] + ' soundtrack', 'album'
+    else:
+        query = (_style_query(body, styles) if media_type is None and artist is None else None) or _media_name(body, allow_in=room is not None)
+    if query is None:
+        return None
+    if artist is not None:
+        if media_type not in (None, 'track', 'album'):
+            return None
+        request['artist'] = artist
+        media_type = media_type or 'track'
+    request['query'] = query
+    if media_type: request['media_type'] = media_type
+    if shuffle: request['shuffle'] = True
+    return request
+
+
+def broad_music_query(text, language, styles):
+    """Compatibility view for unqualified broad-selection policy hooks."""
+    request = music_request(text, language, styles)
+    return request['query'] if request and set(request) == {'query'} and request['query'] in styles else None
 
 
 def music_acknowledgement(result):
@@ -45,105 +173,45 @@ def music_acknowledgement(result):
     if reason == 'no_relevant_soundtrack':
         return 'I could not find that soundtrack. Please name the film, show, or soundtrack version.'
     if reason in ('no_relevant_music_collection', 'no_exact_catalog_match'):
-        return 'I could not find a matching playlist or station. Please name a playlist or station.'
+        return 'I could not find that music in your configured providers. Try another title, artist, album, playlist or station.'
     if status == 'clarify':
-        return 'Please name the artist, song, playlist or station you would like.'
+        return 'Which artist, song, album, playlist, station or soundtrack did you mean?'
     return 'I could not confirm your music request. Please check Music Assistant.'
 
 
 def named_music_query(text, language='en'):
-    """Route a simple named music request through catalog matching, without an LLM.
-
-    This only extracts a query, never a URI or destination. Spoken content,
-    room modifiers and compound instructions retain the existing agent path.
-    Catalog ambiguity is still handled by the guarded media planner.
-    """
-    if (not isinstance(text, str) or len(text) > 512 or not isinstance(language, str)
-            or language.lower().split('-')[0] != 'en'):
-        return None
-    value = ' '.join(text.split()).rstrip('.!?')
-    match = re.fullmatch(
-        r'(?:please )?(?:(?:can|could|would) you (?:please )?)?'
-        r'(?:play me|play|put on|let me hear) (.+?)(?: please)?', value, re.I)
-    if not match:
-        return None
-    query = match[1]
-    # Never silently drop a requested destination, timeframe, media category,
-    # resume instruction or second action. Names containing "and" are allowed.
-    if (not 1 <= len(query) <= 120 or re.search(r'[\n\r;:!?"“”]', query)
-            or re.search(r'\b(?:audiobooks?|audio books?|books?|stories|story|podcasts?|'
-                         r'episodes?|chapters?|resume|continue|timer|alarm|announcement|'
-                         r'playlist|album|station|radio|artist|band|song|track)\b', query, re.I)
-            or re.search(r'\b(?:in|on|from|for|at|by|after|before|through|using)\s', query, re.I)
-            or re.search(r'\b(?:and|then)\s+(?:play|turn|set|stop|pause|resume|announce|'
-                         r'broadcast|open|close|lock|unlock|send|make)\b', query, re.I)
-            or query.casefold() in ('music', 'some music', 'something', 'anything', 'it', 'that', 'more')):
-        return None
-    return query
+    """Compatibility view: only a simple unconstrained catalog query."""
+    request = music_request(text, language)
+    return request['query'] if request and set(request) == {'query'} else None
 
 
 def qualified_music_request(text, language='en', styles=()):
-    """Extract explicit soundtrack, shuffle and room-qualified music requests.
+    """Compatibility view for a request with explicit semantic modifiers."""
+    request = music_request(text, language, styles)
+    return request if request and set(request) != {'query'} else None
 
-    A returned room is only a literal name, never an entity or guessed area ID.
-    The caller must resolve it through the trusted media room registry before
-    dispatch. Unsupported commands and compound requests remain uninterpreted.
-    """
+
+def media_action_request(text, language='en'):
+    """Bounded fallback receipt guard, not a general natural-language classifier."""
+    if _music_command(text, language) is not None:
+        return True
     if (not isinstance(text, str) or len(text) > 512 or not isinstance(language, str)
-            or language.lower().split('-')[0] != 'en'):
-        return None
-    value = ' '.join(text.split()).rstrip('.!?')
-    value = re.sub(r'^(?:(?:um|uh|erm)[.,]?\s+){1,2}', '', value, flags=re.I)
-    match = re.fullmatch(r'(?:please )?(?:(?:can|could|would) you (?:please )?)?'
-        r'(?P<verb>play me|play|put on|let me hear|shuffle) (?P<body>.+?)(?: please)?', value, re.I)
-    if not match:
-        return None
-    body = match['body']
-    if (re.search(r'[;:!?"“”]', body)
-            or re.search(r'\b(?:and|then)\s+(?:play|shuffle|turn|set|stop|pause|resume|'
-                         r'announce|broadcast|open|close|lock|unlock|send|make)\b', body, re.I)):
-        return None
-    shuffle = match['verb'].casefold() == 'shuffle'
-    if re.search(r' on shuffle$', body, re.I):
-        body = re.sub(r' on shuffle$', '', body, flags=re.I)
-        shuffle = True
-    soundtrack = re.fullmatch(r'(?:the )?(?P<title>.+?) (?:music )?soundtrack'
-        r'(?P<shuffle> on shuffle)?(?: in (?:the )?(?P<room>.+))?', body, re.I)
-    target = None
-    if soundtrack:
-        title = soundtrack['title']
-        if named_music_query('play ' + title, language) is None:
-            return None
-        request = {'query':title + ' soundtrack', 'media_type':'album'}
-        shuffle = shuffle or bool(soundtrack['shuffle'])
-        target = soundtrack['room']
-    else:
-        # Do not reinterpret a malformed soundtrack request as a bare artist.
-        if re.search(r'\bsoundtrack\b', body, re.I):
-            return None
-        destination = re.fullmatch(r'(?P<title>.+?) in (?:the )?(?P<room>.+)', body, re.I)
-        if destination:
-            body, target = destination['title'], destination['room']
-        if not shuffle and target is None:
-            return None
-        typed = re.fullmatch(r'(?:the )?(album|playlist|artist|band|song|track) (.+)', body, re.I)
-        if typed:
-            media_type = {'band':'artist','song':'track'}.get(typed[1].casefold(), typed[1].casefold())
-            query = named_music_query('play ' + typed[2], language)
-            request = {'query':query, 'media_type':media_type}
-        else:
-            query = broad_music_query('play ' + body, language, styles) or named_music_query('play ' + body, language)
-            request = {'query':query}
-        if not query:
-            return None
-    if target is not None:
-        if (not 1 <= len(target) <= 80 or re.search(r'[^\w\s\-\'&]', target)
-                or re.search(r'\b(?:and|then|everywhere|all rooms)\b', target, re.I)):
-            return None
-        request['target_room'] = target
-    if shuffle:
-        request['shuffle'] = True
-    return request
+            or language.lower().split('-')[0] != 'en' or re.search(r'[\n\r;:"“”]', text)):
+        return False
+    value = ' '.join(text.casefold().split()).rstrip('.!?')
+    value = re.sub(r'^(?:please )?(?:(?:can|could|would) you (?:please )?)?', '', value)
+    if _compound_media_command(value):
+        return False
+    if re.fullmatch(r'listen to (?:me|us|my question|what I(?: am|\'m) saying|this|that)', value, re.I):
+        return False
+    media_words = r'(?:music|songs?|tracks?|albums?|playlists?|artists?|bands?|radio|station|' \
+                  r'audiobooks?|books?|stories|story|podcasts?|chapters?|shuffle)'
+    # Only operations owned by HouseholdMediaTool have verifiable receipts.
+    # Native Assist volume/next/queue/group controls may use other tool APIs;
+    # lack of our receipt must not turn those valid actions into false failures.
+    return bool(re.fullmatch(r'(?:pause|resume|continue|stop)(?: please)?', value)
+        or re.fullmatch(r'(?:listen to|resume|continue|pause|stop|read) .*\b' + media_words + r'\b.*', value)
+        or re.fullmatch(r'listen to .+', value))
 
 
 COMMANDS = {
