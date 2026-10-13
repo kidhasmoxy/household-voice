@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.3.2
+
+Keeps compound household status requests such as "What are my active timers and
+alarms?" out of the public-knowledge lane so they reach the shared schedule tools.
+
 ## 0.3.1
 
 Adds optional room ducking for stock voice assistants. Conversation audio stays

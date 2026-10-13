@@ -4,10 +4,10 @@
     ".github/workflows/release.yml": "980574821a50c88a0a574425eaac44816d76db32a0bfcdca346f937c57d4c6b8",
     ".github/workflows/validate.yml": "cfe9a810c0cde66f9f89d06f86cc27cabce21e08785ed10053c86394733c2c1b",
     ".gitignore": "21f103a51802e49dfb71f8e77bd53dc666adb3fb322efb8019a86ee20cb7f4e0",
-    "CHANGELOG.md": "0e24ddde08b537279194bdd9148f1786131084cec2665549a849bc37d7ad4e02",
+    "CHANGELOG.md": "099bae4682e4257a715ac816b0fd8cde49648876810621f216fa1b6227d0510c",
     "LICENSE": "9f2f1d71d4483b46b5875d049472dccac0d89fd0b78d9b9fd04223db313b96f4",
     "NOTICE.md": "e15d04f8fa17c548a915a8dd2c0cb3a8841dc2c4d891124db749ae132d908bc2",
-    "README.md": "d4f2d8052e44da46f0795272c394444417b360d498b0e27fc1c530bbc1306173",
+    "README.md": "c83f987d1c990217fa8e57706d2256512525ec049d288de346d2fd19a6f6d293",
     "SECURITY.md": "0eb39fca6a28810b02d807f198111f00a25515ece8ccee6c9efa4cf2ecafc090",
     "custom_components/household_voice/__init__.py": "b85366c2f8defe8dac2e64788e906ac0eff36e3b180434c61fcd0c414b40575c",
     "custom_components/household_voice/_core/__init__.py": "244ba5c3e16e00ef48888cd7c9798e95954d1384575f8165524f461f089c8018",
@@ -48,11 +48,11 @@
     "custom_components/household_voice/intent_scope.py": "9c74e3ff0d99721fee848de793af4cf656f76f2ade0d4edd7543b5b34d24bbf7",
     "custom_components/household_voice/knowledge_llm.py": "c5e4b5ce79e80584700f671d0d3d59fa192a7eb2298422c11edf93d5ee5ffeb6",
     "custom_components/household_voice/knowledge_policy.py": "f12fe94a894bdc624f94d0e84e102013b40e54710080309d6e6e1c5281d563b9",
-    "custom_components/household_voice/knowledge_router.py": "93ce629214dbbc9e2358d23038f1d23ac0113df95821a82e080182057fc49743",
+    "custom_components/household_voice/knowledge_router.py": "a0f7f21db18caae559adc2359357008069d0f58f63cd570325751cfc7f951877",
     "custom_components/household_voice/llm.py": "74011a8173c8667286f4c42b5d1f637f223fcbc853b310dd77b7aebd56cebbce",
     "custom_components/household_voice/llm_compat.py": "9622601ec5ad538bbaa4e8e10b3652e32de9b84f921888c0e2dd368af47106ef",
     "custom_components/household_voice/local_setup.py": "81239962cb94fc69c027b5c0bb46d79e4c3b3aafff32a367b411dac62c594d8a",
-    "custom_components/household_voice/manifest.json": "a9eac1bbcd33abf2188f65477c9e6fbc1b7eff471c08720aa175f56e4b798559",
+    "custom_components/household_voice/manifest.json": "22f9c69508f803a950376cfd5c987042351f022f372e85b6d022903cd8d55f71",
     "custom_components/household_voice/media_adapter.py": "9d4e8193edea17a6df7d107eb11a6821fcb8dba87310c3e3c4483e2e90f2ab40",
     "custom_components/household_voice/media_llm.py": "143bddb3c01e748678c950baf8f75219d649f90a35eea3d57fa29283b535676d",
     "custom_components/household_voice/native_alarm.py": "8665fd2bb3ea2796ce588df2b6659945bfbdb9e32a2c3165f3d4093cdb35d544",
@@ -106,5 +106,5 @@
     "utf8_text_and_generated_icon_only": true
   },
   "repository": "https://github.com/kidhasmoxy/household-voice",
-  "version": "0.3.1"
+  "version": "0.3.2"
 }

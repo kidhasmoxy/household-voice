@@ -21,7 +21,12 @@ def knowledge_question(text, language='en'):
         r"^what(?:'s| is)? (?:the )?(?:time|date)(?: is it)? in\b",
         r"^how loud (?:is|are)\b.{0,60}\b(?:speakers?|music|tv|television|volume)\b",
         r"^tell me (?:the |my |our )?(?:time|date|weather|forecast|active timers|active alarms)\b",
-        r"^(?:what|which)(?:'s| is| are)? (?:my |the |our |active )?(?:timers?|alarms?)\b",
+        # Possessive + state combinations are ordinary live schedule queries
+        # ("my active timers"), not general knowledge. Keep indefinite world
+        # questions such as "what is an alarm clock" in the knowledge lane.
+        r"^(?:what|which)(?:'s| is| are)? (?:(?:my|the|our|all|any|currently|active|paused|running|set|scheduled) )*(?:timers?|alarms?)\b",
+        r"^(?:is|are) (?:there )?(?:(?:any|my|our|the|active|currently) )*(?:timers?|alarms?) (?:currently )?(?:set|scheduled|enabled|disabled|running|paused|ringing)\b",
+        r"^(?:do|does) (?:i|we) have (?:(?:any|active|currently) )*(?:timers?|alarms?)\b",
         r"^(?:how (?:long|much time)|what time).{0,80}\b(?:left|remaining|timer|alarm)\b",
         r"^(?:what|which)(?:'s| is| are)? (?:currently )?playing\b",
         r"^(?:what|how)(?:'s| is)? (?:the |my |our )?(?:weather|forecast|temperature|volume)\b",
