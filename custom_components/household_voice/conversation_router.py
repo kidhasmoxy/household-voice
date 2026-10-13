@@ -39,7 +39,7 @@ def music_acknowledgement(result):
     if reason in ('no_relevant_music_collection', 'no_exact_catalog_match'):
         return 'I could not find a matching playlist or station. Please name a playlist or station.'
     if status == 'clarify':
-        return 'Please name the playlist or station you would like.'
+        return 'Please name the artist, song, playlist or station you would like.'
     return 'I could not confirm your music request. Please check Music Assistant.'
 
 

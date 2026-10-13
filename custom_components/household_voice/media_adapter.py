@@ -161,9 +161,10 @@ def parse_search(response, lookup, session, bindings, observed_at):
     if type(limit) is not int or not 1<=limit<=300 or not isinstance(requested, list) or not requested:
         raise MediaAdapterError('Invalid bounded search parameters')
     bounded = all(len(response[group])<limit for group, kind in GROUPS.items() if kind in requested)
+    complete_types = tuple(kind for group, kind in GROUPS.items() if kind in requested and len(response[group])<limit)
     return bindings.catalog(query=lookup['name'], username=session.username,
                             config_entry_id=session.config_entry_id, observed_at=observed_at,
-                            items=tuple(items), complete=bounded)
+                            items=tuple(items), complete=bounded, complete_media_types=complete_types)
 
 
 def parse_queue(response, player, username, bindings, observed_at):

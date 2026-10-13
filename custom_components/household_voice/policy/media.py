@@ -170,12 +170,16 @@ class CatalogSnapshot:
     observed_at: float
     items: tuple[CatalogItem, ...]
     complete: bool = False
+    complete_media_types: tuple[MediaType, ...] = ()
 
     def __post_init__(self):
         for name in ('query', 'username', 'config_entry_id'):
             _text(getattr(self, name), name)
         if not _timestamp(self.observed_at) or type(self.complete) is not bool:
             raise ValueError('Invalid catalog observation')
+        if (not isinstance(self.complete_media_types, tuple)
+                or any(kind not in TYPES for kind in self.complete_media_types)):
+            raise ValueError('Invalid bounded catalog groups')
         if not isinstance(self.items, tuple) or len(self.items)>300 or any(not isinstance(i, CatalogItem) for i in self.items):
             raise ValueError('Catalog must be a bounded tuple of CatalogItems')
         seen = {}
@@ -332,6 +336,7 @@ def plan_media(request: MediaRequest, registry: RoomRegistry, context: MediaCont
                 and (not request.provider or _normal(i.provider)==_normal(request.provider))
                 and (not artist or _normal(artist) in {_normal(a) for a in i.artists})
                 and (not album or _normal(i.album or '')==_normal(album))}
+    artist_preferred = False
     if broad:
         # This is a recommendation, not an attempt to disambiguate an exact title.
         # The MA adapter preserves search order within collection result groups.
@@ -345,6 +350,18 @@ def plan_media(request: MediaRequest, registry: RoomRegistry, context: MediaCont
             return _result('clarify', 'selection_not_in_catalog', question='Please choose one of the catalog results.', **target)
     else:
         matches = [i for i in eligible.values() if _normal(query) in {_normal(i.title), *(_normal(a) for a in i.aliases)} or query==i.uri]
+        if (request.kind == 'music' and not spoken and request.media_type is None
+                and not request.artist and not request.album):
+            # Bare artist names conventionally mean the artist, even when a
+            # self-titled album shares that name. Require the artist group to
+            # be unsaturated; an unrelated full track group is not ambiguity.
+            artists = [i for i in eligible.values() if i.media_type == 'artist' and not i.spoken_content]
+            artist_matches = [i for i in matches if i in artists]
+            if not matches:
+                artist_matches = _music_recommendation(query, artists)
+            if artist_matches and (catalog.complete or 'artist' in catalog.complete_media_types):
+                matches = artist_matches
+                artist_preferred = True
         if not matches and request.kind == 'music' and not spoken:
             matches = _music_recommendation(query, eligible.values())
     if not matches:
@@ -356,7 +373,10 @@ def plan_media(request: MediaRequest, registry: RoomRegistry, context: MediaCont
                        choices=[_choice(i) for i in options[:5]], candidate_count=len(options), **target)
     confident_music = (request.kind == 'music' and not spoken
                        and matches == _music_recommendation(query, eligible.values()))
-    if len(matches)>1 or (not catalog.complete and not request.selected_uri and not broad and not confident_music):
+    if (request.media_type is None and len(matches) == 1 and matches[0].media_type == 'artist'
+            and not catalog.complete and 'artist' not in catalog.complete_media_types):
+        confident_music = False
+    if len(matches)>1 or (not catalog.complete and not request.selected_uri and not broad and not confident_music and not artist_preferred):
         options = sorted(matches, key=lambda i: (_normal(i.title), i.provider, i.uri))
         return _result('clarify', 'ambiguous_or_partial_catalog', question='Which version should I play?',
                        choices=[_choice(i) for i in options[:5]], candidate_count=len(options), **target)

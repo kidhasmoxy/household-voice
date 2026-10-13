@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.3.9
+
+Repairs artist selection in the direct music route. An unqualified music name
+can select its unique artist even when the catalog contains a same-named album.
+Explicit media-type requests and genuinely competing artist matches retain
+their existing safeguards. This fixes the artist/album collision found during
+the v0.3.8 live beta test, without restoring a language-model round trip.
+
 ## 0.3.8
 
 Genre fallback starts a verified seed track with radio mode off, then enables
