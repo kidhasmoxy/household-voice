@@ -255,7 +255,12 @@ class SatelliteRuntime:
             raise ExecutorError('Encrypted ESPHome native API is required')
         mac = str(getattr(data.device_info,'mac_address','')).lower().replace(':','')
         expected = str(entry.unique_id or '').lower().replace(':','')
+        # ESPHome registry entries can use a MAC connection without an identifier.
+        # Keep the config-entry and live encrypted-client checks below; neither a
+        # name nor an event payload is an authenticated registry identity.
         identities = {str(value).lower().replace(':','') for domain,value in registered.identifiers if domain == 'esphome'}
+        identities.update(str(value).lower().replace(':','')
+                          for kind,value in getattr(registered,'connections',()) if kind == 'mac')
         if not mac or mac != expected or mac not in identities:
             raise ExecutorError('ESPHome entry, native device and registry identity do not match')
         binding = NativeBinding(device, entry, data)

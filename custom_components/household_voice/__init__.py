@@ -124,6 +124,8 @@ async def async_setup_entry(hass, entry):
     coordinator.ring_worker=RingWorker(hass,entry,client)
     coordinator.satellite_runtime=None
     coordinator.platforms=[Platform.SENSOR]
+    if entry.options.get('conversation_fallback_agent'):
+        coordinator.platforms.append(Platform.CONVERSATION)
     if entry.options.get('stt_capture_enabled') is True:
         coordinator.platforms.append(Platform.STT)
     hass.data.setdefault(DOMAIN, {})[entry.entry_id] = coordinator

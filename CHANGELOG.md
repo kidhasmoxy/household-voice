@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.2.5
+
+Adds an optional announcement conversation router. Exact start, cancel, and
+status commands call the announcement runtime directly; other requests delegate
+to the configured fallback conversation agent. The router starts disabled and
+does not select itself in a voice pipeline. Replies distinguish queued work from
+confirmed delivery.
+
+Recognizes ESPHome device MAC addresses stored in Home Assistant registry
+connections as well as identifiers, while preserving exact device/client and
+encryption checks.
+
+Adds a phone-presence policy selector: preserve the five-minute freshness default,
+allow a one-hour report window, or explicitly trust the current HA home state.
+Away, unknown, and unavailable phones remain excluded.
+
 ## 0.2.4
 
 Uses compact, stable API display names so Home Assistant's merged tool names fit

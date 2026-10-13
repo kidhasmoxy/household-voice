@@ -5,7 +5,7 @@ playback, recorded announcements, and room speaker configuration. The durable
 coordinator runs inside Home Assistant. No companion app, container, cloud
 account, or paid subscription is required for the core features.
 
-This is the **0.2.4 prerelease**. Automated tests cover implementation
+This is the **0.2.5 prerelease**. Automated tests cover implementation
 contracts; actual microphone capture, speaker delivery, phone presence, firmware,
 and audiobook resume require validation on your equipment. Keep an independent
 alarm available until your installation passes those tests. Home Assistant must
@@ -26,7 +26,12 @@ their respective audio features.
    players, announcement defaults, and optional phone presence/notification pairs.
 4. Configure the voice provider to select the Household Voice tools alongside
    its existing house-control tools. Tool registration does not select them.
-5. Enable and test one feature and one room before expanding to the household.
+5. Optionally choose a fallback conversation agent in Household Voice settings,
+   then select the new Household Voice router entity in one voice pipeline.
+   Exact English requests such as "make an announcement", "cancel announcement",
+   and "announcement status" use the announcement runtime directly. Other requests
+   go to your selected agent. Leaving the fallback blank keeps this router disabled.
+6. Enable and test one feature and one room before expanding to the household.
 
 For manual installation, extract the release's `household_voice.zip` into
 `/config/custom_components/household_voice/`, then restart Home Assistant. Updates
@@ -43,14 +48,18 @@ asset. Release tags must match the manifest version.
   and a user-selected sleep playlist. No household profile or library is bundled.
 - Recorded broadcasts: ask what to announce, capture the next utterance, replay
   the original recording with a chime on configured speakers, and send its exact
-  transcript to configured phones whose presence is fresh and home.
+  transcript to configured phones whose presence satisfies the selected home policy.
 - Room mappings for external replies, music, wake ducking, and alarm speakers.
 - Optional forecast/place lookup and recipe tools. Brave recipe search requires
   your own supported API key and explicit enablement; request limits apply.
 
 Feature switches start disabled. An invalid requested room does not become a
 whole-house announcement. Phone notifications contain text, not recordings or
-signed audio links. Configure a separate STT wrapper/pipeline for each capture
+signed audio links. The default phone policy requires a home report within five
+minutes. Configuration can instead require a report within one hour or accept the
+current Home Assistant home state without an age limit. Away, unknown, and
+unavailable states are excluded under every policy. Choose the policy that matches
+your phone's reporting behavior. Configure a separate STT wrapper/pipeline for each capture
 satellite; shared wrappers cannot safely establish microphone identity.
 
 External replies and wake ducking depend on compatible, authenticated satellite

@@ -27,7 +27,18 @@ def initial_options(existing):
     result.setdefault("announcement_volume", 0.5)
     result.setdefault("announcement_chime", "none")
     result.setdefault("spoken_media_policy", "pause_and_resume")
+    result.setdefault("phone_presence_policy", "recent_five_minutes")
+    result.setdefault("conversation_fallback_agent", "")
     return result
+
+
+def conversation_fallback(value, entities):
+    if value == "":
+        return ""
+    selected = entity(value, "conversation", entities)
+    if entities[selected].get("integration") == "household_voice":
+        raise RoutingError("invalid_conversation_fallback")
+    return selected
 
 
 def volume(value, name="invalid_volume"):
@@ -163,12 +174,15 @@ def satellite(data, entities, devices, services):
 
 def validate_options(data, entities, devices, services):
     result = initial_options(data)
+    result["conversation_fallback_agent"] = conversation_fallback(result["conversation_fallback_agent"], entities)
     result.update(feature_options(result))
     result["announcement_volume"] = volume(result["announcement_volume"])
     if result["announcement_chime"] not in ("none", "default"):
         raise RoutingError("invalid_chime")
     if result['spoken_media_policy'] not in ('provider_default','pause_and_resume','pause_and_hold'):
         raise RoutingError('invalid_spoken_media_policy')
+    if result['phone_presence_policy'] not in ('current_state','recent_hour','recent_five_minutes'):
+        raise RoutingError('invalid_phone_presence_policy')
     if type(result["ring_volume"]) is not int or not 1 <= result["ring_volume"] <= 100:
         raise RoutingError("invalid_volume")
     result["ring_fallback_speakers"] = ma_speakers(result["ring_fallback_speakers"], entities)

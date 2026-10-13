@@ -30,6 +30,9 @@ class AnnouncementAdapter:
         if type(presence_freshness) not in (int,float) or not math.isfinite(presence_freshness) or not 30<=presence_freshness<=3600:
             raise ValueError('Invalid presence freshness')
         self.presence_freshness=presence_freshness
+        self.presence_policy = self.options.get('phone_presence_policy', 'recent_five_minutes')
+        if self.presence_policy not in ('current_state','recent_hour','recent_five_minutes'):
+            raise ValueError('Invalid phone presence policy')
         self.transport = transport
 
     def targets(self, target_rooms=None, include_home_phones=True):
@@ -66,6 +69,8 @@ class AnnouncementAdapter:
         state=self.hass.states.get(tracker)
         if state is None or state.state!='home':
             return False
+        if self.presence_policy == 'current_state':
+            return True
         reported=getattr(state,'last_reported',None)
         if reported is None:
             return False
@@ -73,7 +78,8 @@ class AnnouncementAdapter:
             age=now-reported.timestamp()
         except (AttributeError, TypeError, ValueError, OverflowError, OSError):
             return False
-        return 0<=age<=self.presence_freshness
+        freshness = 3600 if self.presence_policy == 'recent_hour' else self.presence_freshness
+        return 0<=age<=freshness
 
     async def deliver(self, target, recording, *, now, before_dispatch=None):
         """Called once for a leased target against this configuration snapshot."""

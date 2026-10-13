@@ -13,6 +13,7 @@ The coordinator must bind its authenticated capture profiles to the same devices
 from __future__ import annotations
 
 import asyncio
+import logging
 from collections import OrderedDict
 from copy import deepcopy
 from dataclasses import dataclass, field
@@ -21,6 +22,8 @@ import time
 from urllib.parse import urlsplit
 
 from .announcement_adapter import AnnouncementAdapter
+
+_LOGGER = logging.getLogger(__name__)
 
 
 class BroadcastError(ValueError):
@@ -227,9 +230,11 @@ class BroadcastRuntime:
         except asyncio.CancelledError:
             result = _result('cancelled', 'announcement_cancelled_delivery_may_have_been_accepted')
             raise
-        except TimeoutError:
+        except TimeoutError as error:
+            _LOGGER.warning('Announcement workflow failed in phase %s (%s)', session.phase, type(error).__name__)
             result = _result('error', 'question_timed_out_no_broadcast')
-        except Exception:
+        except Exception as error:
+            _LOGGER.warning('Announcement workflow failed in phase %s (%s)', session.phase, type(error).__name__)
             result = _result('error', 'announcement_workflow_failed')
         finally:
             if session.nonce:

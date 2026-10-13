@@ -67,17 +67,19 @@
           "alarms": "Alarm speakers and volume",
           "capture": "Dedicated recording STT profile",
           "test_pairing": "Test a saved speaker pairing",
-          "audio_recovery": "Recover speaker after uncertain audio"
+          "audio_recovery": "Recover speaker after uncertain audio",
+          "conversation_routing": "Conversation routing"
         }
       },
       "announcements": {
         "title": "Default announcement speakers",
-        "description": "Choose one Music Assistant endpoint per physical speaker. Recordings play on these speakers; phones receive transcript text only when their mapped tracker is home. An empty speaker selection has no default recipients. The optional chime uses Music Assistant’s configured announcement sound. The default pauses recognized audiobooks or podcasts for announcements, then resumes if the observed playback is unchanged. Playback changes or detected user intervention suppress automatic resume. This is a guarded check, not an atomic Music Assistant queue transaction. Provider default and manual-resume alternatives are available; unrecognized content follows provider behavior.",
+        "description": "Choose one Music Assistant endpoint per speaker and an optional chime. Audiobooks and podcasts resume after announcements if playback remains unchanged. Phones receive the transcript when home. Choose whether to trust the current home state or require a report within five minutes or one hour. Away, unknown and unavailable phones are skipped.",
         "data": {
           "default_announcement_speakers": "Announcement speakers",
           "announcement_volume": "Announcement volume (0–1)",
           "announcement_chime": "Announcement chime",
-          "spoken_media_policy": "Audiobook and podcast interruptions"
+          "spoken_media_policy": "Audiobook and podcast interruptions",
+          "phone_presence_policy": "Phone home presence policy"
         }
       },
       "phone": {
@@ -186,6 +188,13 @@
           "media_player": "Configured Music Assistant speaker",
           "confirm_audio_stopped": "I verified that all pending announcement audio has stopped"
         }
+      },
+      "conversation_routing": {
+        "title": "Conversation routing",
+        "description": "Choose the assistant for ordinary requests. Household Voice handles announcement requests directly. After saving, select Household Voice router in the voice pipeline. Switch the pipeline back before clearing this selection.",
+        "data": {
+          "conversation_fallback_agent": "Existing fallback conversation agent (optional)"
+        }
       }
     },
     "error": {
@@ -210,7 +219,9 @@
       "pairing_failed": "The pairing test failed. Verify the saved device and speaker mapping.",
       "alarm_mapping_required": "Configure alarm speakers before enabling live alarm ringing.",
       "invalid_spoken_media_policy": "Choose pause and resume, provider default, or pause and hold.",
-      "audio_recovery_failed": "Confirm pending audio stopped, select a saved speaker, and wait for active work to finish."
+      "audio_recovery_failed": "Confirm pending audio stopped, select a saved speaker, and wait for active work to finish.",
+      "invalid_conversation_fallback": "Choose an existing conversation agent outside Household Voice to avoid routing loops.",
+      "invalid_phone_presence_policy": "Choose current home state, home within one hour, or home within five minutes."
     }
   }
 }

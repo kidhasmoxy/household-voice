@@ -9,7 +9,7 @@ from homeassistant.helpers.selector import (
 )
 from .options import (FEATURES, RoutingError, initial_options, phone, resolve_satellite,
                       satellite, speakers, validate_options, media_room, alarm_room,
-                      stt_profile, feature_options, volume, ma_speakers)
+                      stt_profile, feature_options, volume, ma_speakers, conversation_fallback)
 
 
 class HouseholdVoiceOptionsFlow(config_entries.OptionsFlow):
@@ -54,7 +54,25 @@ class HouseholdVoiceOptionsFlow(config_entries.OptionsFlow):
 
     async def async_step_init(self, user_input=None):
         self._ensure_draft()
-        return self.async_show_menu(step_id="init", menu_options=["features", "announcements", "phone", "satellite", "media", "alarms", "capture", "test_pairing", "audio_recovery", "remove", "review"])
+        return self.async_show_menu(step_id="init", menu_options=["features", "conversation_routing", "announcements", "phone", "satellite", "media", "alarms", "capture", "test_pairing", "audio_recovery", "remove", "review"])
+
+    async def async_step_conversation_routing(self, user_input=None):
+        self._ensure_draft()
+        errors = {}
+        if user_input is not None:
+            try:
+                selected = conversation_fallback(user_input.get('conversation_fallback_agent', ''), self._registry()[0])
+            except RoutingError as exc:
+                errors['base'] = str(exc)
+            else:
+                self.draft['conversation_fallback_agent'] = selected
+                return await self.async_step_init()
+        values = user_input if user_input is not None else {
+            'conversation_fallback_agent': self.draft['conversation_fallback_agent']
+        } if self.draft['conversation_fallback_agent'] else {}
+        return self._form('conversation_routing', {
+            vol.Optional('conversation_fallback_agent'): EntitySelector(EntitySelectorConfig(domain='conversation')),
+        }, errors, values)
 
     async def async_step_audio_recovery(self,user_input=None):
         self._ensure_draft()
@@ -201,14 +219,18 @@ class HouseholdVoiceOptionsFlow(config_entries.OptionsFlow):
                 policy=user_input.get('spoken_media_policy',self.draft['spoken_media_policy'])
                 if policy not in ('provider_default','pause_and_resume','pause_and_hold'):
                     raise RoutingError('invalid_spoken_media_policy')
+                presence = user_input.get('phone_presence_policy', self.draft['phone_presence_policy'])
+                if presence not in ('current_state','recent_hour','recent_five_minutes'):
+                    raise RoutingError('invalid_phone_presence_policy')
             except RoutingError as exc:
                 errors["base"] = str(exc)
             else:
-                self.draft.update(default_announcement_speakers=selected, announcement_volume=level, announcement_chime=chime, spoken_media_policy=policy)
+                self.draft.update(default_announcement_speakers=selected, announcement_volume=level, announcement_chime=chime, spoken_media_policy=policy, phone_presence_policy=presence)
                 return await self.async_step_init()
         return self._form("announcements", {
             vol.Optional("default_announcement_speakers", default=[]): EntitySelector(EntitySelectorConfig(domain="media_player", integration="music_assistant", multiple=True)),
             vol.Optional("announcement_volume", default=self.draft["announcement_volume"]): self._volume(),
+            vol.Optional('phone_presence_policy', default=self.draft['phone_presence_policy']): SelectSelector(SelectSelectorConfig(options=[{'value':'recent_five_minutes','label':'Home; reported within five minutes (existing behavior)'}, {'value':'recent_hour','label':'Home; reported within one hour'}, {'value':'current_state','label':'Home according to current Home Assistant state'}],mode='dropdown')),
             vol.Optional("announcement_chime", default=self.draft["announcement_chime"]): SelectSelector(SelectSelectorConfig(options=[{"value":"none", "label":"No chime"}, {"value":"default", "label":"Music Assistant announcement chime"}], mode="dropdown")),
             vol.Optional('spoken_media_policy', default=self.draft['spoken_media_policy']): SelectSelector(SelectSelectorConfig(options=[{'value':'pause_and_resume','label':'Pause spoken media, then resume when unchanged'}, {'value':'provider_default','label':'Follow Music Assistant playback behavior'}, {'value':'pause_and_hold','label':'Pause recognized spoken media; require explicit Resume'}],mode='dropdown')),
         }, errors, user_input or self.draft)

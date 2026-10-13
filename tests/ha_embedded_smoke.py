@@ -194,6 +194,8 @@ async def main():
             assert timer_id in {row['id'] for row in (await hass.data['household_voice'][entry.entry_id].client.schedules())['schedules']}
             assert await hass.config_entries.async_unload(entry.entry_id)
             proof['failed_setup_releases_local_authority_for_retry'] = True
+            from ha_conversation_router_smoke import verify_router
+            proof.update(await verify_router(hass, entry))
             print(json.dumps({'result': 'passed', **proof}, sort_keys=True), flush=True)
         finally:
             if http:
