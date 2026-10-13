@@ -5,7 +5,7 @@ playback, recorded announcements, and room speaker configuration. The durable
 coordinator runs inside Home Assistant. No companion app, container, cloud
 account, or paid subscription is required for the core features.
 
-This is the **0.3.0 prerelease**. Automated tests cover implementation
+This is the **0.3.1 prerelease**. Automated tests cover implementation
 contracts; actual microphone capture, speaker delivery, phone presence, firmware,
 and audiobook resume require validation on your equipment. Keep an independent
 alarm available until your installation passes those tests. Home Assistant must
@@ -84,8 +84,18 @@ unavailable states are excluded under every policy. Choose the policy that match
 your phone's reporting behavior. Configure a separate STT wrapper/pipeline for each capture
 satellite; shared wrappers cannot safely establish microphone identity.
 
-External replies and wake ducking depend on compatible, authenticated satellite
-events. Stock Voice Preview Edition firmware alone does not establish that path.
+For stock assistants, enable **Lower room speakers during native assistant
+conversations (beta)**. Conversation stays on the assistant's built-in speaker;
+music, books, broadcasts and shared alarms/timers retain their configured paired
+outputs. HA satellite state starts ducking after it observes listening and keeps
+it through processing and responding. It restores owned volume changes after
+the assistant finishes; deliberate manual volume changes are preserved. The HA
+event arrives after the physical wake detection, so ducking is not instantaneous.
+Native wake interruption remains dependent on the device and its settings.
+
+External conversation replies require the separate advanced routing adapters and
+compatible, authenticated satellite events. Stock Voice Preview Edition firmware
+alone does not establish that external reply path.
 No firmware or device credentials are distributed here. Ordinary stock satellite
 speech and external-speaker speech must be tested separately.
 

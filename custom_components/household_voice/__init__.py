@@ -147,6 +147,7 @@ async def async_setup_entry(hass, entry):
     coordinator.ring_worker=RingWorker(hass,entry,client)
     coordinator.satellite_runtime=None
     coordinator.echomuse_runtime=None
+    coordinator.native_duck_runtime=None
     coordinator.platforms=[Platform.SENSOR]
     if entry.options.get('conversation_fallback_agent'):
         coordinator.platforms.append(Platform.CONVERSATION)
@@ -161,6 +162,10 @@ async def async_setup_entry(hass, entry):
         # Restore durable playback holds before any external-audio callback or
         # ring/broadcast worker can submit a new clip to the same MA output.
         coordinator.satellite_runtime=await async_setup_satellite_runtime(hass,entry)
+        if (entry.options.get('live_actions_enabled') is True
+                and entry.options.get('native_room_ducking_enabled') is True):
+            from .native_duck import async_setup_native_duck
+            coordinator.native_duck_runtime=await async_setup_native_duck(hass,entry)
         await coordinator.broadcast_runtime.async_start_worker()
         await coordinator.ring_worker.async_start()
         entry.async_on_unload(async_register_llm(hass, entry, coordinator))
@@ -174,6 +179,8 @@ async def async_setup_entry(hass, entry):
         if local:
             from homeassistant.const import EVENT_HOMEASSISTANT_STOP
             async def stop_local_engine(event):
+                if coordinator.native_duck_runtime:
+                    await coordinator.native_duck_runtime.async_close()
                 if coordinator.echomuse_runtime:
                     await coordinator.echomuse_runtime.async_close()
                 await coordinator.broadcast_runtime.async_close()
@@ -183,6 +190,8 @@ async def async_setup_entry(hass, entry):
                 await client.async_close()
             entry.async_on_unload(hass.bus.async_listen_once(EVENT_HOMEASSISTANT_STOP, stop_local_engine))
     except BaseException as error:
+        if coordinator.native_duck_runtime:
+            await coordinator.native_duck_runtime.async_close()
         if coordinator.echomuse_runtime:
             await coordinator.echomuse_runtime.async_close()
         await coordinator.broadcast_runtime.async_close()
@@ -206,6 +215,8 @@ async def async_unload_entry(hass, entry):
     coordinator=hass.data[DOMAIN].get(entry.entry_id)
     if coordinator is None:
         return True
+    if getattr(coordinator,'native_duck_runtime',None):
+        await coordinator.native_duck_runtime.async_close()
     if coordinator.echomuse_runtime:
         await coordinator.echomuse_runtime.async_close()
     await coordinator.broadcast_runtime.async_close()

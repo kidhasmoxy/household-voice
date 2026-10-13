@@ -198,16 +198,25 @@ class AnnouncementRoomFocus:
                     else: state.protected_players[player] = count-1
 
     @asynccontextmanager
-    async def hold(self, players, outputs, *, factor=.25):
+    async def hold(self, players, outputs, *, factor=.25, renew=False):
         if type(factor) not in (int, float) or not math.isfinite(factor) or not 0 < factor <= 1:
             raise ValueError('Invalid room duck factor')
         lease = 'announcement-'+secrets.token_hex(16)
         outputs = set(outputs)
+        renewal = None
         try:
             async with asyncio.timeout(15):
                 await self._acquire(lease, set(players), outputs, factor)
+            if renew:
+                renewal = asyncio.create_task(self._renew(lease))
             yield
         finally:
+            if renewal is not None:
+                renewal.cancel()
+                try:
+                    await renewal
+                except asyncio.CancelledError:
+                    pass
             # A cancelled playback caller must not cancel the journaled release.
             release = asyncio.create_task(self._release(lease, outputs))
             try:
@@ -215,6 +224,19 @@ class AnnouncementRoomFocus:
             except asyncio.CancelledError:
                 await release
                 raise
+
+    async def _renew(self, lease):
+        """Extend only existing ownership; never re-duck after manual changes.
+
+        The caller owns its activity watchdog and must close the context. A dead
+        renewal task leaves the existing 120-second restoration deadline intact.
+        """
+        while True:
+            await asyncio.sleep(30)
+            async with self.state.lock:
+                for owned in self.state.focus.players.values():
+                    if lease in owned.leases:
+                        owned.leases[lease] = self.state.focus.clock()+120
 
 
 async def retry_room_focus(state, controller):

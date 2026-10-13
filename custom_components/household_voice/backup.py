@@ -30,7 +30,8 @@ async def async_pre_backup(hass):
         paused.append(controls)
         await controls.async_pause_for_backup()
         for coordinator in list(hass.data.get(DOMAIN, {}).values()):
-            for client in (getattr(coordinator, 'echomuse_runtime', None), coordinator.client):
+            for client in (getattr(coordinator, 'native_duck_runtime', None),
+                           getattr(coordinator, 'echomuse_runtime', None), coordinator.client):
                 pause = getattr(client, 'async_pause_for_backup', None)
                 if pause is not None:
                     paused.append(client)

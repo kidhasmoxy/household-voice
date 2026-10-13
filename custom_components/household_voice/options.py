@@ -7,7 +7,7 @@ from .knowledge_policy import initial_settings, validate_knowledge_settings, Kno
 
 FEATURES = ("live_actions_enabled", "media_enabled", "satellite_audio_enabled",
             "announcements_enabled", "ring_actions_enabled", "stt_capture_enabled",
-            "echomuse_audio_enabled")
+            "echomuse_audio_enabled", "native_room_ducking_enabled")
 
 
 class RoutingError(ValueError):

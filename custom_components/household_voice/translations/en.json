@@ -148,11 +148,12 @@
         "data": {
           "live_actions_enabled": "Allow live household actions (master switch)",
           "media_enabled": "Music, stations and audiobook playback",
-          "satellite_audio_enabled": "Room speaker replies and wake ducking",
+          "satellite_audio_enabled": "External replies with custom satellite firmware (advanced)",
           "announcements_enabled": "Recorded announcements and home phone text",
           "ring_actions_enabled": "Alarm and timer ringing",
           "stt_capture_enabled": "Dedicated STT recording profiles",
-          "echomuse_audio_enabled": "Paired EchoMuse external replies (requires companion app)"
+          "echomuse_audio_enabled": "Paired EchoMuse external replies (requires companion app)",
+          "native_room_ducking_enabled": "Lower room speakers during native assistant conversations (beta)"
         }
       },
       "alarms": {

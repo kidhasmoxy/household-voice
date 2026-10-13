@@ -10,7 +10,7 @@ async def async_setup_entry(hass, entry, async_add_entities):
 class SchedulesSensor(CoordinatorEntity, SensorEntity):
     _attr_name = "Household Voice Schedules"
     _attr_icon = "mdi:timer-outline"
-    _unrecorded_attributes = frozenset({"schedules", "events","assistants","area_pairings"})
+    _unrecorded_attributes = frozenset({"schedules", "events","assistants","area_pairings","native_room_ducking"})
 
     def __init__(self, coordinator, entry_id):
         super().__init__(coordinator)
@@ -24,7 +24,9 @@ class SchedulesSensor(CoordinatorEntity, SensorEntity):
     @property
     def extra_state_attributes(self):
         worker=getattr(self.coordinator,'ring_worker',None)
+        duck=getattr(self.coordinator,'native_duck_runtime',None)
         return {"config_entry_id": self._entry_id, "mode": self.coordinator.data.get("mode", "unknown"),
+                "native_room_ducking":duck.diagnostics if duck else {"enabled":False},
                 "ring_execution_enabled": self.coordinator.data.get("ring_execution_enabled",False),
                 "ring_worker_enabled":bool(worker and worker.enabled()),
                 "ring_worker_last_success":getattr(worker,'last_success',None),

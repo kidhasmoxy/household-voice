@@ -11,7 +11,7 @@ jobs:
       fail-fast: false
       matrix:
         home-assistant: ["2026.9.4", "2026.10.1"]
-        fixture: ["ha_embedded_smoke.py", "ha_native_alarm_smoke.py"]
+        fixture: ["ha_embedded_smoke.py", "ha_native_alarm_smoke.py", "ha_native_duck_smoke.py"]
     steps:
       - uses: actions/checkout@v4
         with:

@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.3.1
+
+Adds optional room ducking for stock voice assistants. Conversation audio stays
+on the assistant; paired speakers continue handling music, books, announcements
+and shared alarms/timers. Home Assistant's authenticated satellite state holds
+the room volume reduction through listening, processing and responding, then
+releases it when the assistant finishes. This does not require the EchoMuse
+companion or custom Voice PE routing firmware. Wake detection and native barge-in
+remain device capabilities. This beta does not cancel a paired Music Assistant
+announcement when the satellite hears its wake word.
+
 ## 0.3.0
 
 Adds Home Assistant area discovery, optional assistant speaker overrides, and
