@@ -337,6 +337,7 @@ def plan_media(request: MediaRequest, registry: RoomRegistry, context: MediaCont
                 and (not artist or _normal(artist) in {_normal(a) for a in i.artists})
                 and (not album or _normal(i.album or '')==_normal(album))}
     artist_preferred = False
+    artist_ranked = False
     if broad:
         # This is a recommendation, not an attempt to disambiguate an exact title.
         # The MA adapter preserves search order within collection result groups.
@@ -352,16 +353,19 @@ def plan_media(request: MediaRequest, registry: RoomRegistry, context: MediaCont
         matches = [i for i in eligible.values() if _normal(query) in {_normal(i.title), *(_normal(a) for a in i.aliases)} or query==i.uri]
         if (request.kind == 'music' and not spoken and request.media_type is None
                 and not request.artist and not request.album):
-            # Bare artist names conventionally mean the artist, even when a
-            # self-titled album shares that name. Require the artist group to
-            # be unsaturated; an unrelated full track group is not ambiguity.
-            artists = [i for i in eligible.values() if i.media_type == 'artist' and not i.spoken_content]
+            # Bare exact names use the provider's artist recommendation order,
+            # even when artists share a name or an album is self-titled. This
+            # is not a global uniqueness claim. Fuzzy alternatives still need
+            # a clear winner and typed requests retain explicit ambiguity.
+            artists = [i for i in eligible.values() if i.media_type == 'artist' and i.available and not i.spoken_content]
             artist_matches = [i for i in matches if i in artists]
+            exact_artists = bool(artist_matches)
             if not matches:
                 artist_matches = _music_recommendation(query, artists)
-            if artist_matches and (catalog.complete or 'artist' in catalog.complete_media_types):
-                matches = artist_matches
+            if artist_matches and (exact_artists or catalog.complete or 'artist' in catalog.complete_media_types):
+                matches = artist_matches[:1] if exact_artists else artist_matches
                 artist_preferred = True
+                artist_ranked = exact_artists
         if not matches and request.kind == 'music' and not spoken:
             matches = _music_recommendation(query, eligible.values())
     if not matches:
@@ -389,7 +393,8 @@ def plan_media(request: MediaRequest, registry: RoomRegistry, context: MediaCont
     actions = _spoken_actions(player) if spoken else [_action('media_player.shuffle_set', player, shuffle=request.shuffle)]
     actions.append(_action('music_assistant.play_media', player, media_id=item.uri, media_type=item.media_type,
                            username=context.username, enqueue='replace', radio_mode=False if spoken else request.radio_mode))
-    return _result('ready', 'broad_music_collection_selected' if broad else 'catalog_item_selected',
+    return _result('ready', 'provider_ranked_artist_selected' if artist_ranked else
+                   'broad_music_collection_selected' if broad else 'catalog_item_selected',
                    actions=actions, selected=_choice(item), spoken_content=spoken,
                    autoplay_enabled=False,
                    playback_kind=('continuous_station' if broad and item.media_type == 'radio' else

@@ -5,7 +5,7 @@ playback, recorded announcements, and room speaker configuration. The durable
 coordinator runs inside Home Assistant. No companion app, container, cloud
 account, or paid subscription is required for the core features.
 
-This is the **0.3.9 prerelease**. Automated tests cover implementation
+This is the **0.3.10 prerelease**. Automated tests cover implementation
 contracts; actual microphone capture, speaker delivery, phone presence, firmware,
 and audiobook resume require validation on your equipment. Keep an independent
 alarm available until your installation passes those tests. Home Assistant must
@@ -65,7 +65,9 @@ firmware update, not part of a HACS installation.
   continuation without foreground mix generation. Continuation follows the MA
   autoplay mode; automatic mode may fall back to the library. Artist requests
   explicitly play their top tracks; clear spelling variations can match ordinary
-  music names. Ambiguous choices still ask, and books/stories retain exact matching.
+  music names. Bare exact artist names prefer the provider's first matching
+  artist; uncertain spelling and explicit ambiguous selections still ask.
+  Books/stories retain exact matching.
   Simple named music and genre requests bypass the language model while retaining
   the same profile, room, and catalog guards. Five seconds to playback is the
   target, not a provider or microphone-to-speaker latency guarantee.

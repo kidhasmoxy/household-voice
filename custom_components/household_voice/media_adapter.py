@@ -276,7 +276,13 @@ class MusicAssistantAdapter:
                 for provider in providers:
                     parsed = _provider_item(raw, 'artist', provider)
                     if parsed is not None:
-                        candidates.append((original['provider'] == 'library', parsed))
+                        same_artist = (match[1] != 'library' and
+                            (original['uri'] == selected['uri'] or parsed['uri'] == selected['uri']))
+                        candidates.append((not same_artist, original['provider'] == 'library', parsed))
+            if match[1] != 'library':
+                # A named provider artist has a stable ID. Reauthorization must
+                # not silently switch to a different artist with the same name.
+                candidates = [candidate for candidate in candidates if not candidate[0]]
             if not candidates:
                 return dict(result, status='unavailable', reason='profile_scoped_artist_top_tracks_unavailable', actions=[])
             # Same exact artist, authorized provider ranking; never broaden to
@@ -286,7 +292,7 @@ class MusicAssistantAdapter:
             seen = set()
             # Prefer fresh provider artists over cached library mappings: old
             # library metadata can contain stale provider IDs.
-            for _, candidate in sorted(candidates, key=lambda row: row[0]):
+            for _, _, candidate in sorted(candidates, key=lambda row: row[:2]):
                 if candidate['uri'] in seen:
                     continue
                 seen.add(candidate['uri'])
@@ -442,6 +448,8 @@ class MusicAssistantAdapter:
                     response = await self._call('music_assistant', 'search', data, session, response=True)
                     result = plan(catalog=parse_search(response, data, session, self.bindings, self.clock()))
                     result['evidence_policy'] = (
+                        'provider_ranked_exact_artist_recommendation_not_global_uniqueness'
+                        if result.get('reason') == 'provider_ranked_artist_selected' else
                         'broad_catalog_recommendation_not_exact_title'
                         if request.selection_mode == 'broad_music'
                         else 'bounded_search_below_limit_not_global_uniqueness')

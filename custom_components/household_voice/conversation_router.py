@@ -65,7 +65,7 @@ def named_music_query(text, language='en'):
     if (not 1 <= len(query) <= 120 or re.search(r'[\n\r;:!?"“”]', query)
             or re.search(r'\b(?:audiobooks?|audio books?|books?|stories|story|podcasts?|'
                          r'episodes?|chapters?|resume|continue|timer|alarm|announcement|'
-                         r'playlist|album|station|radio)\b', query, re.I)
+                         r'playlist|album|station|radio|artist|band|song|track)\b', query, re.I)
             or re.search(r'\b(?:in|on|from|for|at|by|after|before|through|using)\s', query, re.I)
             or re.search(r'\b(?:and|then)\s+(?:play|turn|set|stop|pause|resume|announce|'
                          r'broadcast|open|close|lock|unlock|send|make)\b', query, re.I)

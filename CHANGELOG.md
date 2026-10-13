@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.3.10
+
+Bare exact artist names use the first available artist in the provider-ranked
+catalog results, so common names shared by multiple artists do not cause a
+needless clarification. This is a recommendation rather than a claim of global
+uniqueness. Explicit media selections and competing fuzzy matches keep stricter
+selection. The configured profile and exact provider URI remain revalidated.
+
 ## 0.3.9
 
 Repairs artist selection in the direct music route. An unqualified music name
