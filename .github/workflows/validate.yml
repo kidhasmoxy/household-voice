@@ -1,0 +1,38 @@
+name: Validate
+on:
+  push:
+  pull_request:
+permissions:
+  contents: read
+jobs:
+  home-assistant:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Actual HA lifecycle with synthetic data
+        run: >-
+          docker run --rm --network none --cap-drop ALL
+          --security-opt no-new-privileges --read-only
+          --tmpfs /tmp:rw,mode=1777,size=256m --memory 1g --cpus 2
+          -e PYTHONDONTWRITEBYTECODE=1 -v "$PWD:/source:ro"
+          --entrypoint python ghcr.io/home-assistant/home-assistant:2026.10.1
+          /source/tests/ha_embedded_smoke.py
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - run: python -m compileall -q custom_components
+      - run: python -m unittest discover -s tests -v
+      - run: python scripts/build_release.py
+      - uses: actions/upload-artifact@v4
+        with:
+          name: household-voice-install
+          path: dist/household_voice.zip
+          if-no-files-found: error

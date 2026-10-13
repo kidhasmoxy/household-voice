@@ -1,0 +1,26 @@
+{
+  "files": {
+    "__init__.py": {
+      "sha256": "320452fd3d92bcc22fc6728fdd11cc005991c112974b6fc746eb809034d1f5c3",
+      "source": "generated"
+    },
+    "media.py": {
+      "sha256": "44830671e9a846f3fec57b04a4dff15293ffd02848c028434e3157f2eb4adb7a",
+      "source": "household_voice/media.py"
+    },
+    "routing.py": {
+      "sha256": "be533714829f7874b2905ec5126061f3a9281e0dfe4405ea71424da1cd43c55e",
+      "source": "household_voice/routing.py"
+    },
+    "satellite_audio.py": {
+      "sha256": "138b4c86420f90799f68db2d2da331efc8ac50b3cf998535426f419e6b0d742c",
+      "source": "household_voice/satellite_audio.py"
+    },
+    "schedule_tools.py": {
+      "sha256": "6ee8555d8ec5bd885d8c219a36837fe346701c24062b14a0983348ed867eeacd",
+      "source": "household_voice/schedule_tools.py"
+    }
+  },
+  "format": 1,
+  "generator": "ha-integration/build_policy.py"
+}

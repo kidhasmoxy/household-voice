@@ -1,0 +1,18 @@
+{
+  "domain": "household_voice",
+  "name": "Household Voice",
+  "version": "0.2.0",
+  "config_flow": true,
+  "documentation": "https://github.com/kidhasmoxy/household-voice",
+  "integration_type": "service",
+  "iot_class": "local_polling",
+  "requirements": [],
+  "dependencies": [
+    "frontend",
+    "http"
+  ],
+  "codeowners": [
+    "@kidhasmoxy"
+  ],
+  "issue_tracker": "https://github.com/kidhasmoxy/household-voice/issues"
+}

@@ -1,0 +1,34 @@
+name: Release
+on:
+  push:
+    tags:
+      - 'v*'
+permissions:
+  contents: read
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - run: python -m compileall -q custom_components
+      - run: python -m unittest discover -s tests -v
+      - name: Actual HA lifecycle with synthetic data
+        run: >-
+          docker run --rm --network none --cap-drop ALL
+          --security-opt no-new-privileges --read-only
+          --tmpfs /tmp:rw,mode=1777,size=256m --memory 1g --cpus 2
+          -e PYTHONDONTWRITEBYTECODE=1 -v "$PWD:/source:ro"
+          --entrypoint python ghcr.io/home-assistant/home-assistant:2026.10.1
+          /source/tests/ha_embedded_smoke.py
+      - run: python scripts/build_release.py --tag "$GITHUB_REF_NAME"
+      - name: Publish prerelease installation asset
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "$GITHUB_REF_NAME" dist/household_voice.zip dist/household_voice.zip.sha256 --verify-tag --prerelease --generate-notes

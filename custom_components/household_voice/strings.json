@@ -1,0 +1,216 @@
+{
+  "title": "Household Voice Coordinator",
+  "config": {
+    "step": {
+      "reauth_confirm": {
+        "title": "Update coordinator token",
+        "data": {
+          "token": "New bearer token"
+        }
+      },
+      "external": {
+        "title": "Connect the household coordinator",
+        "description": "Enter the reviewed private coordinator URL and bearer token. Setup checks schedules without creating or changing them.",
+        "data": {
+          "url": "Coordinator base URL",
+          "token": "Bearer token"
+        }
+      },
+      "user": {
+        "title": "Set up Household Voice",
+        "menu_options": {
+          "embedded": "Run inside Home Assistant (recommended)",
+          "external": "Connect an existing coordinator"
+        }
+      },
+      "embedded": {
+        "title": "Run inside Home Assistant",
+        "description": "Timers, alarms and announcement state are stored locally and restored after restarts. No add-on or token is needed. Audio uses the Home Assistant internal URL; optionally override it with an HA address reachable by Music Assistant and your speakers. Playback cannot run while Home Assistant is stopped. Configure speakers and enable features after setup.",
+        "data": {
+          "audio_base_url": "Home Assistant audio address (optional)"
+        }
+      },
+      "reconfigure": {
+        "title": "Home Assistant audio address",
+        "description": "Use an address reachable by Music Assistant and the selected speakers. This changes the audio origin without deleting local schedules or recordings.",
+        "data": {
+          "audio_base_url": "Home Assistant audio address"
+        }
+      }
+    },
+    "error": {
+      "cannot_connect": "Cannot read coordinator schedules. Verify reachability and API compatibility.",
+      "invalid_auth": "Coordinator authentication failed.",
+      "invalid_config": "Enter a valid HTTP(S) URL and token of at least 32 characters.",
+      "invalid_audio_url": "Set a reachable Home Assistant HTTP(S) origin without a path or credentials, or configure the internal URL in Home Assistant network settings."
+    },
+    "abort": {
+      "already_configured": "This coordinator is already configured.",
+      "reauth_successful": "Coordinator token updated.",
+      "reconfigure_successful": "Audio address updated.",
+      "external_reconfigure": "For an external coordinator, update its authentication through reauthentication or configure a new coordinator entry."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Household voice settings",
+        "description": "Choose rooms, exact speakers and phones, then review and save. Live features start disabled. Settings changes do not play audio; the separate pairing test requires confirmation and saved enabled settings.",
+        "menu_options": {
+          "announcements": "Announcements, chime and volume",
+          "phone": "Add or edit a home phone",
+          "satellite": "Add or edit a satellite",
+          "remove": "Remove a mapping",
+          "review": "Review and save",
+          "media": "Music Assistant room and profile",
+          "features": "Enable features",
+          "alarms": "Alarm speakers and volume",
+          "capture": "Dedicated recording STT profile",
+          "test_pairing": "Test a saved speaker pairing",
+          "audio_recovery": "Recover speaker after uncertain audio"
+        }
+      },
+      "announcements": {
+        "title": "Default announcement speakers",
+        "description": "Choose one Music Assistant endpoint per physical speaker. Recordings play on these speakers; phones receive transcript text only when their mapped tracker is home. An empty speaker selection has no default recipients. The optional chime uses Music Assistant’s configured announcement sound. The default pauses recognized audiobooks or podcasts for announcements, then resumes if the observed playback is unchanged. Playback changes or detected user intervention suppress automatic resume. This is a guarded check, not an atomic Music Assistant queue transaction. Provider default and manual-resume alternatives are available; unrecognized content follows provider behavior.",
+        "data": {
+          "default_announcement_speakers": "Announcement speakers",
+          "announcement_volume": "Announcement volume (0–1)",
+          "announcement_chime": "Announcement chime",
+          "spoken_media_policy": "Audiobook and podcast interruptions"
+        }
+      },
+      "phone": {
+        "title": "Select a home phone",
+        "description": "Choose the phone’s registered presence tracker. Selecting an existing tracker edits its mapping.",
+        "data": {
+          "device_tracker": "Phone presence tracker"
+        }
+      },
+      "phone_details": {
+        "title": "Phone notification mapping",
+        "description": "Tracker: {tracker}. Choose its registered mobile app notification action. Delivery checks this exact tracker is home; unknown or unavailable receives nothing. Phones receive transcript text only, with no audio link or attachment.",
+        "data": {
+          "notify_service": "Mobile app notification action",
+          "enabled": "Include this phone when home"
+        }
+      },
+      "satellite": {
+        "title": "Select the voice satellite",
+        "description": "Choose exactly one Assist satellite entity OR ESPHome device. Device selection supports output-less firmware with no Assist entity. This records an explicit mapping and does not prove pairing or event authentication.",
+        "data": {
+          "satellite_entity_id": "Assist satellite entity (optional)",
+          "satellite_device_id": "ESPHome voice device (optional)"
+        }
+      },
+      "satellite_details": {
+        "title": "Satellite room and speakers",
+        "description": "Satellite: {satellite}. Choose its room ID and one Music Assistant reply speaker, plus any room players to lower while listening. Duck factor is a fraction of each player’s current volume. The completion action must belong to this voice device; the runtime verifies authenticated ownership before calling it.",
+        "data": {
+          "room_id": "Coordinator room ID",
+          "tts_media_player": "Music Assistant reply speaker",
+          "duck_media_players": "Room speakers to lower",
+          "completion_service": "External reply completion action (optional)",
+          "reply_volume": "Reply volume (0–1)",
+          "duck_factor": "Listening volume fraction (0.05–1)"
+        }
+      },
+      "remove": {
+        "title": "Remove a prepared mapping",
+        "description": "Removes only the selected mapping from this draft. Select Review and save afterward to persist the change. No HA device or entity is deleted.",
+        "data": {
+          "mapping": "Mapping to remove"
+        }
+      },
+      "review": {
+        "title": "Review and save household voice settings",
+        "description": "Default speakers: {speakers}. Phones: {phones}. Satellites: {satellites}. Master live actions: {live}. Saving validates the current registries, preserves your feature switches, and requests integration reload. Enabled features can act on subsequent voice requests or scheduled events."
+      },
+      "media": {
+        "title": "Music Assistant room and profile",
+        "description": "Enter the coordinator room ID and choose one Music Assistant player for this room. Its Music Assistant instance is verified from the entity registry. Use the existing profile name and default sleep-story playlist. Saving prepares routing and does not start playback. Re-entering a room replaces its saved music mapping.",
+        "data": {
+          "room_id": "Coordinator room ID",
+          "music_player": "Music Assistant player",
+          "username": "Music Assistant profile",
+          "default_sleep_playlist": "Default sleep-story playlist"
+        }
+      },
+      "features": {
+        "title": "Enable household voice features",
+        "description": "The master switch and each feature switch must both be on for its live actions. These are administrator settings. Before enabling recording, assign each capture STT entity to a dedicated pipeline used only by its mapped voice device, and configure matching coordinator capture profiles. Saving requests a reload; it does not trigger playback.",
+        "data": {
+          "live_actions_enabled": "Allow live household actions (master switch)",
+          "media_enabled": "Music, stations and audiobook playback",
+          "satellite_audio_enabled": "Room speaker replies and wake ducking",
+          "announcements_enabled": "Recorded announcements and home phone text",
+          "ring_actions_enabled": "Alarm and timer ringing",
+          "stt_capture_enabled": "Dedicated STT recording profiles"
+        }
+      },
+      "alarms": {
+        "title": "Alarm speakers for a room",
+        "description": "Choose explicit Music Assistant alarm speakers for this room. Saving the same room replaces its alarm mapping. Fallback speakers are optional and used only by the ringing policy when a configured target is unavailable. Ring volume and fallback selection apply to all rooms.",
+        "data": {
+          "room_id": "Room",
+          "speakers": "Alarm speakers",
+          "ring_volume": "Ring volume (%)",
+          "ring_fallback_speakers": "Explicit fallback speakers (optional)"
+        }
+      },
+      "capture": {
+        "title": "Dedicated recording STT profile",
+        "description": "Select an existing mapped voice device and its underlying speech-to-text provider. Each source needs its own profile and exclusive Assist pipeline; speech metadata does not identify the microphone. The coordinator must have the same profile ID, source device and source room. No recording begins by saving. Re-entering a profile replaces its mapping.",
+        "data": {
+          "profile_id": "Unique capture profile ID",
+          "source_device_id": "Mapped voice device",
+          "provider_entity_id": "Underlying speech-to-text provider"
+        }
+      },
+      "test_pairing": {
+        "title": "Test a saved speaker pairing",
+        "description": "Tests saved settings only. Save changes and reopen options first. With live actions and speaker replies enabled, confirming this test may play a short reply on the selected room speaker. It does not prove microphone recording or wake-word detection.",
+        "data": {
+          "satellite_device_id": "Saved voice device",
+          "confirm_test": "Play the pairing test now"
+        }
+      },
+      "pairing_result": {
+        "title": "Pairing test result",
+        "description": "{result}"
+      },
+      "audio_recovery": {
+        "title": "Recover one saved speaker",
+        "description": "Use this only after checking that all pending announcement audio on the chosen speaker has stopped. It clears the local uncertainty block, but sends no stop or resume command and cannot prove physical silence. Active local announcements cannot be reset. Only saved routing is eligible; save new mappings first.",
+        "data": {
+          "media_player": "Configured Music Assistant speaker",
+          "confirm_audio_stopped": "I verified that all pending announcement audio has stopped"
+        }
+      }
+    },
+    "error": {
+      "invalid_entity": "Select an existing, enabled entity of the required type.",
+      "duplicate_mapping": "An exact endpoint or phone destination is selected more than once.",
+      "invalid_notify_service": "Select a currently registered notify.mobile_app action for this phone.",
+      "invalid_enabled": "Choose enabled or disabled.",
+      "select_one_satellite": "Choose exactly one Assist entity or ESPHome device.",
+      "invalid_device": "Select an existing enabled ESPHome device, or a registered Assist entity with its device.",
+      "invalid_room": "Use an exact room ID, 1–64 letters, numbers, underscores, or hyphens; start with a letter or number.",
+      "invalid_completion_service": "Select a registered ESPHome external_reply_complete action, or None.",
+      "invalid_mapping": "Select a valid saved mapping.",
+      "invalid_music_player": "Choose an enabled Music Assistant player with a registered Music Assistant instance.",
+      "invalid_media_profile": "Enter a profile name and default sleep-story playlist.",
+      "invalid_volume": "Choose a volume in the indicated range; the listening fraction must be greater than zero.",
+      "invalid_chime": "Choose no chime or the Music Assistant announcement chime.",
+      "invalid_capture_source": "Select a currently mapped and enabled voice device.",
+      "invalid_stt_provider": "Choose an underlying STT provider, not another Household Voice recording wrapper.",
+      "confirm_pairing_test": "Select a saved device and confirm the audible test.",
+      "pairing_disabled": "Save enabled live actions and speaker replies before testing.",
+      "pairing_unavailable": "The pairing test action is not loaded. Save settings and verify the integration.",
+      "pairing_failed": "The pairing test failed. Verify the saved device and speaker mapping.",
+      "alarm_mapping_required": "Configure alarm speakers before enabling live alarm ringing.",
+      "invalid_spoken_media_policy": "Choose pause and resume, provider default, or pause and hold.",
+      "audio_recovery_failed": "Confirm pending audio stopped, select a saved speaker, and wait for active work to finish."
+    }
+  }
+}

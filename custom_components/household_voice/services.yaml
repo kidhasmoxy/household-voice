@@ -1,0 +1,53 @@
+test_pairing:
+  name: Test paired speaker
+  description: Play a short test tone on this satellite's explicitly paired Music Assistant speaker. Requires enabled satellite audio and administrator access.
+  fields:
+    config_entry_id: {name: Coordinator entry ID, required: true, selector: {text: {}}}
+    satellite_device_id: {name: Voice satellite, required: true, selector: {device: {integration: esphome}}}
+reset_uncertain_audio:
+  name: Recover speaker after uncertain announcement
+  description: Clear the selected saved speaker's local quarantine only after you have verified pending audio stopped. Requires administrator access. Does not stop playback, resume a book, or confirm physical silence; active local announcements cannot be reset.
+  fields:
+    config_entry_id: {name: Coordinator entry ID, required: true, selector: {text: {}}}
+    media_player: {name: Configured Music Assistant speaker, required: true, selector: {entity: {domain: media_player, integration: music_assistant}}}
+    confirm_audio_stopped: {name: I verified all pending announcement audio stopped, required: true, default: false, selector: {boolean: {}}}
+create_timer:
+  name: Create household timer
+  description: Create a coordinator timer. In dry-run mode no speaker sounds.
+  fields:
+    config_entry_id: {name: Coordinator entry ID, selector: {text: {}}}
+    label: {name: Label, required: true, selector: {text: {}}}
+    seconds: {name: Duration seconds, required: true, selector: {number: {min: 0.01, max: 604800, step: any, mode: box}}}
+    source_room: {name: Source room ID, required: true, selector: {text: {}}}
+    target_room: {name: Ring room ID, description: Defaults to source room., selector: {text: {}}}
+    request_id: {name: Retry ID, description: Omit for a generated UUID; reuse only for retrying the same request., selector: {text: {}}}
+create_alarm:
+  name: Create household alarm
+  description: Create a coordinator alarm using local time and an IANA timezone.
+  fields:
+    config_entry_id: {name: Coordinator entry ID, selector: {text: {}}}
+    label: {name: Label, required: true, selector: {text: {}}}
+    local_time: {name: Time (HH:MM), required: true, selector: {text: {}}}
+    timezone: {name: IANA timezone, required: true, example: America/New_York, selector: {text: {}}}
+    weekdays: {name: Days, description: JSON integer list from Monday=0 to Sunday=6., required: true, example: '[0,1,2,3,4,5,6]', selector: {object: {}}}
+    one_shot: {name: Only next occurrence, default: false, selector: {boolean: {}}}
+    source_room: {name: Source room ID, required: true, selector: {text: {}}}
+    target_room: {name: Ring room ID, selector: {text: {}}}
+    request_id: {name: Retry ID, description: Omit for a generated UUID., selector: {text: {}}}
+command:
+  name: Change household schedule
+  description: Change one exact schedule using its current revision. Refresh after a conflict.
+  fields:
+    config_entry_id: {name: Coordinator entry ID, selector: {text: {}}}
+    identifier: {name: Schedule ID, required: true, selector: {text: {}}}
+    operation:
+      name: Operation
+      required: true
+      selector:
+        select:
+          options: [pause, resume, add, cancel, dismiss, snooze, move, enable, disable, rename, delete]
+    expected_revision: {name: Current revision, required: true, selector: {number: {min: 1, max: 2147483647, mode: box}}}
+    seconds: {name: Add/subtract or snooze seconds, selector: {number: {min: -604800, max: 604800, mode: box}}}
+    target_room: {name: New room for move, selector: {text: {}}}
+    label: {name: New label for rename, selector: {text: {}}}
+    request_id: {name: Retry ID, description: Omit for a generated UUID., selector: {text: {}}}

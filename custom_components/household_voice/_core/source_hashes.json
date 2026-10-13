@@ -1,0 +1,50 @@
+{
+  "files": {
+    "__init__.py": {
+      "sha256": "244ba5c3e16e00ef48888cd7c9798e95954d1384575f8165524f461f089c8018",
+      "source": "generated"
+    },
+    "announcements.py": {
+      "sha256": "ba7f39af6b722a2e882de9cba7ced8be5ed7f833c7cd1136e8d4fd18b8ecd71d",
+      "source": "household_voice/announcements.py"
+    },
+    "api.py": {
+      "sha256": "bd4500b9cfcb098032785b92ef4622e2885125b418127950b88d29784b6f9a9a",
+      "source": "household_voice/api.py"
+    },
+    "brave_search.py": {
+      "sha256": "177f6bf35db1dad809cfb25276f4fa3ba3302c952d25438d441df3a513362c4c",
+      "source": "household_voice/brave_search.py"
+    },
+    "broadcast.py": {
+      "sha256": "58b546e1382a60d4ba60669464e8943c551badcc8959d6b84b7a3b6b5eb86f29",
+      "source": "household_voice/broadcast.py"
+    },
+    "capture_api.py": {
+      "sha256": "b783f5ac9e3061547d0fe8f8480ca32eeb9a07257cd7ff8b35185d830e6ffa67",
+      "source": "household_voice/capture_api.py"
+    },
+    "delivery.py": {
+      "sha256": "a266b85153a0b3628b59922913bdb27d4c574109a1b920cb8a87e405070a37d1",
+      "source": "household_voice/delivery.py"
+    },
+    "research.py": {
+      "sha256": "7eb3bce700bbc4de24931aeaab7480a75a2a6fc15445b973586d00cbbe1239ee",
+      "source": "household_voice/research.py"
+    },
+    "routing.py": {
+      "sha256": "be533714829f7874b2905ec5126061f3a9281e0dfe4405ea71424da1cd43c55e",
+      "source": "household_voice/routing.py"
+    },
+    "runtime.py": {
+      "sha256": "c3be037ca58714a28bf400195616e91b2fd098d14c1fdd3515164b8749f13c36",
+      "source": "household_voice/runtime.py"
+    },
+    "scheduler.py": {
+      "sha256": "3972130c7c376c1e9f3fce5e8e633148468780481d1164d460a1eec2e32c73a9",
+      "source": "household_voice/scheduler.py"
+    }
+  },
+  "format": 1,
+  "generator": "ha-integration/build_core.py"
+}
