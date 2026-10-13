@@ -1,5 +1,25 @@
 # Changelog
 
+## 0.3.4
+
+Repairs Music Assistant catalog handling for nested artist/album metadata with
+name-based IDs, while keeping executable catalog URIs strictly validated.
+Broad music selection uses the router's authenticated original request even when
+the installed Home Assistant LLM context omits the original prompt.
+
+Hides finished timers from the default management view, with an optional history
+toggle. Room controls use dropdowns; assistant selection follows its Home
+Assistant area. Pairing shows friendly room/speaker names, an obvious settings
+link and the existing automatic room choice. Advanced external-reply provisioning
+is collapsed so it does not obscure ordinary pairing.
+
+Includes an optional, pinned-source ESPHome native voice lifecycle overlay under
+`esphome/`. It waits for announcement activation before reporting playback
+completion, preventing the previous two-second timeout from reopening the
+microphone during a delayed reply. The overlay requires a separate firmware
+compile/upload; HACS does not install firmware. Acoustic playback, interruption
+and follow-up acceptance remain device tests.
+
 ## 0.3.3
 
 Music requests accept current Home Assistant area names and aliases while

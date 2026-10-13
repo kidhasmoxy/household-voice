@@ -5,7 +5,7 @@ playback, recorded announcements, and room speaker configuration. The durable
 coordinator runs inside Home Assistant. No companion app, container, cloud
 account, or paid subscription is required for the core features.
 
-This is the **0.3.3 prerelease**. Automated tests cover implementation
+This is the **0.3.4 prerelease**. Automated tests cover implementation
 contracts; actual microphone capture, speaker delivery, phone presence, firmware,
 and audiobook resume require validation on your equipment. Keep an independent
 alarm available until your installation passes those tests. Home Assistant must
@@ -46,6 +46,11 @@ use HACS or replace that code directory with a newer release. Back up Home
 Assistant before updates; code replacement must not delete stored integration
 state. The repository ZIP is source, while `household_voice.zip` is the install
 asset. Release tags must match the manifest version.
+
+For Voice PE installations affected by premature native reply completion, the
+optional [ESPHome lifecycle overlay](esphome/README.md) preserves the official
+device package and can be pinned to a reviewed source commit. It is a separate
+firmware update, not part of a HACS installation.
 
 ## Features and configuration
 

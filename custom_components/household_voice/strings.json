@@ -70,7 +70,7 @@
           "audio_recovery": "Recover speaker after uncertain audio",
           "conversation_routing": "Conversation routing",
           "single_turn_announcements": "Single-turn announcements",
-          "assistant_pairing": "Assistant speakers from Home Assistant areas",
+          "assistant_pairing": "Assistant speakers",
           "knowledge_family": "Knowledge and family settings",
           "native_audio_recovery": "Recover built-in speaker after uncertain audio"
         }
@@ -80,7 +80,7 @@
         "description": "Choose one Music Assistant endpoint per speaker and an optional chime. Audiobooks and podcasts resume after announcements if playback remains unchanged. Phones receive the transcript when home. Choose whether to trust the current home state or require a report within five minutes or one hour. Away, unknown and unavailable phones are skipped.",
         "data": {
           "default_announcement_speakers": "Announcement speakers",
-          "announcement_volume": "Announcement volume (0\u00c3\u00a2\u00e2\u201a\u00ac\u00e2\u20ac\u01531)",
+          "announcement_volume": "Announcement volume (0Ã¢â‚¬â€œ1)",
           "announcement_chime": "Announcement chime",
           "spoken_media_policy": "Audiobook and podcast interruptions",
           "phone_presence_policy": "Phone home presence policy"
@@ -88,7 +88,7 @@
       },
       "phone": {
         "title": "Select a home phone",
-        "description": "Choose the phone\u00c3\u00a2\u00e2\u201a\u00ac\u00e2\u201e\u00a2s registered presence tracker. Selecting an existing tracker edits its mapping.",
+        "description": "Choose the phoneÃ¢â‚¬â„¢s registered presence tracker. Selecting an existing tracker edits its mapping.",
         "data": {
           "device_tracker": "Phone presence tracker"
         }
@@ -111,14 +111,14 @@
       },
       "satellite_details": {
         "title": "Satellite room and speakers",
-        "description": "Satellite: {satellite}. Choose its room ID and one Music Assistant reply speaker, plus any room players to lower while listening. Duck factor is a fraction of each player\u00c3\u00a2\u00e2\u201a\u00ac\u00e2\u201e\u00a2s current volume. The completion action must belong to this voice device; the runtime verifies authenticated ownership before calling it.",
+        "description": "Satellite: {satellite}. Choose its room ID and one Music Assistant reply speaker, plus any room players to lower while listening. Duck factor is a fraction of each playerÃ¢â‚¬â„¢s current volume. The completion action must belong to this voice device; the runtime verifies authenticated ownership before calling it.",
         "data": {
           "room_id": "Coordinator room ID",
           "tts_media_player": "Music Assistant reply speaker",
           "duck_media_players": "Room speakers to lower",
           "completion_service": "External reply completion action (optional)",
-          "reply_volume": "Reply volume (0\u00c3\u00a2\u00e2\u201a\u00ac\u00e2\u20ac\u01531)",
-          "duck_factor": "Listening volume fraction (0.05\u00c3\u00a2\u00e2\u201a\u00ac\u00e2\u20ac\u01531)"
+          "reply_volume": "Reply volume (0Ã¢â‚¬â€œ1)",
+          "duck_factor": "Listening volume fraction (0.05Ã¢â‚¬â€œ1)"
         }
       },
       "remove": {
@@ -215,14 +215,14 @@
       },
       "assistant_pairing": {
         "title": "Assistant speakers",
-        "description": "One suitable Music Assistant speaker in the assistant area is selected automatically. Choose a default when several speakers share an area. Existing explicit pairings are preserved.",
+        "description": "Rooms come from Home Assistant. A room with one suitable Music Assistant speaker pairs automatically; when there are several, choose a default below. Existing choices stay saved. No device IDs or YAML are needed. Finish with Review and save.",
         "data": {
-          "assistant": "Assistant and paired speaker"
+          "assistant": "Assistant in its Home Assistant room"
         }
       },
       "assistant_speaker": {
         "title": "Speaker for {assistant}",
-        "description": "Home Assistant area: {area}. Current status: {status}. This selection configures new alarm output and reply routing; it does not enable firmware or audio features.",
+        "description": "Home Assistant room: {area}. Current status: {status}. Automatic follows this room; choose a speaker to set a default, or No paired speaker for built-in alarm and timer audio. In the native-conversation beta, replies stay on the assistant while paired speakers handle music, books, announcements, alarms and timers. This selection does not move existing schedules or change broadcast defaults. Finish with Review and save.",
         "data": {
           "speaker": "Default speaker"
         }
@@ -260,7 +260,7 @@
       "invalid_enabled": "Choose enabled or disabled.",
       "select_one_satellite": "Choose exactly one Assist entity or ESPHome device.",
       "invalid_device": "Select an existing enabled ESPHome device, or a registered Assist entity with its device.",
-      "invalid_room": "Use an exact room ID, 1\u00c3\u00a2\u00e2\u201a\u00ac\u00e2\u20ac\u015364 letters, numbers, underscores, or hyphens; start with a letter or number.",
+      "invalid_room": "Use an exact room ID, 1Ã¢â‚¬â€œ64 letters, numbers, underscores, or hyphens; start with a letter or number.",
       "invalid_completion_service": "Select a registered ESPHome external_reply_complete action, or None.",
       "invalid_mapping": "Select a valid saved mapping.",
       "invalid_music_player": "Choose an enabled Music Assistant player with a registered Music Assistant instance.",

@@ -38,6 +38,7 @@ GROUPS = {'artists': 'artist', 'albums': 'album', 'tracks': 'track',
           'podcasts': 'podcast'}
 ENTITY = re.compile(r'media_player\.[a-z0-9_]+\Z')
 URI = re.compile(r'([A-Za-z0-9][A-Za-z0-9_.-]*)://(track|album|artist|playlist|radio|audiobook|podcast)/([^\s?#]+)\Z')
+METADATA_URI = re.compile(r'([A-Za-z0-9][A-Za-z0-9_.-]*)://(artist|album)/(.+)\Z')
 
 
 class MediaAdapterError(ValueError):
@@ -59,7 +60,10 @@ def _item(raw, expected=None, depth=0):
         raise MediaAdapterError('Malformed catalog item')
     kind = _kind(raw.get('media_type'))
     uri = _text(raw.get('uri'))
-    match = URI.fullmatch(uri)
+    # HA may synthesize nested artist/album mappings using a display name as
+    # the opaque item ID (including spaces). Only their names become filters;
+    # these URIs never become playable catalog items or action arguments.
+    match = (METADATA_URI if depth else URI).fullmatch(uri)
     if not match or match[1].lower() in ('http', 'https', 'file', 'ftp', 'data', 'javascript') or match[2]!=kind or (expected and kind!=expected):
         raise MediaAdapterError('Catalog URI/type mismatch')
     _text(raw.get('version'), empty=True)

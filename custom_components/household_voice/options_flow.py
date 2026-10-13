@@ -110,7 +110,9 @@ class HouseholdVoiceOptionsFlow(config_entries.OptionsFlow):
     async def async_step_assistant_pairing(self,user_input=None):
         self._ensure_draft()
         from .area_registry import collect_pairings
-        pairings=collect_pairings(self.hass,self.draft)['assistants']
+        discovery=collect_pairings(self.hass,self.draft)
+        pairings=discovery['assistants']
+        areas={area['id']:area['name'] for area in discovery['areas']}
         errors={}
         if user_input is not None:
             selected=user_input.get('assistant')
@@ -118,7 +120,9 @@ class HouseholdVoiceOptionsFlow(config_entries.OptionsFlow):
             else:
                 self.pairing_assistant=selected
                 return await self.async_step_assistant_speaker()
-        choices=[{'value':identifier,'label':f"{row['name']} — {row['speaker_name'] or row['status']}"} for identifier,row in pairings.items()]
+        choices=[{'value':identifier,'label':f"{areas.get(row['area_id'],'No Home Assistant room')} — {row['name']} → {row['speaker_name'] or 'Built-in speaker / choose a default'}"}
+                 for identifier,row in pairings.items()]
+        choices.sort(key=lambda item:item['label'].casefold())
         return self._form('assistant_pairing',{
             vol.Required('assistant'):SelectSelector(SelectSelectorConfig(options=choices,mode='dropdown')),
         },errors,user_input)
@@ -128,8 +132,9 @@ class HouseholdVoiceOptionsFlow(config_entries.OptionsFlow):
         pairings=collect_pairings(self.hass,self.draft)
         row=pairings['assistants'].get(self.pairing_assistant)
         if row is None: return await self.async_step_assistant_pairing()
-        choices=[{'value':'auto','label':'Automatic — single suitable speaker in this Home Assistant area'},
-                 {'value':'none','label':'No paired speaker'}]
+        area=next((item['name'] for item in pairings['areas'] if item['id']==row['area_id']),'No Home Assistant room')
+        choices=[{'value':'auto','label':f'Automatic — suitable speaker in {area}'},
+                 {'value':'none','label':'No paired speaker — use the assistant’s built-in speaker for alarms and timers'}]
         choices += [{'value':item['entity_id'],'label':item['name']+(' (unavailable)' if not item['available'] else '')} for item in row['choices']]
         # Preserve a deliberate cross-area or currently unavailable exact override.
         if row.get('speaker_id') and row['speaker_id'] not in {item['value'] for item in choices}:
@@ -144,7 +149,7 @@ class HouseholdVoiceOptionsFlow(config_entries.OptionsFlow):
         current=self.draft['assistant_speaker_overrides'].get(self.pairing_assistant,row['speaker_id'] if row['selection']=='manual' else 'auto')
         return self._form('assistant_speaker',{
             vol.Required('speaker',default=current or 'none'):SelectSelector(SelectSelectorConfig(options=choices,mode='dropdown')),
-        },errors,user_input,{'assistant':row['name'],'area':row['area_id'] or 'No area','status':row['status']})
+        },errors,user_input,{'assistant':row['name'],'area':area,'status':row['status'].replace('_',' ')})
 
     async def async_step_single_turn_announcements(self, user_input=None):
         self._ensure_draft()

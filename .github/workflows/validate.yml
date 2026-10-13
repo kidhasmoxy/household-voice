@@ -11,7 +11,7 @@ jobs:
       fail-fast: false
       matrix:
         home-assistant: ["2026.9.4", "2026.10.1"]
-        fixture: ["ha_embedded_smoke.py", "ha_native_alarm_smoke.py", "ha_native_duck_smoke.py", "ha_media_llm_smoke.py"]
+        fixture: ["ha_embedded_smoke.py", "ha_native_alarm_smoke.py", "ha_native_duck_smoke.py", "ha_media_llm_smoke.py", "ha_options_smoke.py"]
     steps:
       - uses: actions/checkout@v4
         with:
@@ -24,7 +24,7 @@ jobs:
           -e PYTHONDONTWRITEBYTECODE=1 -v "$PWD:/source:ro"
           --entrypoint python ghcr.io/home-assistant/home-assistant:${{ matrix.home-assistant }}
           /source/tests/${{ matrix.fixture }}
-          ${{ matrix.fixture == 'ha_media_llm_smoke.py' && '--ha-runtime' || '' }}
+          ${{ (matrix.fixture == 'ha_media_llm_smoke.py' || matrix.fixture == 'ha_options_smoke.py') && '--ha-runtime' || '' }}
   validate:
     runs-on: ubuntu-latest
     steps:

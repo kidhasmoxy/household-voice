@@ -20,6 +20,7 @@ class RequestScope:
 
 
 _SCOPE = ContextVar('household_voice_request_scope', default=None)
+_ORIGINAL_REQUEST = ContextVar('household_voice_original_request', default=None)
 
 
 def category(text, language):
@@ -57,10 +58,25 @@ def bind_request(text, language, context, device_id):
     else:
         value = RequestScope(*match, context_id, device_id) if match and context_id else None
     token = _SCOPE.set(value)
+    original_token = _ORIGINAL_REQUEST.set((text, language, context_id, device_id)
+        if context_id and isinstance(text, str) and isinstance(language, str) else None)
     try:
         yield
     finally:
+        _ORIGINAL_REQUEST.reset(original_token)
         _SCOPE.reset(token)
+
+
+def trusted_request_text(llm_context):
+    """Prefer the exact router request; HA 2026.9 LLMContext omits user_prompt."""
+    original = _ORIGINAL_REQUEST.get()
+    if original is not None:
+        text, language, context_id, device_id = original
+        if (getattr(getattr(llm_context, 'context', None), 'id', None) != context_id
+                or getattr(llm_context, 'device_id', None) != device_id):
+            raise ScopeConflict()
+        return text, language
+    return getattr(llm_context, 'user_prompt', None), getattr(llm_context, 'language', 'en')
 
 
 def constrain_arguments(family, operation, arguments, llm_context):

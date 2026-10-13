@@ -23,7 +23,7 @@ from types import SimpleNamespace
 
 import probatio
 from .llm_compat import api_name, tool_result
-from .intent_scope import constrain_arguments, ScopeConflict
+from .intent_scope import constrain_arguments, trusted_request_text, ScopeConflict
 from homeassistant.core import callback
 from homeassistant.helpers import area_registry as ar, device_registry as dr, entity_registry as er, llm
 
@@ -63,8 +63,7 @@ def _with_music_selection(arguments, context, operation):
     if (operation != 'play' or arguments.get('kind', 'music') != 'music'
             or any(arguments.get(key) for key in ('media_type', 'artist', 'album', 'selected_uri'))):
         return arguments
-    prompt = getattr(context, 'user_prompt', None)
-    language = getattr(context, 'language', 'en')
+    prompt, language = trusted_request_text(context)
     if not isinstance(prompt, str) or not isinstance(language, str) or language.split('-')[0] != 'en':
         return arguments
     text = ' '.join(prompt.casefold().split()).rstrip('.!?')

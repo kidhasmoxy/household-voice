@@ -173,6 +173,40 @@ class MediaLLMTests(unittest.IsolatedAsyncioTestCase):
         result = await self.call(args={'query': 'jazz', 'selection_mode': 'broad_music'})
         self.assertTrue(result.error)
 
+    async def test_promptless_router_context_executes_broad_music_with_live_shaped_metadata(self):
+        self.living_area()
+        self.entry.options.update(live_actions_enabled=True, media_enabled=True)
+        self.services.search_result = search(item('Jazz Chill','playlist','apple_music--fixture://playlist/pl.fixture'), 'playlists')
+        self.services.search_result['playlists'] += [item(f'Jazz Mix {i}','playlist',f'apple_music://playlist/{i}') for i in range(19)]
+        track = item('Jazz','track','apple_music://track/123')
+        track['artists'] = [item('Fixture Artist','artist','apple_music--fixture://artist/Fixture Artist')]
+        track['album'] = item('Fixture Album','album','apple_music--fixture://album/Fixture Album')
+        self.services.search_result['tracks'] = [track]
+        self.assertFalse(hasattr(self.context, 'user_prompt'))
+        with scope_module.bind_request('Play some jazz.', 'en', self.context.context, self.context.device_id):
+            result = await self.call(args={'query':'jazz','kind':'music','target_room':'Living Room'})
+        self.assertEqual(result.data['status'], 'action_accepted')
+        self.assertEqual(result.data['selected']['title'], 'Jazz Chill')
+        self.assertEqual([call[1] for call in self.services.calls], ['search','shuffle_set','play_media'])
+        self.assertEqual(self.services.calls[0][2]['media_type'], ['playlist','radio'])
+        self.assertEqual(self.services.calls[-1][2]['entity_id'], PLAYER)
+        self.assertEqual(self.services.calls[-1][2]['media_id'], 'apple_music--fixture://playlist/pl.fixture')
+
+    async def test_router_original_named_request_overrides_provider_prompt(self):
+        self.context.user_prompt = 'Play some jazz.'
+        self.services.search_result = search(item('Jazz Chill','playlist','library://playlist/42'), 'playlists')
+        with scope_module.bind_request('Play the album Jazz.', 'en', self.context.context, self.context.device_id):
+            result = await self.call(args={'query':'jazz','kind':'music'})
+        self.assertEqual(result.data['reason'], 'no_exact_catalog_match')
+        self.assertEqual([call[1] for call in self.services.calls], ['search'])
+
+    async def test_original_music_scope_wrong_device_cannot_fallback_to_prompt(self):
+        self.context.user_prompt = 'Play some jazz.'
+        with scope_module.bind_request('Play some jazz.', 'en', self.context.context, 'other-device'):
+            result = await self.call(args={'query':'jazz','kind':'music'})
+        self.assertEqual(result.data['reason'], 'tool_does_not_match_requested_category')
+        self.assertFalse(self.services.calls)
+
     async def test_broad_music_guard_preserves_books_filters_and_unknown_prompt(self):
         for prompt, args in [
             ('Play some jazz.', {'query':'jazz', 'kind':'book'}),
@@ -460,6 +494,14 @@ async def real_ha_smoke():
             async def fixture_search(call):
                 calls.append(dict(call.data))
                 await asyncio.sleep(0)
+                if call.data['name'] == 'jazz':
+                    result = search(item('Jazz Chill', 'playlist', 'apple_music--fixture://playlist/pl.fixture'), 'playlists')
+                    result['playlists'] += [item(f'Jazz Mix {i}','playlist',f'apple_music://playlist/{i}') for i in range(19)]
+                    track = item('Jazz', 'track', 'apple_music://track/123')
+                    track['artists'] = [item('Fixture Artist','artist','apple_music--fixture://artist/Fixture Artist')]
+                    track['album'] = item('Fixture Album','album','apple_music--fixture://album/Fixture Album')
+                    result['tracks'] = [track]
+                    return result
                 if call.data['name'] == 'Rumours':
                     album = item('Rumours', 'album', 'library://album/12')
                     album['artists'] = [item('Fleetwood Mac', 'artist', 'library://artist/7')]
@@ -530,6 +572,14 @@ async def real_ha_smoke():
             with scope_module.bind_request('Continue my audiobook','en',context.context,context.device_id):
                 guarded = await instance.async_call_tool(llm.ToolInput(tool_name=module.NAMES[1],tool_args={},id='book-over-music'))
             assert guarded.data['reason'] == 'different_content_in_queue' and len(actions) == 5
+            assert getattr(context, 'user_prompt', None) is None
+            with scope_module.bind_request('Play some jazz.', 'en', context.context, context.device_id):
+                jazz = await instance.async_call_tool(llm.ToolInput(tool_name=module.NAMES[0],
+                    tool_args={'query':'jazz','kind':'music','target_room':'Living Room'}, id='promptless-broad-jazz'))
+            assert jazz.data['status']=='action_accepted' and len(actions)==7
+            assert calls[-1]['media_type']==['playlist','radio']
+            assert actions[-1][2]['entity_id']==player.entity_id
+            assert actions[-1][2]['media_id']=='apple_music--fixture://playlist/pl.fixture'
             unregister()
             assert api_id not in {api.id for api in llm.async_get_apis(hass)}
             print(json.dumps({"ha_version": __version__, "real_ha_media_llm_runtime": True, "registry_ownership_validated": True,
@@ -538,6 +588,7 @@ async def real_ha_smoke():
                 "album_without_query_real_schema_and_mock_execution": True,
                 "router_bound_book_cannot_resume_verified_music_queue": True,
                 "ha_area_name_resolves_legacy_room_id": True,
+                "router_bound_promptless_broad_music_with_nested_metadata": True,
                 "physical_actions": False, "live_ha_contacted": False, "real_ma_contacted": False}, sort_keys=True), flush=True)
         finally:
             await hass.async_stop(force=True)
