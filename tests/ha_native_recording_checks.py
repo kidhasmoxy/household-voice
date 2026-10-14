@@ -14,6 +14,167 @@ from recording_worker.client import CoreCaptureClient,authenticate
 from recording_worker.protocol import VERSION
 
 
+async def check_source_destination_scope(hass,satellite,device,area,entry,composition):
+    """Real registries and installed MA models; every audio/provider call is inert."""
+    from importlib.metadata import version
+    from homeassistant.helpers import entity_registry as er
+    from music_assistant_models.player import Player
+    from custom_components.household_voice.area_registry import collect_pairings
+    from custom_components.household_voice.native_recording import source_permitted
+    from custom_components.household_voice.native_recording_bindings import sources_from_registry
+    from custom_components.household_voice.announcement_adapter import AnnouncementAdapter
+    from custom_components.household_voice.satellite_transport import MAAnnouncementTransport,_UNCERTAIN
+    registry=er.async_get(hass)
+    ma=ConfigEntry(domain='music_assistant',title='Inert scope output',data={},options={},source='user',version=1,
+        minor_version=1,unique_id=None,discovery_keys=MappingProxyType({}),subentries_data=None)
+    hass.config_entries._entries[ma.entry_id]=ma
+    ma._async_set_state(hass,ConfigEntryState.LOADED,None) # Synthetic provider only
+    speaker_device=dr.async_get(hass).async_get_or_create(config_entry_id=ma.entry_id,identifiers={('music_assistant','scope-output')})
+    dr.async_get(hass).async_update_device(speaker_device.id,area_id=area.id)
+    speaker=registry.async_get_or_create('media_player','music_assistant','scope-output',config_entry=ma,device_id=speaker_device.id)
+    player=Player.from_dict({'player_id':'scope-output','provider':'fixture-provider','type':'player','name':'Scope output',
+        'available':True,'enabled':True,'device_info':{'model':'Fixture','manufacturer':'Fixture'},
+        'supported_features':['play_announcement'],'group_members':[],
+        'synced_to':None,'active_group':None,'active_output_protocol':None,'output_protocols':[{
+            'output_protocol_id':'native','name':'Native','protocol_domain':'sonos','is_native':True,'available':True,'derived_from':None}]})
+    effects=[]
+    async def play(*args,**kwargs):effects.append('provider')
+    async def active(*args):effects.append('queue-read');return None
+    async def pause(*args):effects.append('pause')
+    mass=SimpleNamespace(players=SimpleNamespace(get=lambda identity:player if identity=='scope-output' else None,play_announcement=play),
+        player_queues=SimpleNamespace(get_active_queue=active,pause=pause))
+    ma.runtime_data=SimpleNamespace(mass=mass)
+    hass.states.async_set(speaker.entity_id,'idle',{'group_members':[]})
+    options={**entry.options,'default_announcement_speakers':[speaker.entity_id],
+        'assistant_speaker_overrides':{satellite.entity_id:speaker.entity_id}}
+    source_entry=SimpleNamespace(entry_id=entry.entry_id,data=entry.data,options=options)
+    source=sources_from_registry(hass)[device]
+    transport=MAAnnouncementTransport(hass,{speaker.entity_id})
+    original=composition.runtime.adapter;old_wait=composition.runtime._wait_idle
+    key=(ma.entry_id,'scope-output')
+    try:
+        assert transport.preflight(speaker.entity_id)==(mass,'scope-output')
+        # No nonexistent server-only protocol_parent_id is required by the client gate.
+        assert hasattr(player,'output_protocols') and hasattr(player,'active_output_protocol')
+        player.group_members=['scope-output','foreign-room']
+        assert collect_pairings(hass,options)['assistants'][satellite.entity_id]['status']=='manual_speaker_unsafe_or_unsupported'
+        assert source_permitted(hass,source_entry,source), 'Music grouping must not hide the native microphone'
+        async def audio(*args):effects.append('audio-url');return 'http://fixture.invalid/audio/'+'a'*32
+        adapter=AnnouncementAdapter(hass,options,audio,allowed_audio_origins=['http://fixture.invalid'],
+            execution_authorized=True,transport=transport)
+        composition.runtime.adapter=adapter
+        denied=await composition.runtime.async_start(device,Context(),request_id='grouped-destination')
+        assert denied['status']=='error' and not satellite.prompt.is_set() and not satellite.started.is_set()
+        assert await composition.runtime.handoff.get('grouped-destination') is None
+        assert not composition.backend.operations and not effects
+        refusal=await transport.play(speaker.entity_id,'http://fixture.invalid/body')
+        assert refusal['outcome']=='not_invoked' and not effects
+        player.group_members=[]
+        # A different-room quarantined destination cannot cause question or room focus.
+        other=ar.async_get(hass).async_create('Synthetic destination area')
+        dr.async_get(hass).async_update_device(speaker_device.id,area_id=other.id)
+        _UNCERTAIN.setdefault(hass,{})[key]=True
+        assert source_permitted(hass,source_entry,source)
+        assert (await composition.runtime.async_start(device,Context(),request_id='held-destination'))['status']=='error'
+        assert not satellite.prompt.is_set() and not effects
+        _UNCERTAIN[hass].pop(key)
+        dr.async_get(hass).async_update_device(speaker_device.id,area_id=area.id)
+        player.available=False
+        _UNCERTAIN[hass][key]=True
+        assert not source_permitted(hass,source_entry,source), 'Offline state must not erase a same-room audio hold'
+        _UNCERTAIN[hass].pop(key);player.available=True
+        async def regroup_after_idle(entity):
+            await old_wait(entity);player.synced_to='foreign-room'
+        composition.runtime._wait_idle=regroup_after_idle
+        pending=await composition.runtime.async_start(device,Context(),request_id='regroup-during-idle')
+        assert pending['status']=='queued'
+        await composition.runtime.sessions[device].task
+        assert (await composition.runtime.handoff.get('regroup-during-idle'))['phase']=='cancelled'
+        assert not satellite.prompt.is_set() and not satellite.started.is_set()
+        assert not composition.backend.operations and not composition.backend.journal.holds and not effects
+        composition.runtime._wait_idle=old_wait;player.synced_to=None
+        # Reservation and owned output locks each await after handoff admission.
+        # The final callback must reject after each interval without a stale hold.
+        reserve=composition.backend.journal.reserve
+        async def reserve_then_regroup(*args):
+            await reserve(*args);player.synced_to='foreign-room'
+        composition.backend.journal.reserve=reserve_then_regroup
+        try:
+            assert (await composition.runtime.async_start(device,Context(),request_id='regroup-during-reserve'))['status']=='queued'
+            await composition.runtime.sessions[device].task
+            assert (await composition.runtime.handoff.get('regroup-during-reserve'))['phase']=='cancelled'
+            assert not composition.backend.journal.holds and not satellite.prompt.is_set()
+        finally:composition.backend.journal.reserve=reserve
+        from custom_components.household_voice.native_alarm import get_native_alarm_backend
+        from custom_components.household_voice.echomuse_runtime import async_native_output_guard
+        native=get_native_alarm_backend(hass)
+        async def wait_for_question_task():
+            async with asyncio.timeout(5):
+                while not ((op:=composition.backend.operations.get(device)) and op.question is not None):
+                    await asyncio.sleep(0)
+            assert not op.started
+        for label,lock in [('native-lock',native.lock(device)),
+                           ('echo-lock',async_native_output_guard(hass,satellite.entity_id))]:
+            player.synced_to=None
+            async with lock:
+                request='regroup-during-'+label
+                assert (await composition.runtime.async_start(device,Context(),request_id=request))['status']=='queued'
+                task=composition.runtime.sessions[device].task
+                await wait_for_question_task();player.synced_to='foreign-room'
+            await task
+            assert (await composition.runtime.handoff.get(request))['phase']=='cancelled'
+            assert composition.runtime.latest[device]['reason']=='announcement_destination_no_longer_available'
+            assert not composition.backend.journal.holds and not composition.backend.operations
+            assert not satellite.prompt.is_set() and not satellite.started.is_set() and not effects
+        player.synced_to=None
+        # Actual pinned client deserializes the four public output records seen
+        # on ordinary MA Sonos players. Standard legacy routing stays intact;
+        # native capture never downgrades after a strict destination refusal.
+        linked=[dict(output_protocol_id='native',name='Native',protocol_domain='sonos',
+            is_native=True,available=True,derived_from=None)] + [dict(output_protocol_id='fixture-'+domain,
+            name=domain,protocol_domain=domain,is_native=False,available=True,derived_from=None)
+            for domain in ('airplay','sendspin','dlna')]
+        from music_assistant_models.player import OutputProtocol
+        player.output_protocols=[OutputProtocol.from_dict(row) for row in linked]
+        player.active_output_protocol='native'
+        legacy_transport=MAAnnouncementTransport(hass,{speaker.entity_id},transport_policy='legacy_ma')
+        for label,members,parent in [('solo',[],None),('leader',['scope-output','fixture-other'],None),
+                                     ('member',[],'fixture-other')]:
+            player.group_members=members;player.synced_to=parent;effects.clear()
+            denied=await composition.runtime.async_start(device,Context(),request_id='four-output-native-'+label)
+            assert denied['status']=='error' and not satellite.prompt.is_set() and not satellite.started.is_set()
+            assert await composition.runtime.handoff.get('four-output-native-'+label) is None
+            assert not effects and not composition.backend.operations
+            result=await legacy_transport.play(speaker.entity_id,'http://fixture.invalid/inert')
+            assert result['outcome']=='service_completed' and effects.count('provider')==1 and 'pause' not in effects
+        player.group_members=[];player.synced_to=None
+        # Strict provenance must survive an option-off adapter on the same outputs.
+        legacy_adapter=AnnouncementAdapter(hass,{**options,'native_recording_enabled':False},audio,
+            allowed_audio_origins=['http://fixture.invalid'],execution_authorized=True,
+            transport=legacy_transport,require_recording_provenance=True,focus_entry=entry)
+        effects.clear()
+        refused=await legacy_adapter.deliver({'kind':'speaker','target':speaker.entity_id},
+            {'id':'a'*32,'expires_at':10**12,'transcript':'Fixture','transport_policy':'verified_native'},now=1000)
+        assert refused['outcome']=='not_invoked' and not effects
+        assert legacy_adapter.transport.transport_policy=='legacy_ma'
+        assert legacy_adapter._strict_transport.transport_policy=='verified_native'
+        return {'source_available_with_invalid_music_pairing':True,'grouped_destination_no_question_pcm_pause_provider':True,
+            'cross_room_unknown_destination_no_question_or_focus':True,'offline_same_room_unknown_audio_hold_preserved':True,
+            'idle_wait_regroup_no_question_pcm_and_durable_cancel':True,
+            'journal_reserve_regroup_no_question_or_stale_hold':True,
+            'native_and_echo_lock_regroup_no_question_pcm_and_durable_cancel':True,
+            'actual_ma_client_model_version':version('music-assistant-models'),'actual_ma_client_version':version('music-assistant-client'),
+            'actual_client_model_native_output_preflight':True,
+            'four_protocol_solo_group_leader_member_legacy_provider_once':True,
+            'same_four_protocol_native_no_question_pcm_pause_provider':True,
+            'pending_native_recording_flag_off_keeps_strict_destination_policy':True}
+    finally:
+        composition.runtime.adapter=original;composition.runtime._wait_idle=old_wait
+        _UNCERTAIN.get(hass,{}).pop(key,None)
+        hass.states.async_remove(speaker.entity_id);registry.async_remove(speaker.entity_id)
+        hass.config_entries._entries.pop(ma.entry_id,None)
+
+
 
 async def run_worker_checks(hass,http,make_satellite,finish,pcm):
     from custom_components.household_voice import backup
@@ -51,7 +212,7 @@ async def run_worker_checks(hass,http,make_satellite,finish,pcm):
         assert await kwargs['before_dispatch']()
         delivered.append((target,recording['transcript']))
         return {'outcome':'service_completed','provider_completed':True}
-    adapter=SimpleNamespace(targets=lambda *args:targets,deliver=deliver)
+    adapter=SimpleNamespace(targets=lambda *args:targets,deliver=deliver,preflight_targets=lambda targets:None)
     composition.runtime.adapter=adapter
     # Stop only background delivery fixture tasks, retaining the real acquisition runtime.
     for task in composition.runtime._workers:task.cancel()
@@ -71,6 +232,7 @@ async def run_worker_checks(hass,http,make_satellite,finish,pcm):
         control=await http.ws_connect('/api/websocket');await authenticate(control,token)
         await control.send_json({'id':2,'type':'household_voice/recording_worker/connect','protocol_version':VERSION})
         assert (await control.receive_json())['success']
+        scope_proof=await check_source_destination_scope(hass,satellite,device,area,entry,composition)
         coordinator.echomuse_runtime.endpoint.failed=True
         assert (await composition.runtime.async_start(device,Context(),request_id='failed-dependency'))['status']=='error'
         assert not satellite.prompt.is_set() and not composition.backend.journal.holds
@@ -85,7 +247,7 @@ async def run_worker_checks(hass,http,make_satellite,finish,pcm):
         except ValueError:pass
         else:raise AssertionError('Native output hold bypassed')
         await native.write(native_journal.clear,device)
-        assert (await recover(hass,composition,satellite.entity_id,True))['cleared']
+        assert not (await recover(hass,composition,satellite.entity_id,True))['cleared'] # No native question was invoked.
         # Persisted EchoMuse unknown output is independently authoritative.
         hass.config.external_url='https://fixture.invalid'
         echo=coordinator.echomuse_runtime
@@ -101,7 +263,7 @@ async def run_worker_checks(hass,http,make_satellite,finish,pcm):
         except ValueError:pass
         else:raise AssertionError('EchoMuse unknown hold bypassed')
         await echo.endpoint._write(echo.endpoint.ledger.recover,key)
-        assert (await recover(hass,composition,satellite.entity_id,True))['cleared']
+        assert not (await recover(hass,composition,satellite.entity_id,True))['cleared'] # Admission refusal kept no extra mic hold.
         # Seed consumed tombstones to exercise the threshold, not 119 fake captures.
         composition.backend.book.records.update({str(i):SimpleNamespace(phase='consumed',
             grant={'operation_id':'prior-'+str(i),'source_device_id':'prior-source'}) for i in range(119)})
@@ -239,7 +401,7 @@ async def run_worker_checks(hass,http,make_satellite,finish,pcm):
         assert await hass.config_entries.async_unload(entry.entry_id)
         assert DATA_KEY not in hass.data
         client_closed=True
-        return {'persisted_native_and_echomuse_holds_block_question_and_recovery':True,
+        return {**scope_proof,'persisted_native_and_echomuse_holds_block_question_and_recovery':True,
             'actual_integration_setup_reload_backup_unload':True,'source_recovery_exact_and_confirmed':True,
             'native_disable_reload_cannot_bypass_unknown_source_hold':True,
             'whole_backup_failure_cannot_replace_owned_runtime':True,'recovery_denies_nonadmin_wrong_source_missing_confirmation':True,

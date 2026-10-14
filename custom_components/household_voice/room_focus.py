@@ -37,6 +37,10 @@ class RoomFocusState:
     maintenance_task: object = None
 
 
+class UserControlError(ValueError):
+    """Fixed public refusal for an explicit paired-speaker control."""
+
+
 def _configured_players(options):
     return {player for row in options.get('satellites', []) for player in row.get('duck_media_players', [])}
 
@@ -78,8 +82,8 @@ class _RoomPolicy:
 
 
 class RoomVolumeController:
-    def __init__(self, hass, state):
-        self.hass, self.state = hass, state
+    def __init__(self, hass, state, context=None):
+        self.hass, self.state, self.context = hass, state, context
 
     @staticmethod
     def normalize_volume(player, volume):
@@ -109,7 +113,7 @@ class RoomVolumeController:
             return 'rejected'
         try:
             await self.hass.services.async_call('media_player', 'volume_set',
-                {'entity_id':player, 'volume_level':target}, blocking=True, context=Context())
+                {'entity_id':player, 'volume_level':target}, blocking=True, context=self.context or Context())
             deadline = self.state.focus.clock()+2
             while self.state.focus.clock() < deadline:
                 after = self._state(player)
@@ -132,6 +136,87 @@ class AnnouncementRoomFocus:
         self.state = state
         self.executor = SatelliteExecutor(_RoomPolicy(state), controller, state.journal, {},
             enabled=True, execution_authorized=True, focus_state=state)
+
+    async def user_control(self, player, aliases, action):
+        """Serialize an explicit user control without stealing announcement output.
+
+        The callback may issue only its already-validated exact-player command.
+        This does not clear uncertain journal records or live audio protection.
+        """
+        aliases = set(aliases) | {player}
+        self.state.allowed_players.update(aliases)
+        async with self.state.lock:
+            await self.executor._ready()
+            observations = await self.executor._observe()
+            await self.executor._reconcile(observations)
+            if (self.state.failed or any(self.state.protected_players.get(p) for p in aliases)
+                    or any(p in self.state.blocked for p in aliases)
+                    or any(p in self.state.records and self.state.records[p]['status'] != 'confirmed' for p in aliases)):
+                raise UserControlError('room_audio_ownership_unavailable')
+            return await action()
+
+    async def user_volume(self, player, aliases, *, target=None, delta=None, before_dispatch):
+        """Journal a user baseline while retaining an existing wake duck lease.
+
+        Relative changes start at the owned baseline, never at the temporary
+        ducked level. An uncertain write remains quarantined in the same journal.
+        """
+        if ((target is None) == (delta is None)
+                or target is not None and (type(target) not in (int,float) or not math.isfinite(target) or not 0 <= target <= 1)
+                or delta is not None and (type(delta) not in (int,float) or not math.isfinite(delta) or not -1 <= delta <= 1)):
+            raise UserControlError('invalid_user_volume')
+        aliases = set(aliases) | {player}
+        async def change():
+            state, executor = self.state, self.executor
+            # Discovery canonically ducks MA when both MA/Sonos controls exist.
+            # An old alternate-control lease must finish before this MA write.
+            if any(p != player and (p in state.records or p in state.focus.players) for p in aliases):
+                raise UserControlError('volume_alias_ownership_unavailable')
+            observation = executor._observation(player, await executor._observe())
+            if observation is None:
+                raise UserControlError('fresh_volume_observation_required')
+            record = state.records.get(player)
+            owned = state.focus.players.get(player)
+            if bool(record) != bool(owned) or owned and not owned.leases:
+                raise UserControlError('room_audio_ownership_unavailable')
+            baseline = record['baseline'] if record else observation.volume
+            desired = max(0.0,min(1.0,baseline+delta)) if delta is not None else target
+            factor = 1.0
+            if record:
+                if (observation.generation != record['generation'] or abs(observation.volume-record['ducked']) > .00001
+                        or baseline <= 0):
+                    raise UserControlError('owned_volume_baseline_unavailable')
+                factor = record['ducked']/baseline
+                if not 0 < factor <= 1:
+                    raise UserControlError('owned_volume_baseline_unavailable')
+            effective = self.executor.controller.normalize_volume(player,desired*factor) if hasattr(self.executor.controller,'normalize_volume') else desired*factor
+            # Revalidate route/features before persisting an irreversible intent.
+            await before_dispatch(False)
+            fresh = executor._observation(player, await executor._observe())
+            if fresh is None or fresh.generation != observation.generation or abs(fresh.volume-observation.volume) > .00001:
+                raise UserControlError('volume_changed_before_control')
+            state.records[player]={'baseline':desired,'ducked':effective,'generation':fresh.generation,
+                'operation':secrets.token_hex(16),'status':'pending'}
+            await executor._save()
+            await before_dispatch(True)
+            outcome = await executor._set(player,effective,fresh,state.records[player]['operation'])
+            if not outcome['state_confirmed']:
+                return {'status':'error','reason':'media_control_result_uncertain','settings_confirmed':False}
+            if owned:
+                previous_factor = state.focus.factor
+                try:
+                    state.focus.factor=factor
+                    state.focus.manual_volume(player,desired)
+                    owned.ducked_volume=effective
+                finally:
+                    state.focus.factor=previous_factor
+                state.records[player]['status']='confirmed'
+            else:
+                del state.records[player]
+            await executor._save()
+            return {'status':'action_accepted','reason':'user_volume_verified','settings_confirmed':True,
+                    'volume_percent':round(desired*100),'temporary_duck_active':bool(owned)}
+        return await self.user_control(player,aliases,change)
 
     async def async_relinquished_players(self, players):
         """Identify fresh manual changes without writing any speaker volume.

@@ -12,6 +12,7 @@ import json
 import secrets
 from types import SimpleNamespace
 import wave
+from .native_recording_backend import QuestionAdmissionRejected
 
 
 def captured_answer(answer,source,nonce,captured_type):
@@ -39,13 +40,38 @@ class NativeHandoff:
 
     async def cancel(self,request):return await self.run_owned(self.authority.cancel,request)
 
-    async def execute(self,request,source):
+    async def execute(self,request,source,*,preflight_targets=None):
         row=await self.get(request)
         if row is None or row['phase']!='reserved' or row['cancel_requested']:
             raise ValueError('handoff_not_new')
         if self.resolve_source(source.device_id)!=source:raise ValueError('source_binding_changed')
+        try:
+            if preflight_targets is not None:preflight_targets(row['targets'])
+        except Exception:
+            await self.cancel(request)
+            await self.run_owned(self.authority.ledger.advance,request,'reserved','cancelled')
+            raise
         await self.run_owned(self.authority.ledger.advance,request,'reserved','capturing')
-        answer=await self.backend.record(source.device_id,source.entity_id,request)
+        try:
+            if preflight_targets is not None:preflight_targets(row['targets'])
+        except Exception:
+            # No backend/question/capture invocation has happened. Finalize only
+            # this reserved request; a failed durable write retains its evidence.
+            await self.cancel(request)
+            await self.run_owned(self.authority.ledger.advance,request,'capturing','cancelled')
+            raise
+        try:
+            if preflight_targets is None:
+                answer=await self.backend.record(source.device_id,source.entity_id,request)
+            else:
+                answer=await self.backend.record(source.device_id,source.entity_id,request,
+                    before_question=lambda:preflight_targets(row['targets']))
+        except QuestionAdmissionRejected:
+            # Backend has proven no native question invocation and released its
+            # own source reservation; do not leave an uncertain capture request.
+            await self.cancel(request)
+            await self.run_owned(self.authority.ledger.advance,request,'capturing','cancelled')
+            raise
         if answer.transcript.casefold().strip().rstrip('.!?') in ('cancel','cancel announcement','never mind','nevermind'):
             await self.cancel(request)
             await self.run_owned(self.authority.ledger.advance,request,'capturing','cancelled')
@@ -93,7 +119,13 @@ def composed_runtime_type(base):
     """Subclass only question acquisition; delivery/status workers stay upstream."""
     class NativeBroadcastRuntime(base):
         def __init__(self,*args,handoff,**kwargs):
+            kwargs['transport_policy']='verified_native'
             super().__init__(*args,**kwargs)
+            # A real injected adapter must honor the same native admission policy.
+            # Custom inert adapters are reserved for isolated fixtures.
+            from .announcement_adapter import AnnouncementAdapter
+            if isinstance(self.adapter,AnnouncementAdapter) and self.adapter.transport_policy!='verified_native':
+                raise ValueError('Native recording requires verified native announcement routing')
             self.handoff=handoff
             self._native_starting=set()
 
@@ -139,8 +171,13 @@ def composed_runtime_type(base):
             try:
                 await self._wait_idle(session.satellite)
                 if not self.enabled:raise ValueError('execution_disabled')
+                preflight=getattr(self.adapter,'preflight_targets',None)
+                if not callable(preflight):raise ValueError('announcement_destination_guard_required')
+                def current_targets(targets):
+                    if not self.enabled:raise ValueError('execution_disabled')
+                    preflight(targets)
                 session.phase='recording_and_queuing'
-                queued=await self.handoff.execute(session.request_id,session.source)
+                queued=await self.handoff.execute(session.request_id,session.source,preflight_targets=current_targets)
                 result={'status':'cancelled' if queued.get('cancelled') else 'queued',
                     'reason':'announcement_cancelled' if queued.get('cancelled') else 'recording_queued_for_delivery',
                     'broadcast_id':queued.get('broadcast_id')}
@@ -151,6 +188,8 @@ def composed_runtime_type(base):
                 except asyncio.CancelledError:await asyncio.shield(operation)
                 result={'status':'cancelled','reason':'pending_delivery_cancelled_accepted_audio_may_continue'}
                 raise
+            except QuestionAdmissionRejected:
+                result={'status':'error','reason':'announcement_destination_no_longer_available'}
             except Exception:pass
             finally:
                 result.update(audio_delivery_confirmed=False,phone_delivery_confirmed=False)

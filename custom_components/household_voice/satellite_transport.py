@@ -3,11 +3,19 @@
 HA 2026.10.1 MusicAssistantPlayer._async_handle_play_announcement delegates to
 entry.runtime_data.mass.players.play_announcement. This same supported client API
 is used here to retain its full await rather than infer completion from HA state.
-MA server 57ba86c28db5b4aa069e3e61c8f9778ef8da1744 awaits its announcement workflow;
+MA 2.10.6 c24866405bd2068c25a60e1014e5ef8c3f6445bb awaits its announcement workflow;
 Sonos uses calculated clip duration, not acoustic feedback. provider_completed
 therefore means the MA workflow returned. delivery_confirmed is ALWAYS False.
 Cancelling this coroutine does not prove a remote clip stopped. MA exposes no
 announcement-ID-specific stop through this API; never substitute generic stop.
+
+Preflight uses public client Player/OutputProtocol fields (client1.5.1 models1.1.189),
+not server-only properties. verified_native requires a sole available native
+output on an ungrouped physical player; aggregated features alone cannot prove
+native support. legacy_ma preserves standard MA group/linked/fallback routing,
+without an exact physical-room scope guarantee. The policy is fixed at creation.
+Spoken queue IDs must match the exact native destination. These repeated cached
+checks are not atomic server topology/queue ownership or acoustic completion.
 """
 from __future__ import annotations
 
@@ -17,10 +25,12 @@ import weakref
 
 from homeassistant.helpers import entity_registry as er
 from homeassistant.core import callback
+from .announcement_adapter import transport_policy_from_options,validate_transport_policy
 
 _LOCKS = weakref.WeakKeyDictionary()
 _SPOKEN_GUARDS = weakref.WeakKeyDictionary()
 _UNCERTAIN = weakref.WeakKeyDictionary()
+
 
 
 def _player_key(hass,player_id,native_id):
@@ -154,13 +164,17 @@ class AudioTransportError(ValueError):
 
 
 class MAAnnouncementTransport:
-    def __init__(self, hass, allowed_players, *, timeout=125, spoken_media_policy='pause_and_resume'):
+    def __init__(self, hass, allowed_players, *, timeout=125, spoken_media_policy='pause_and_resume',transport_policy='verified_native'):
         self.hass = hass
         self.allowed_players = frozenset(allowed_players)
         self.timeout = timeout
+        self._transport_policy=validate_transport_policy(transport_policy)
         if spoken_media_policy not in {'provider_default','pause_and_hold','pause_and_resume'}:
             raise AudioTransportError('Invalid spoken-media protection policy')
         self.spoken_media_policy = spoken_media_policy
+
+    @property
+    def transport_policy(self):return self._transport_policy
 
     @staticmethod
     def _value(value):
@@ -168,6 +182,7 @@ class MAAnnouncementTransport:
 
     async def _protect_spoken(self, mass, native_id, player_id, guards):
         """Pause known spoken media, preserving a best-effort intervention guard."""
+        self._same_destination(player_id,mass,native_id)
         if self.spoken_media_policy == 'provider_default':
             return 'provider_default'
         queues = getattr(mass,'player_queues',None)
@@ -183,6 +198,8 @@ class MAAnnouncementTransport:
         kinds = {self._value(getattr(item,'media_type',None)), self._value(getattr(origin,'media_type',None))}
         if not kinds.intersection({'audiobook','podcast','podcast_episode'}):
             return 'non_spoken_queue'
+        if queue.queue_id!=native_id:
+            raise AudioTransportError('Spoken-media queue is not owned by the announcement destination')
         identity = (queue.queue_id,item.queue_item_id)
         guard=_SpokenGuard(self.hass,mass,player_id,native_id,identity[0])
         guards.append(guard)
@@ -190,9 +207,10 @@ class MAAnnouncementTransport:
         # Re-resolve immediately before the unconditional public queue pause.
         current = await queues.get_active_queue(native_id)
         if (guard.invalid or current is None or current.current_item is None or
-                (current.queue_id,current.current_item.queue_item_id)!=identity or
+                current.queue_id!=native_id or (current.queue_id,current.current_item.queue_item_id)!=identity or
                 self._value(current.state)!='playing'):
             raise AudioTransportError('Spoken-media queue changed before pause')
+        self._same_destination(player_id,mass,native_id)
         await queues.pause(identity[0])
         current = await queues.get_active_queue(native_id)
         if (current is None or current.current_item is None or
@@ -205,6 +223,7 @@ class MAAnnouncementTransport:
         return 'paused_explicit_resume_required'
 
     async def _resume_spoken(self,mass,native_id,guard,before_dispatch):
+        if guard.queue_id!=native_id:return 'resume_skipped_queue_owner_changed'
         if guard.invalid or not guard.observed or guard.baseline is None:
             return 'resume_skipped_intervention_or_unavailable_observation'
         current=await mass.player_queues.get_active_queue(native_id)
@@ -216,6 +235,8 @@ class MAAnnouncementTransport:
         current=await mass.player_queues.get_active_queue(native_id)
         if guard.invalid or current is None or guard.snapshot(current)!=guard.baseline:
             return 'resume_skipped_playback_changed'
+        try:self._same_destination(guard.entity_id,mass,native_id)
+        except AudioTransportError:return 'resume_skipped_announcement_scope_changed'
         # Public MA resume is unconditional: checks are best-effort, never CAS.
         await mass.player_queues.resume(guard.queue_id)
         return 'resume_service_completed'
@@ -235,6 +256,58 @@ class MAAnnouncementTransport:
             raise AudioTransportError('Music Assistant speaker is unavailable')
         return mass, entity.unique_id
 
+    def preflight(self,entity_id):
+        """Common identity/availability/holds, then immutable route policy.
+
+        HA's ANNOUNCE and MA's final feature set also cover linked/fallback paths.
+        verified_native requires the complete published output list to contain
+        only native, so feature support cannot come solely from a linked protocol.
+        legacy_ma deliberately retains the existing standard MA route.
+        This is fresh client validation, not server-side topology CAS.
+        """
+        mass,native=self.resolve(entity_id)
+        player=mass.players.get(native)
+        if getattr(player,'player_id',None)!=native:
+            raise AudioTransportError('Announcement destination identity is unverified')
+        state=self.hass.states.get(entity_id)
+        if state is None or state.state in ('unknown','unavailable'):
+            raise AudioTransportError('Announcement destination is unavailable')
+        if _player_key(self.hass,entity_id,native) in _UNCERTAIN.get(self.hass,{}):
+            raise AudioTransportError('Announcement output requires operator recovery')
+        if self.transport_policy=='legacy_ma':
+            # Preserve standard MA routing, including its group/linked/fallback
+            # behavior. This is not an exact physical-room scope guarantee.
+            return mass,native
+        if (getattr(player,'player_id',None)!=native or self._value(getattr(player,'type',None))!='player'
+                or any(not hasattr(player,key) for key in ('group_members','synced_to','active_group','supported_features'))
+                or player.synced_to is not None or player.active_group is not None):
+            raise AudioTransportError('Announcement destination scope is unverified or grouped')
+        members=player.group_members
+        features=player.supported_features
+        if (not isinstance(members,(list,tuple)) or any(member!=native for member in members)
+                or not isinstance(features,(set,frozenset,list,tuple))
+                or 'play_announcement' not in {self._value(feature) for feature in features}):
+            raise AudioTransportError('Announcement destination has no verified isolated native clip')
+        outputs=getattr(player,'output_protocols',None)
+        if (not isinstance(outputs,(list,tuple)) or len(outputs)!=1
+                or not hasattr(player,'active_output_protocol')
+                or player.active_output_protocol not in (None,'native')):
+            raise AudioTransportError('Announcement output protocol is ambiguous or unsupported')
+        output=outputs[0]
+        if (getattr(output,'output_protocol_id',None)!='native' or getattr(output,'is_native',None) is not True
+                or getattr(output,'available',None) is not True or not hasattr(output,'derived_from')
+                or output.derived_from is not None):
+            raise AudioTransportError('Announcement native output is unverified')
+        visible=(state.attributes or {}).get('group_members',[])
+        if not isinstance(visible,(list,tuple)) or any(member!=entity_id for member in visible):
+            raise AudioTransportError('Announcement destination scope is grouped or unknown')
+        return mass,native
+
+    def _same_destination(self,entity_id,mass,native):
+        current,current_id=self.preflight(entity_id)
+        if current is not mass or current_id!=native:
+            raise AudioTransportError('Music Assistant routing changed')
+
     async def play(self, player_id, url, *, volume=.5, chime=False, before_dispatch=None):
         if (not isinstance(url, str) or len(url)>4096 or not url.startswith(('http://','https://'))
                 or any(ord(c)<33 for c in url)):
@@ -244,7 +317,10 @@ class MAAnnouncementTransport:
         # Shared across reply, broadcast and alarm transport instances. Waiting
         # consumes the same bounded deadline; stale work rechecks its lease only
         # after obtaining the lock, immediately before the provider invocation.
-        mass, native_id = self.resolve(player_id)
+        try:mass, native_id = self.preflight(player_id)
+        except AudioTransportError:
+            return {'outcome':'not_invoked','service_accepted':False,'provider_completed':False,
+                    'delivery_confirmed':False,'reason':'announcement_destination_unsafe_unavailable_or_held'}
         key = _player_key(self.hass,player_id,native_id)
         lock = _LOCKS.setdefault(self.hass, {}).setdefault(key, asyncio.Lock())
         quarantines=_UNCERTAIN.setdefault(self.hass,{})
@@ -259,12 +335,11 @@ class MAAnnouncementTransport:
                         return {'outcome':'not_invoked','service_accepted':False,
                                 'provider_completed':False,'delivery_confirmed':False,
                                 'reason':'previous_announcement_outcome_unknown_operator_recovery_required'}
-                    current_mass, current_id = self.resolve(player_id)
-                    if current_mass is not mass or current_id != native_id:
-                        raise AudioTransportError('Music Assistant routing changed')
+                    self._same_destination(player_id,mass,native_id)
                     if before_dispatch is not None and await before_dispatch() is False:
                         return {'outcome':'not_invoked','service_accepted':False,
                                 'provider_completed':False,'delivery_confirmed':False}
+                    self._same_destination(player_id,mass,native_id)
                     spoken = await self._protect_spoken(mass,native_id,player_id,guards)
                     # Queue inspection/pause may await remote state. Recheck the
                     # announcement lease; if it expired, leave any book paused.
@@ -272,6 +347,7 @@ class MAAnnouncementTransport:
                         return {'outcome':'not_invoked','service_accepted':False,
                                 'provider_completed':False,'delivery_confirmed':False,
                                 'spoken_media':spoken}
+                    self._same_destination(player_id,mass,native_id)
                     invoked = True
                     await mass.players.play_announcement(native_id, url, pre_announce=chime,
                                                          volume_level=round(volume*100))

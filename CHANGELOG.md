@@ -1,5 +1,39 @@
 # Changelog
 
+## 0.3.15
+
+Valid native microphones no longer depend on their music speaker pairing.
+Recording still respects persisted microphone/native/room-audio uncertainty.
+Frozen announcement destinations are checked before the follow-up question,
+capture and room focus, and again before transport actions. The native recording
+preview requires a verified isolated native destination, so grouped, linked,
+multiple-output and unknown routes are refused in that mode. Existing legacy
+configurations retain standard Music Assistant routing, including existing
+physical speaker groups. Neither mode adds group changes or automatic retries.
+Durable capture receipts keep admitted native recordings under the stricter
+policy even after native recording is disabled; unclear provenance is refused.
+Paired MA alarm clips use the configured mode's destination checks before ducking.
+
+Spoken-content pause/resume requires the exact destination's queue. Repeated
+client checks do not provide atomic server topology ownership, and provider
+completion remains a workflow result rather than acoustic confirmation.
+
+Current-playback tools suppress retained song/artist/album metadata while idle
+or unknown, avoiding presenting the last item as currently playing. Paused
+content remains visible with a non-playing state. No playback is stopped or
+cleared by this presentation change.
+
+A paired-speaker media-control tool handles next/previous music tracks, volume
+and mute. It resolves the listening assistant's preferred MA output rather than
+using a generic area-wide intent. Volume changes made during wake-word ducking
+update the journaled normal baseline while retaining the active duck lease.
+Spoken/unknown skips, grouped mutations, protected announcement outputs and
+uncertain volume ownership remain refused. These controls require updating the
+shared prompt and curating competing native tools before activation.
+Final admission rechecks raw player topology, the pinned registry/provider
+identity, and retained announcement holds after awaited journal writes. A proven
+refusal preserves a pending journal without dispatching the requested mutation.
+
 ## 0.3.14
 
 Opt-in native recorded-announcement backend reuses the existing recording store,

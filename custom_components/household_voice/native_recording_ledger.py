@@ -14,6 +14,38 @@ import base64
 from pathlib import Path
 
 
+def recording_transport_policy(scheduler_path,capture_path,recording_id):
+    """Read durable origin under the existing embedded authority's state lock.
+
+    No metadata/schema migration. Native handoff associations and capture nonce
+    receipts predate this policy. Absence of a native row alone proves nothing:
+    only one completed, non-native capture receipt may authorize legacy routing.
+    """
+    if not isinstance(recording_id,str) or not re.fullmatch('[a-f0-9]{32}',recording_id):
+        raise ValueError('recording_origin_unverified')
+    scheduler=captures=None
+    try:
+        scheduler=sqlite3.connect(Path(scheduler_path).resolve().as_uri()+'?mode=ro',uri=True)
+        native=scheduler.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='native_capture_handoffs'").fetchone()
+        if native and scheduler.execute('SELECT 1 FROM native_capture_handoffs WHERE recording_id=? LIMIT 1',(recording_id,)).fetchone():
+            return 'verified_native'
+        captures=sqlite3.connect(Path(capture_path).resolve().as_uri()+'?mode=ro',uri=True)
+        rows=captures.execute('SELECT nonce,status FROM capture_uploads WHERE recording_id=? LIMIT 3',(recording_id,)).fetchall()
+        if any(isinstance(nonce,str) and nonce.startswith('native_') for nonce,_ in rows):
+            return 'verified_native'
+        if native and any(scheduler.execute('SELECT 1 FROM native_capture_handoffs WHERE nonce=? LIMIT 1',(nonce,)).fetchone() for nonce,_ in rows):
+            return 'verified_native'
+        if (len(rows)==1 and isinstance(rows[0][0],str)
+                and re.fullmatch('[A-Za-z0-9_-]{16,128}',rows[0][0]) and rows[0][1]=='complete'):
+            return 'legacy_ma'
+        raise ValueError('recording_origin_unverified')
+    except (OSError,sqlite3.Error,TypeError):
+        raise ValueError('recording_origin_unverified') from None
+    finally:
+        if captures is not None:captures.close()
+        if scheduler is not None:scheduler.close()
+
+
 class HandoffLedger:
     def __init__(self,path,clock=time.time):
         self.path=str(path)

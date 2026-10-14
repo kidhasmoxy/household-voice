@@ -132,11 +132,15 @@ class EchoMuseRuntime:
             focus=EchoMuseRoomFocus(AnnouncementRoomFocus(state,RoomVolumeController(hass,state)))
         if transport is None:
             from .satellite_transport import MAAnnouncementTransport
+            from .announcement_adapter import transport_policy_from_options
+            transport_options=dict(entry.options)
+            transport_policy=transport_policy_from_options(transport_options)
+            spoken_policy=transport_options.get('spoken_media_policy','pause_and_resume')
             # The actual allowlist is derived for each call, never payload data.
             class Transport:
                 async def play(inner, player, url, **kwargs):
-                    policy=entry.options.get('spoken_media_policy','pause_and_resume')
-                    return await MAAnnouncementTransport(hass,{player},timeout=60,spoken_media_policy=policy).play(player,url,**kwargs)
+                    return await MAAnnouncementTransport(hass,{player},timeout=60,spoken_media_policy=spoken_policy,
+                        transport_policy=transport_policy).play(player,url,**kwargs)
             transport=Transport()
         origins=set()
         for value in (getattr(hass.config,'internal_url',None),getattr(hass.config,'external_url',None)):

@@ -58,7 +58,7 @@ def _result(status, reason, **fields):
 
 class BroadcastRuntime:
     def __init__(self, hass, entry, client, *, execution_authorized=False,
-                 binding_resolver=None, adapter=None, clock=time.time):
+                 binding_resolver=None, adapter=None, clock=time.time,transport_policy=None):
         self.hass, self.entry, self.client = hass, entry, client
         self.options = deepcopy(dict(entry.options))
         self.execution_authorized = execution_authorized is True
@@ -66,6 +66,7 @@ class BroadcastRuntime:
         self._binding_resolver = binding_resolver or self._resolve_binding
         parsed = urlsplit(client.url)
         self.adapter = adapter or AnnouncementAdapter(hass, self.options, client.resolve_recording,
+            transport_policy=transport_policy,require_recording_provenance=hasattr(client,'_authority'),
             allowed_audio_origins=[f'{parsed.scheme}://{parsed.netloc}'],
             allowed_audio_path_prefix=parsed.path.rstrip('/')+'/audio/',
             execution_authorized=self.execution_authorized, focus_entry=entry)

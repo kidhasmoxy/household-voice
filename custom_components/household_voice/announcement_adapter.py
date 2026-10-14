@@ -16,11 +16,25 @@ import re
 import time
 from urllib.parse import urlsplit
 
+TRANSPORT_POLICIES=frozenset(('legacy_ma','verified_native'))
+
+def validate_transport_policy(value):
+    if not isinstance(value,str) or value not in TRANSPORT_POLICIES:
+        raise ValueError('Invalid internal announcement transport policy')
+    return value
+
+def transport_policy_from_options(options):
+    """Entry-backed immutable option snapshots only; not a new user setting."""
+    flag=options.get('native_recording_enabled',False)
+    if type(flag) is not bool:raise ValueError('Invalid native recording setting')
+    return 'verified_native' if flag else 'legacy_ma'
+
 
 class AnnouncementAdapter:
     def __init__(self, hass, options, resolve_audio, *, allowed_audio_origins,
                  execution_authorized=False, presence_freshness=300, transport=None,
-                 allowed_audio_path_prefix='/audio/', focus_entry=None):
+                 allowed_audio_path_prefix='/audio/', focus_entry=None,transport_policy=None,
+                 require_recording_provenance=False):
         self.hass, self.options, self.resolve_audio = hass, deepcopy(options), resolve_audio
         self.allowed_audio_origins = frozenset(allowed_audio_origins)
         if not re.fullmatch(r'/(?:[A-Za-z0-9_-]+/)*audio/', allowed_audio_path_prefix):
@@ -35,6 +49,9 @@ class AnnouncementAdapter:
             raise ValueError('Invalid phone presence policy')
         self.transport = transport
         self.focus_entry = focus_entry
+        self.transport_policy=validate_transport_policy(transport_policy if transport_policy is not None else transport_policy_from_options(self.options))
+        self.require_recording_provenance=require_recording_provenance is True
+        self._strict_transport=None
 
     def targets(self, target_rooms=None, include_home_phones=True):
         """Rooms come from a request; entities/services only from saved options."""
@@ -64,7 +81,50 @@ class AnnouncementAdapter:
                     result.append({'kind':'phone','target':phone['notify_service'],'device_tracker':phone['device_tracker']})
         # Exact duplicate endpoints only; physical MA/Sonos equivalence must be
         # reviewed administratively and is never guessed from entity names.
-        return list({(x['kind'],x['target']):x for x in result}.values())
+        result=list({(x['kind'],x['target']):x for x in result}.values())
+        if (self.execution_authorized and self.options.get('live_actions_enabled') is True
+                and self.options.get('announcements_enabled') is True):
+            self.preflight_targets(result)
+        return result
+
+    def preflight_targets(self,targets):
+        """Revalidate the frozen destination list; never expand or replace it."""
+        if not isinstance(targets,list) or not targets:raise ValueError('Announcement targets are unverified')
+        for target in targets:
+            if not isinstance(target,dict) or target.get('kind') not in ('speaker','phone'):
+                raise ValueError('Announcement targets are unverified')
+            if target['kind']=='speaker':self._preflight(target['target'])
+
+    def _transport_for(self,policy):
+        validate_transport_policy(policy)
+        allowed=set(self.options.get('default_announcement_speakers',[]))
+        allowed.update(row['tts_media_player'] for row in self.options.get('satellites',[]))
+        allowed.update(row['music_player'] for row in self.options.get('media_rooms',[]))
+        def build(mode):
+            from .satellite_transport import MAAnnouncementTransport
+            return MAAnnouncementTransport(self.hass,allowed,timeout=60,
+                spoken_media_policy=self.options.get('spoken_media_policy','pause_and_resume'),transport_policy=mode)
+        if self.transport is None:self.transport=build(self.transport_policy)
+        actual=getattr(self.transport,'transport_policy',self.transport_policy)
+        validate_transport_policy(actual)
+        if policy=='verified_native' and actual!='verified_native':
+            if self._strict_transport is None:self._strict_transport=build('verified_native')
+            return self._strict_transport
+        return self.transport
+
+    def _recording_policy(self,recording):
+        provenance=recording.get('transport_policy')
+        if provenance is None:
+            if self.require_recording_provenance:raise ValueError('Recording origin is unverified')
+            return self.transport_policy # Trusted legacy remote/injected contract; native cannot run remotely.
+        validate_transport_policy(provenance)
+        return 'verified_native' if 'verified_native' in (self.transport_policy,provenance) else 'legacy_ma'
+
+    def _preflight(self,player,policy=None):
+        """Destination authorization before a question or any queue/provider action."""
+        preflight=getattr(self._transport_for(policy or self.transport_policy),'preflight',None)
+        if not callable(preflight):raise ValueError('Announcement destination scope is unverified')
+        return preflight(player)
 
     def _home_now(self, tracker, now):
         state=self.hass.states.get(tracker)
@@ -106,6 +166,13 @@ class AnnouncementAdapter:
                 and self.options.get('announcements_enabled') is True):
             return {'outcome':'dry_run','service_accepted':False,'kind':target['kind'],'target':target['target']}
         if target['kind']=='speaker':
+            try:
+                policy=self._recording_policy(recording)
+                delivery_transport=self._transport_for(policy)
+                self._preflight(target['target'],policy)
+            except ValueError:
+                return {'outcome':'not_invoked','service_accepted':False,'provider_completed':False,
+                    'delivery_confirmed':False,'reason':'announcement_destination_unsafe_unavailable_or_held'}
             # URL is obtained internally at dispatch, never accepted as model input
             # and never included in this method's outcome or diagnostic messages.
             try:
@@ -156,15 +223,12 @@ class AnnouncementAdapter:
             return {'outcome':'skipped_not_home_or_stale','service_accepted':False}
         try:
             if target['kind']=='speaker':
-                if self.transport is None:
-                    from .satellite_transport import MAAnnouncementTransport
-                    self.transport=MAAnnouncementTransport(self.hass,{item['target'] for item in configured if item['kind']=='speaker'},timeout=60,
-                        spoken_media_policy=self.options.get('spoken_media_policy','pause_and_resume'))
+                self._preflight(target['target'],policy)
                 if self.focus_entry is not None:
                     from .room_focus import announcement_room_focus
                     async with announcement_room_focus(self.hass, self.focus_entry, target['target']):
-                        return await self.transport.play(target['target'],url,volume=volume,chime=chime=='default',before_dispatch=before_dispatch)
-                return await self.transport.play(target['target'],url,volume=volume,chime=chime=='default',before_dispatch=before_dispatch)
+                        return await delivery_transport.play(target['target'],url,volume=volume,chime=chime=='default',before_dispatch=before_dispatch)
+                return await delivery_transport.play(target['target'],url,volume=volume,chime=chime=='default',before_dispatch=before_dispatch)
             await self.hass.services.async_call(domain,service,data,blocking=True)
         except Exception:
             # A transport failure can happen after HA accepted the call. Do not

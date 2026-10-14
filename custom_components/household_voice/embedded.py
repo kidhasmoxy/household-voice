@@ -156,7 +156,16 @@ class _Authority:
         elif path.startswith('/v1/ring/') and method == 'POST':
             return self.runtime.dispatch(path.rsplit('/', 1)[-1], payload)
         elif path.startswith('/v1/broadcasts/') and method == 'POST':
-            return self.broadcasts.dispatch(path.rsplit('/', 1)[-1], payload)
+            result=self.broadcasts.dispatch(path.rsplit('/', 1)[-1], payload)
+            if path=='/v1/broadcasts/pull' and (job:=result.get('delivery')) is not None:
+                from .native_recording_ledger import recording_transport_policy
+                # Same existing state lock/executor as claim, enqueue and cancel.
+                # The returned marker is trusted authority data, never model input.
+                try:
+                    policy=recording_transport_policy(self.scheduler.path,self.captures.path,job['recording']['id'])
+                except ValueError:policy='unverified'
+                job['recording']={**job['recording'],'transport_policy':policy}
+            return result
         else:
             raise self.api_error('Unknown coordinator operation', 404)
         result['ha_connected'] = True
