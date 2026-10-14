@@ -31,13 +31,19 @@ from .policy.schedule_tools import ScheduleContext, ScheduleRecord, ScheduleRequ
 
 @callback
 def async_get_tools(hass, llm_context, api_id):
-    """Do not inject named Household Voice APIs into HA's default Assist API.
-
-    HA discovers this module as an LLM platform because it is named llm.py.
-    Our tools are registered separately as explicitly selectable APIs below.
-    None is the platform contract for contributing no tools or prompt.
-    """
-    return None
+    """Opt-in native Assist contribution; legacy APIs retain their own state."""
+    if api_id != 'assist':
+        return None
+    get_apis = getattr(llm, 'async_get_apis', None)
+    if get_apis is None:
+        return None
+    apis = [api for api in get_apis(hass)
+            if getattr(getattr(api, 'entry', None), 'options', {}).get('assist_tools_enabled') is True
+            and getattr(api.entry, 'disabled_by', None) is None]
+    if not apis:
+        return None
+    from .assist_tools import build_assist_tools
+    return build_assist_tools(hass, llm_context, apis)
 
 
 INTEGRATION = 'household_voice'

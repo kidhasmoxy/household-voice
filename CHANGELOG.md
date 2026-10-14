@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.3.14
+
+Development preview of native Assist tool contribution. An off-by-default setting
+contributes capability tools through Home Assistant's standard LLM platform,
+reusing the existing API objects, executors, caches and locks. A read-only source
+context tool resolves the requesting device from HA's registry, and sourced family
+knowledge becomes a tool. No conversation agent or router is added.
+
+Media play tools expose explicit exact or broad selection, so genre requests can
+use the native agent's tool arguments without relying on transcript parsing.
+Named albums, soundtrack shuffle and spoken-content constraints remain explicit.
+Legacy router behavior is retained during staging. This preview does not migrate
+pipelines, expose a finished activation UI, remove duplicate selected APIs, or
+claim one-pipeline original recording and universal stop parity.
+
 ## 0.3.13
 
 Removes integration-added media response, lookup and dispatch deadlines. Slow

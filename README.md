@@ -5,7 +5,7 @@ playback, recorded announcements, and room speaker configuration. The durable
 coordinator runs inside Home Assistant. No companion app, container, cloud
 account, or paid subscription is required for the core features.
 
-This is the **0.3.13 prerelease**. Automated tests cover implementation
+This is the **0.3.14 prerelease**. Automated tests cover implementation
 contracts; actual microphone capture, speaker delivery, phone presence, firmware,
 and audiobook resume require validation on your equipment. Keep an independent
 alarm available until your installation passes those tests. Home Assistant must
@@ -53,6 +53,16 @@ device package and can be pinned to a reviewed source commit. It is a separate
 firmware update, not part of a HACS installation.
 
 ## Features and configuration
+
+Development preview: native Assist contribution is implemented behind the
+off-by-default `assist_tools_enabled` setting. It reuses existing Household Voice
+capabilities without a custom conversation agent, and adds source-context and
+sourced family-knowledge tools. Activation UI and full migration gates remain
+unfinished. Keep the existing beta configuration until schedule ambiguity,
+ringing-first stop, duplicate native timer tools, automatic backend area mapping
+and source-bound original recording have passed. Enabling the preview must also
+remove legacy API selections from the agent; HA's contribution callback does not
+know what other APIs that agent selected. No automatic cutover occurs.
 
 - Durable, shared timers and recurring or one-shot alarms with revision-checked
   commands, restart recovery, bounded ringing, and an HA management page.
