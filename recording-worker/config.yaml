@@ -1,5 +1,5 @@
 name: Household Voice Recording Worker (candidate)
-version: 0.0.3
+version: 0.0.4
 slug: household_voice_recording_worker
 description: Optional native capture transport; disabled until backend approval.
 arch:

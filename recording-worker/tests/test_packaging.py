@@ -25,7 +25,7 @@ class PublicExportTests(unittest.TestCase):
             self.assertEqual(manifest['file_count'],len(recipe.PUBLIC_FILES)+4)
             self.assertFalse(manifest['publication_performed']);self.assertFalse(manifest['runtime_fixture_included'])
             env=dict(os.environ);env.pop('HOUSEHOLD_VOICE_RECORDING_VALIDATOR',None)
-            result=subprocess.run([sys.executable,'-m','unittest','discover','-s','tests','-p','test_[cw]*.py','-v'],
+            result=subprocess.run([sys.executable,'-m','unittest','discover','-s','tests','-p','test_[bcw]*.py','-v'],
                 cwd=output/'recording-worker',env=env,text=True,encoding='utf-8',capture_output=True,timeout=30)
             self.assertEqual(result.returncode,0,result.stdout+result.stderr)
     def test_existing_destination_is_preserved(self):

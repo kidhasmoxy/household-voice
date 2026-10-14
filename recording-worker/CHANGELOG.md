@@ -1,3 +1,11 @@
+# 0.0.4 — unpublished candidate
+
+- Fixes startup with Supervisor's root-owned `0600` options file, which the previous readable-file fixture did not model.
+- Adds a bounded strict-bool configuration bootstrap using isolated/no-site Python; drops supplementary groups, GID/UID and capabilities and sets no-new-privileges before networking imports.
+- Fails closed on invalid configuration or failed privilege transition. Options permissions, protocol v2, capture transport and app permissions are unchanged.
+- Adds 11 focused bootstrap tests and built-image proof of root-private configuration, the old nonroot denial, minimal startup capabilities and unprivileged networking imports.
+- Preserves v0.0.3 image evidence and updates the build-only workflow. No publication, installed-app upgrade or microphone work occurs in this build.
+
 # 0.0.3 — unpublished candidate
 
 - Protocol v2 adds successful-disposal rotation and unload/backup unavailability events, each bound to the current connection.

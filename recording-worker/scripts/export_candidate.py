@@ -14,8 +14,9 @@ ROOT=Path(__file__).resolve().parents[1]
 PUBLIC_FILES=('Dockerfile','.dockerignore','.gitattributes','config.yaml','requirements.txt','LICENSE',
     'NOTICE.md','README.md','DOCS.md','BUILDING.md','CHANGELOG.md',
     'recording_worker/__init__.py','recording_worker/__main__.py',
+    'recording_worker/bootstrap.py',
     'recording_worker/client.py','recording_worker/protocol.py',
-    'tests/test_worker.py','tests/test_control.py','tests/validator_source.py','tests/test_packaging.py',
+    'tests/test_worker.py','tests/test_control.py','tests/test_bootstrap.py','tests/validator_source.py','tests/test_packaging.py',
     'scripts/export_candidate.py','ci/recording-worker-check.yml','tests/evidence/image-build.json')
 
 def export(destination,validator_source,root=ROOT):

@@ -191,9 +191,13 @@ async def supervise(session,token,*,url=SUPERVISOR_WEBSOCKET):
         delay=min(BACKOFF_MAX,delay*2)
 
 
-async def run():
-    options=json.loads(Path('/data/options.json').read_text(encoding='utf-8'))
-    if options.get('enabled') is not True:
+async def run(enabled=None):
+    if enabled is None:
+        options=json.loads(Path('/data/options.json').read_text(encoding='utf-8'))
+        enabled=options.get('enabled') is True
+    elif type(enabled) is not bool:
+        raise ValueError('invalid_startup_config')
+    if enabled is not True:
         status('disabled');return
     token=os.environ.get('SUPERVISOR_TOKEN')
     if not token:
@@ -202,8 +206,8 @@ async def run():
         await supervise(session,token,url=SUPERVISOR_WEBSOCKET)
 
 
-def main():
-    try:asyncio.run(run())
+def main(enabled=None):
+    try:asyncio.run(run(enabled=enabled))
     except KeyboardInterrupt:status('stopped')
     except Exception:status('worker_unavailable')
 

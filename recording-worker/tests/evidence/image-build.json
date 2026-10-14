@@ -1,20 +1,21 @@
 {
-  "image_manifest_digest": "sha256:12263249881c820596ea8bb218236ce47440ddd16b79124de2b8375a42e69416",
-  "image_config_digest": "sha256:3db71a0e0cc6444272b815da04882810a98762146e1c32b2040b9226f019ed1b",
-  "image_tar_sha256": "7fcd622c38a34190775559448bdbf6f26e47fb6b7a318401a317eaf2796b5f06",
-  "image_tar_bytes": 28931584,
-  "oci_archive_sha256": "0958a5153b9f16b115c83d2b7b637eae2059dabe624ed21099c94e93ef27f49b",
+  "image_manifest_digest": "sha256:8c89c2f3b76085f77054fca8071d00cf9f3732abad6a522411d8ff32fc9a89eb",
+  "image_config_digest": "sha256:cab8639da6d486719d74f7af64b2eeeac549a54d2cb0506d3ded8dd2d17f55d3",
+  "image_tar_sha256": "38a00748623a2dd72e747f7e7a27b2f9f8b6661634fb578ab801bb56b617224a",
+  "image_tar_bytes": 28933632,
+  "oci_archive_sha256": "18927aede4ccac96099cfc6bce6f812ee360e2e2bfb24a4e1f0ca59472a13c85",
   "layers_verified": 9,
   "runtime_allowlist": [
     "LICENSE",
     "recording_worker/__init__.py",
     "recording_worker/__main__.py",
+    "recording_worker/bootstrap.py",
     "recording_worker/client.py",
     "recording_worker/protocol.py",
     "requirements.txt"
   ],
-  "source_hash": "53f30af5d1097becc1c953502c2dd600144c4c676c30b85df1a846db26ce8e8c",
-  "final_image_user": "worker (UID10001)",
+  "source_hash": "59cab3bed2929841b04f997792720c9fe6a371f8825c59dbdc4a843b11f2b61d",
+  "final_image_user": "root bootstrap; runtime UID/GID10001 after irreversible drop",
   "layer_source_owner": "0:0; no group/world write",
   "extracted_rootfs_ownership": "UID0 helper; app source ownership matches layer metadata; not a containerd owner test",
   "disabled_entrypoint": true,
@@ -35,27 +36,51 @@
   "runtime_tests_kind": "built-rootfs execution; not Supervisor or containerd installation",
   "production_adjacent_validator_import_required": false,
   "test_only_validator": "reviewed canonical recording_session.py in portable tests/fixtures",
-  "verified_at": "2026-10-14T10:39:12.350625+00:00",
+  "verified_at": "2026-10-14T12:02:22.954263+00:00",
   "supervisor_token_used": false,
   "registry_push": false,
   "home_assistant_contacted": false,
   "physical_audio_test": false,
   "locally_reverified_oci_blobs": true,
-  "version": "0.0.3 unpublished candidate",
+  "supervisor_0600_root_options_modeled": true,
+  "old_nonroot_entrypoint_permission_denial_reproduced": true,
+  "bootstrap_startup_capabilities": [
+    "SETUID",
+    "SETGID"
+  ],
+  "bootstrap_failed_drop_closed": true,
+  "bootstrap_missing_options_closed": true,
+  "bootstrap_network_import_privilege_proof": {
+    "network_imports_after_drop": [
+      "aiohttp",
+      "asyncio",
+      "socket",
+      "ssl"
+    ],
+    "socket_events_after_drop": [
+      "socket.__new__",
+      "socket.__new__"
+    ],
+    "effective_permitted_inheritable_ambient_caps": 0,
+    "saved_identity": 10001,
+    "private_options_readable_after_drop": false
+  },
+  "version": "0.0.4 unpublished candidate",
   "built_architecture": "amd64",
   "arm64_build_tested": false,
   "supervisor_installation_tested": false,
   "containerd_launch_tested": false,
   "production_backend_tested": false,
   "stock_supervisor_app_token_tested": false,
-  "loopback_test_count": 55,
+  "loopback_test_count": 66,
   "source_files": {
-    "Dockerfile": "e4aa8b5604b1400211e96c914b3cbfba086daa170abe6c2f15750f35645379e4",
+    "Dockerfile": "30b5b2940f4956cdf8c57cd771ee547f6db5e76b41c93a2f1b3e5c26b24a1284",
     ".dockerignore": "b6c485c5babfc440f2e1bcaea0cbb716911a72ddde1a6e90d18601ba14445142",
     "LICENSE": "9f2f1d71d4483b46b5875d049472dccac0d89fd0b78d9b9fd04223db313b96f4",
     "requirements.txt": "7e9f59481b38fe603b00a5028d59912c41182494aa766c745791b7427dcead6c",
     "recording_worker/__init__.py": "7e7eeb8daf5955a4dd7eca3de6be33790e0111c278094ec064d8abe71171d774",
-    "recording_worker/__main__.py": "da7cd9f733f2486456c63e766ee9c33a1d0fa47e7d1ac5f5799f5ad9b3c35f76",
+    "recording_worker/__main__.py": "1580a8810ffb70c5d6fe4c360a805ac7e9cd5f324f4045b5ddcac7fecbaa3240",
+    "recording_worker/bootstrap.py": "aa65c6b20ec98d7e36be560484a849f8c3f8aa4d890299f50ddc311786758fbf",
     "recording_worker/client.py": "d52b59a47fa8abcf98dba99d612631e16163fa5204ff774e631fd199a002d466",
     "recording_worker/protocol.py": "1b2c572277ce68449ceb77275d17ab1f6c8932e50ffe182d29ea1a9690322e52"
   },
@@ -214,11 +239,19 @@
     {
       "version": "2026.9.4",
       "image": "ghcr.io/home-assistant/home-assistant@sha256:3e6710a7ab2a61311d9d899b719f6c3657791c63e8f4942cec4ebc42401d6b76",
-      "log_sha256": "8686cda93114972eead4ae47de8e726ec30dde8314d6d82492438aab118e81f5",
+      "log_sha256": "970d90d632ead7589677c5a0d7ae708bd72bf3375449a51da8ec481d03e0d5bc",
       "real_authenticated_ws": true,
       "real_native_question_pipeline": true,
       "synthetic_hardware_and_stt": true,
       "worker_proof": {
+        "persisted_native_and_echomuse_holds_block_question_and_recovery": true,
+        "actual_integration_setup_reload_backup_unload": true,
+        "source_recovery_exact_and_confirmed": true,
+        "native_disable_reload_cannot_bypass_unknown_source_hold": true,
+        "whole_backup_failure_cannot_replace_owned_runtime": true,
+        "recovery_denies_nonadmin_wrong_source_missing_confirmation": true,
+        "periodic_config_preserves_native_profile": true,
+        "native_mode_no_stt_platform": true,
         "actual_native_question_to_existing_capture_api": true,
         "generated_binding_no_stt_wrapper": true,
         "exact_original_wav_stored": true,
@@ -239,11 +272,19 @@
     {
       "version": "2026.10.1",
       "image": "ghcr.io/home-assistant/home-assistant@sha256:130241f28d01fa80dfa3b44f7d89781c188d8642ecab9024f079f19f9f82baa0",
-      "log_sha256": "c3db086fc6b84cbefc21f62245b96ff02c7670733aa23d93cdb7c29644cc15ca",
+      "log_sha256": "2c298249c0f52a86fa3a6a9c24c00b55f4838510acd75922b3fc1caf34f47ea2",
       "real_authenticated_ws": true,
       "real_native_question_pipeline": true,
       "synthetic_hardware_and_stt": true,
       "worker_proof": {
+        "persisted_native_and_echomuse_holds_block_question_and_recovery": true,
+        "actual_integration_setup_reload_backup_unload": true,
+        "source_recovery_exact_and_confirmed": true,
+        "native_disable_reload_cannot_bypass_unknown_source_hold": true,
+        "whole_backup_failure_cannot_replace_owned_runtime": true,
+        "recovery_denies_nonadmin_wrong_source_missing_confirmation": true,
+        "periodic_config_preserves_native_profile": true,
+        "native_mode_no_stt_platform": true,
         "actual_native_question_to_existing_capture_api": true,
         "generated_binding_no_stt_wrapper": true,
         "exact_original_wav_stored": true,
@@ -265,17 +306,17 @@
   "stock_core_worker_sources_sha256": {
     "client.py": "d52b59a47fa8abcf98dba99d612631e16163fa5204ff774e631fd199a002d466",
     "protocol.py": "1b2c572277ce68449ceb77275d17ab1f6c8932e50ffe182d29ea1a9690322e52",
-    "__init__.py": "7e7eeb8daf5955a4dd7eca3de6be33790e0111c278094ec064d8abe71171d774",
-    "__main__.py": "da7cd9f733f2486456c63e766ee9c33a1d0fa47e7d1ac5f5799f5ad9b3c35f76"
+    "__init__.py": "7e7eeb8daf5955a4dd7eca3de6be33790e0111c278094ec064d8abe71171d774"
   },
+  "stock_core_historical_entrypoint_sha256": "da7cd9f733f2486456c63e766ee9c33a1d0fa47e7d1ac5f5799f5ad9b3c35f76",
   "entrypoint_registration_stock_core_tested": false,
-  "stock_core_scope": "Current client with isolated draft backend; production adapter and Supervisor remain untested",
+  "stock_core_scope": "Unchanged client/protocol with isolated canonical integration; historical v0.0.3 entrypoint; new bootstrap proven separately through built-rootfs, not Supervisor",
   "protocol_version": 2,
   "stock_core_proof_limitations": [
-    "Synthetic hardware/STT and output only",
-    "Native prompt is fixture-gated until capture ACK; physical timing unproven",
-    "Rotation threshold seeded with119 consumed tombstones, not119 actual Core captures",
-    "Installed Supervisor token preflight not run",
-    "Canonical composition, native recovery UI and physical acceptance not wired"
+    "Synthetic hardware/STT and output, no physical microphone or acoustic delivery proof",
+    "Prompt completion gated until capture ACK in fixture; physical timing acceptance still required",
+    "120-grant rotation uses119 seeded tombstones; long-run worker proof is separate",
+    "Supervisor installed-app token preflight not performed",
+    "No household configuration, installation or publication performed"
   ]
 }
