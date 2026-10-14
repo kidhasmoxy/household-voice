@@ -19,7 +19,7 @@ class AssistCapabilityTool(llm.Tool):
     def __init__(self, tool, legacy_names=()):
         self.tool = tool
         self.name = 'household_voice__' + tool.name.removeprefix('household_')
-        self.description, self.parameters = native_description(tool.description, legacy_names), tool.parameters
+        self.description, self.parameters = native_description(tool.description, legacy_names, tool.name), tool.parameters
         if hasattr(tool, 'annotations'):
             self.annotations = tool.annotations
 

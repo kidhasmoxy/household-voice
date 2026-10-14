@@ -16,6 +16,9 @@ personal safety questions. The HA service account does not identify the speaker.
 Understand casual wording and clear transcription errors. Preserve requested
 titles, artists, albums, editions, rooms, shuffle, durations and recurrence.
 Call an available tool before confirming an action and inspect its result.
+For action requests, your first response must call the relevant tool: never
+announce "I'm playing" or "I've started" without a tool result from this request,
+including artist shuffle. A response with no action tool has performed no action.
 Distinguish stored, requested, completed, ambiguous, unavailable and uncertain.
 Do not claim audible playback from service acceptance or a dry-run plan. Never
 retry an uncertain mutation automatically. Correct completion matters more than
@@ -62,8 +65,10 @@ bands use media_type=artist and play verified top tracks. Soundtracks are albums
 media_type=album, query=Matilda soundtrack, shuffle=true. Preserve an explicitly
 requested edition or artist. A track's album is a filter, not a replacement title.
 Use kind=station with media_type=radio for a station; kind=book with
-media_type=audiobook for a book; kind=sleep_story for a named story or
-kind=sleep_collection for a collection. Never apply music shuffle/endless mode
+media_type=audiobook for a book; kind=sleep_story for a named story,
+kind=sleep_stories for 'my sleep stories' using the configured default playlist,
+or kind=sleep_collection for an explicitly named story collection/album.
+Never apply music shuffle/endless mode
 to books. Speak the selected title or playlist returned by the tool once.
 Respect a clarification question about competing editions. A lookup failure
 does not mean the system supports only playlists or genres.""")
@@ -85,7 +90,10 @@ does not mean the system supports only playlists or genres.""")
             'Use HA time zone and current time for dates. Finished history is not an active timer. '
             '“Set the timer to” may edit a running timer rather than create another.')
     if has('change_schedule'):
-        blocks.append('When household_voice__change_schedule returns ambiguity, ask its question '
+        blocks.append('For a schedule edit, call household_voice__change_schedule directly with '
+            'the operation and selectors actually supplied by the user; it resolves candidates '
+            'and returns clarification if needed. Do not list first merely to guess a schedule ID. '
+            'When it returns ambiguity, ask its question '
             'and wait for the user. Keep the returned choice_token, operation and arguments; '
             'on the later request submit the chosen returned schedule_id with that token. '
             'Never choose a candidate or redeem a token on the user’s behalf in the same turn. '
@@ -110,7 +118,9 @@ does not mean the system supports only playlists or genres.""")
         blocks.append('For announcement cancellation or status use the corresponding available tool: '
                       + ', '.join(controls) + '. Already accepted audio or notifications cannot be retracted.')
     if has('family_knowledge'):
-        blocks.append('Use household_voice__family_knowledge for sourced world knowledge. '
+        blocks.append('Always call household_voice__family_knowledge before answering a public factual '
+            'question, even a simple fact you already know, such as why the sky is blue. '
+            'Do not give an internal-knowledge answer instead of this source/parental-policy step. '
             'Ground factual speech in its evidence, say when uncertain, and follow the editable '
             'parental policy. Never bypass a blocked or unavailable result with unrestricted search.')
     if has('find_place'):
@@ -130,9 +140,16 @@ does not mean the system supports only playlists or genres.""")
     return '\n\n'.join(blocks) + '\n'
 
 
-def native_description(description, legacy_names):
+def native_description(description, legacy_names, tool_name=None):
     """Rename cross-tool references without modifying the shared legacy tool."""
     names = sorted(set(legacy_names), key=len, reverse=True)
+    if tool_name == 'household_list_schedules' and 'household_change_schedule' in names:
+        return ('Read shared timers/alarms when the user asks for status or inspection. '
+                'For a schedule edit, call household_voice__change_schedule directly with '
+                'the user-supplied selectors instead of listing first to guess an ID. '
+                'That tool returns an expiring choice token if ambiguous. Listing is not '
+                'authorization to select or mutate a schedule. Include finished history only '
+                'when requested; labels and identifiers are exact returned values.')
     if not names:
         return description
     expression = r'\b(?:' + '|'.join(re.escape(name) for name in names) + r')\b'
