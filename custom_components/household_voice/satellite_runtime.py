@@ -37,6 +37,7 @@ from .satellite_executor import SatelliteExecutor, Registration, ExecutorError
 from .satellite_journal import SQLiteJournal
 from .room_focus import get_room_focus_state, release_policy_focus
 from .satellite_transport import MAAnnouncementTransport, AudioTransportError
+from .announcement_adapter import transport_policy_from_options
 
 
 EVENT = 'esphome.household_voice_external'
@@ -65,6 +66,7 @@ class HAAudioController:
     def __init__(self, runtime):
         self.runtime, self.hass = runtime, runtime.hass
         self.transport = MAAnnouncementTransport(self.hass, {r.tts_player for r in runtime.policy.routes.values()},
+            transport_policy=transport_policy_from_options(dict(runtime.entry.options)),
             spoken_media_policy=runtime.entry.options.get('spoken_media_policy','pause_and_resume'))
         self.media = {}
         self.tasks = {}

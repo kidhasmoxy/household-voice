@@ -15,6 +15,10 @@ class BackendRejected(ValueError):
     """Fixed categories only; never include source, transcript or credentials."""
 
 
+class QuestionAdmissionRejected(BackendRejected):
+    """The final synchronous destination check rejected before native invocation."""
+
+
 @dataclass
 class Operation:
     session: object = field(repr=False)
@@ -25,6 +29,7 @@ class Operation:
     question: object = field(default=None, repr=False)
     started: bool = False
     failed: bool = False
+    admission_rejected: bool = False
 
 
 class RecordingBackend:
@@ -113,7 +118,7 @@ class RecordingBackend:
         for op in self.operations.values(): op.changed.set()
         return result
 
-    async def record(self, source, entity, operation_id):
+    async def record(self, source, entity, operation_id, *, before_question=None):
         if self.paused or self.closed or self.book is None:
             raise BackendRejected('backend_unavailable')
         # Drain toward rotation before the hard 128-grant tombstone limit. This
@@ -137,10 +142,25 @@ class RecordingBackend:
             reserved = True
             if self.paused or self.closed or self.book is not op.book or not self.validate_source(source, entity):
                 raise BackendRejected('backend_unavailable')
-            async def ask():
-                op.started = True
+            def admit_question():
+                # Called by the owned question guard after its final awaited
+                # source/output lock. No native service has been invoked yet.
                 try:
-                    result = await self.ask(entity, context)
+                    if (self.paused or self.closed or self.book is not op.book or op.failed
+                            or not self.validate_source(source, entity)):
+                        raise BackendRejected('question_admission_unavailable')
+                    before_question()
+                except Exception:
+                    op.admission_rejected = True
+                    raise QuestionAdmissionRejected('question_admission_rejected') from None
+                op.started = True
+            async def ask():
+                try:
+                    if before_question is None:
+                        op.started = True
+                        result = await self.ask(entity, context)
+                    else:
+                        result = await self.ask(entity, context, before_question=admit_question)
                     session.question_result(context_id=context.id, sentence=result.get('sentence'))
                 except asyncio.CancelledError:
                     self._fail(op)
@@ -156,7 +176,10 @@ class RecordingBackend:
             async with asyncio.timeout(self.timeout):
                 while True:
                     op.changed.clear()
-                    if op.failed: raise BackendRejected('recording_failed')
+                    if op.failed:
+                        if op.admission_rejected and not op.started:
+                            raise QuestionAdmissionRejected('question_admission_rejected')
+                        raise BackendRejected('recording_failed')
                     ready = session.ready_revision()
                     if (ready is not None and op.grant is not None and
                             op.book.records[op.grant['grant_id']].phase == 'barrier'):
@@ -173,6 +196,9 @@ class RecordingBackend:
                         return answer
                     await op.changed.wait()
         except asyncio.CancelledError:
+            self._fail(op)
+            raise
+        except QuestionAdmissionRejected:
             self._fail(op)
             raise
         except Exception:

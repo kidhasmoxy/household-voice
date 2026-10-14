@@ -7,7 +7,7 @@ account, or paid subscription is required for the core features. Original record
 on a single shared voice pipeline use an optional [Recording Worker app](recording-worker/README.md),
 which transports native microphone audio and leaves scheduling and playback in the integration.
 
-This is the **0.3.14 prerelease**. Automated tests cover implementation
+This is the **0.3.15 prerelease**. Automated tests cover implementation
 contracts; actual microphone capture, speaker delivery, phone presence, firmware,
 and audiobook resume require validation on your equipment. Keep an independent
 alarm available until your installation passes those tests. Home Assistant must
@@ -36,8 +36,10 @@ their respective audio features.
 
 For manual installation, extract the release's `household_voice.zip` into
 `/config/custom_components/household_voice/`, then restart Home Assistant. Updates
-use HACS or replace that code directory with a newer release. Back up Home
-Assistant before updates; code replacement must not delete stored integration
+use HACS or replace that code directory with a newer release. Keep a usable
+existing backup and small scoped configuration/code rollback copies; an
+additional whole-installation backup is not required for every update.
+Code replacement must not delete stored integration
 state. The repository ZIP is source, while `household_voice.zip` is the install
 asset. Release tags must match the manifest version.
 
@@ -47,6 +49,19 @@ device package and can be pinned to a reviewed source commit. It is a separate
 firmware update, not part of a HACS installation.
 
 ## Features and configuration
+
+Native microphone eligibility is independent of the preferred music output.
+Native recording requires an available, ungrouped physical Music Assistant
+player with one verified native announcement output. The legacy configuration
+retains standard Music Assistant protocol and physical-group routing. Native
+recordings keep the stricter policy through durable capture receipts when that
+option is disabled. Held or unclear destinations remain refused, and neither
+mode adds group changes or automatic retries. Several published Sonos output
+protocols currently block native recording even when native is active; keep
+the preview disabled in that configuration. Spoken-content pause/resume requires
+the exact destination's queue. These client checks cannot atomically prevent a
+concurrent server-side topology or queue change, and provider completion does
+not prove acoustic delivery.
 
 Development preview: native Assist contribution is implemented behind the
 off-by-default `assist_tools_enabled` setting. It reuses existing Household Voice

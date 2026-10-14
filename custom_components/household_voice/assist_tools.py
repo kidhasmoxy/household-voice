@@ -149,8 +149,10 @@ def build_assist_tools(hass, context, apis):
         tools.extend(AssistCapabilityTool(tool_type(name, matches[0]), legacy_names) for name in names)
         if api_type is HouseholdMediaAPI:
             from .media_controls import MediaControlTool, NAMES as control_names
+            from .media_actions import PairedMediaControlTool
             tools.extend(AssistCapabilityTool(MediaControlTool(name, matches[0]), legacy_names)
                          for name in control_names)
+            tools.append(AssistCapabilityTool(PairedMediaControlTool(matches[0]), legacy_names))
         if api_type is HouseholdScheduleAPI:
             from .schedule_stop import HouseholdStopTool
             tools.append(HouseholdStopTool(matches[0]))

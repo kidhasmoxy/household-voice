@@ -96,31 +96,36 @@ def validate_options(hass,entry):
 
 
 def source_permitted(hass,entry,source):
-    """Fresh registry/config/paired-output checks; persistent holds are awaited below."""
-    from .area_registry import collect_pairings
-    from .satellite_transport import MAAnnouncementTransport,_UNCERTAIN,_LOCKS,_player_key
+    """Native source identity is independent of its music/output pairing.
+
+    Questions speak on the satellite. Destination scope is checked separately
+    before recording/dispatch. Preserve known same-room remote-audio holds even
+    when their MA entity is offline; persistent native/source holds are awaited
+    by the existing owned question/backend path below.
+    """
+    from homeassistant.helpers import device_registry as dr,entity_registry as er
+    from .satellite_transport import _UNCERTAIN,_LOCKS
     if entry.options.get('native_recording_enabled') is not True:return False
     try:validate_options(hass,entry)
     except ValueError:return False
     from .echomuse_runtime import DATA_KEY as ECHO_KEY
     echo=hass.data.get(ECHO_KEY,{}).get('entries',{}).get(entry.entry_id)
     if echo is None or echo.closed or echo.paused or echo.endpoint.failed:return False
-    row=collect_pairings(hass,entry.options).get('assistants',{}).get(source.entity_id,{})
-    if row.get('device_id')!=source.device_id or row.get('area_id')!=source.area_id:return False
-    # An explicitly configured but offline/invalid output must not silently change rooms.
-    if row.get('status') not in ('ready','explicitly_unpaired','choice_required','no_suitable_speaker'):return False
-    player=row.get('speaker_id')
-    if player:
-        try:
-            _mass,native=MAAnnouncementTransport(hass,{player}).resolve(player)
-            key=_player_key(hass,player,native)
-        except Exception:return False
+    if sources_from_registry(hass).get(source.device_id)!=source:return False
+    for item in er.async_get(hass).entities.values():
+        if not item.entity_id.startswith('media_player.') or item.platform!='music_assistant':continue
+        device=dr.async_get(hass).async_get(item.device_id) if item.device_id else None
+        area=item.area_id or (dr.async_get_effective_area_id(hass,device) if device else None)
+        if area!=source.area_id:continue
+        # Entity/entry + exact provider player identity survives offline state,
+        # rename and reconnect. Availability never clears an unknown outcome.
+        key=(item.config_entry_id,item.unique_id)
         lock=_LOCKS.get(hass,{}).get(key)
         if key in _UNCERTAIN.get(hass,{}) or (lock is not None and lock.locked()):return False
     return True
 
 
-async def guarded_question(hass,entry,resolve,entity,context):
+async def guarded_question(hass,entry,resolve,entity,context,*,before_question=None):
     from .native_alarm import get_native_alarm_backend
     from .echomuse_runtime import async_native_output_guard
     source=next((item for item in sources_from_registry(hass).values() if item.entity_id==entity),None)
@@ -134,6 +139,9 @@ async def guarded_question(hass,entry,resolve,entity,context):
         # prevents a simultaneous external turn. Never treats unavailable as clear.
         async with async_native_output_guard(hass,entity):
             if resolve(source.device_id)!=source:raise ValueError('source_changed')
+            # Last check after journal and output-lock awaits, immediately before
+            # the native question. This callback also records actual invocation.
+            if before_question is not None:before_question()
             return await native_question(hass,entity,context)
 
 

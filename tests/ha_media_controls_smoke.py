@@ -22,7 +22,10 @@ async def verify_media_controls(hass, entry, context, satellite):
     ma.runtime_data=SimpleNamespace(mass=SimpleNamespace(players=SimpleNamespace(get=lambda key:native if key=='inert-controls' else None)))
     old_options=deepcopy(entry.options)
     hass.states.async_set(satellite.entity_id,'idle')
-    hass.states.async_set(player_entity.entity_id,'playing')
+    from homeassistant.components.media_player import MediaPlayerEntityFeature as F
+    control_features=int(F.NEXT_TRACK|F.PREVIOUS_TRACK|F.VOLUME_SET|F.VOLUME_MUTE)
+    hass.states.async_set(player_entity.entity_id,'playing',{'supported_features':control_features,
+        'volume_level':.8,'is_volume_muted':False,'media_content_id':'fixture-song'})
     entry.options.update(live_actions_enabled=True,media_enabled=True,media_rooms=[{
         'room_id':area_id,'music_player':player_entity.entity_id,'config_entry_id':ma.entry_id,
         'username':'fixture-profile','default_sleep_playlist':''}])
@@ -54,10 +57,105 @@ async def verify_media_controls(hass, entry, context, satellite):
         with patch.object(helpers,'get_music_assistant_client',return_value=client):
             instance=await llm.async_get_api(hass,'assist',context)
             names={tool.name for tool in instance.tools}
-            assert {'household_voice__media_status','household_voice__media_queue_options'}<=names
+            assert {'household_voice__media_status','household_voice__media_queue_options','household_voice__media_control'}<=names
             status=data(await instance.async_call_tool(llm.ToolInput(tool_name='household_voice__media_status',tool_args={},id='controls-status')))
             assert status['status']=='ready' and status['title']=='Fixture song' and status['position_seconds']==40
             assert not mutations() and 'inert-controls' not in str(status)
+            for raw_state,expected_state,active in (('idle','idle',False),('off','unknown',None)):
+                player['playback_state']=raw_state
+                stopped=data(await instance.async_call_tool(llm.ToolInput(tool_name='household_voice__media_status',
+                    tool_args={},id='controls-state-'+raw_state)))
+                assert stopped['state']==expected_state and stopped['playback_active'] is active
+                assert all(stopped[key] is None for key in
+                    ('title','artist','album','media_type','position_seconds','duration_seconds'))
+                assert not mutations() and player['current_media']['title']=='Fixture song'
+            player['playback_state']='paused'
+            paused=data(await instance.async_call_tool(llm.ToolInput(tool_name='household_voice__media_status',
+                tool_args={},id='controls-state-paused')))
+            assert paused['state']=='paused' and paused['playback_active'] is False and paused['title']=='Fixture song'
+            assert not mutations()
+            player['playback_state']='playing'
+            # Real Assist schemas, source-area resolution and service dispatch,
+            # with only the final provider/HA hardware boundary made inert.
+            service_calls=[]
+            async def service(domain,service,data,**kwargs):
+                assert domain=='media_player' and data['entity_id']==player_entity.entity_id
+                service_calls.append((service,deepcopy(data)))
+                current=dict(hass.states.get(player_entity.entity_id).attributes)
+                if service=='volume_set':current['volume_level']=data['volume_level']
+                elif service=='volume_mute':current['is_volume_muted']=data['is_volume_muted']
+                else:
+                    assert service in ('media_next_track','media_previous_track')
+                    queue['current_item']['queue_item_id']='next-fixture-item'
+                hass.states.async_set(player_entity.entity_id,'playing',current)
+            sequence=0
+            async def paired(args):
+                nonlocal sequence
+                sequence+=1
+                return data(await instance.async_call_tool(llm.ToolInput(tool_name='household_voice__media_control',
+                    tool_args=args,id='paired-fixture-'+str(sequence))))
+            with patch.object(type(hass.services),'async_call',side_effect=service),patch.object(type(hass.services),'has_service',return_value=True):
+                skipped=await paired({'operation':'next'})
+                assert skipped['status']=='action_accepted' and skipped['playback_confirmed'] is False
+                assert service_calls[-1]==('media_next_track',{'entity_id':player_entity.entity_id})
+                queue['is_dynamic']=True
+                assert (await paired({'operation':'previous'}))['status']=='action_accepted'
+                queue['is_dynamic']=False
+                queue['current_item']['media_item'].update(media_type='audiobook',uri='fixture://audiobook/1')
+                count=len(service_calls)
+                assert (await paired({'operation':'next'}))['reason']=='spoken_or_unknown_content_skip_blocked'
+                assert len(service_calls)==count
+                authorizations=sum(command=='music/verify_item_uri' for command,_ in calls)
+                assert (await paired({'operation':'volume_set','volume_percent':40}))['settings_confirmed']
+                assert sum(command=='music/verify_item_uri' for command,_ in calls)==authorizations
+                from custom_components.household_voice.room_focus import get_room_focus_state,RoomVolumeController,AnnouncementRoomFocus
+                focus=get_room_focus_state(hass,entry)
+                authority=AnnouncementRoomFocus(focus,RoomVolumeController(hass,focus))
+                await authority._acquire('fixture-wake',{player_entity.entity_id},set(),.25)
+                assert hass.states.get(player_entity.entity_id).attributes['volume_level']==.1
+                changed_volume=await paired({'operation':'volume_up','volume_delta':10})
+                assert changed_volume['volume_percent']==50 and changed_volume['temporary_duck_active']
+                assert hass.states.get(player_entity.entity_id).attributes['volume_level']==.12
+                await authority._release('fixture-wake',set())
+                assert hass.states.get(player_entity.entity_id).attributes['volume_level']==.5
+                assert (await paired({'operation':'mute'}))['is_volume_muted'] is True
+                assert (await paired({'operation':'unmute'}))['is_volume_muted'] is False
+                count=len(service_calls)
+                invalid=await paired({'operation':'volume_set','volume_percent':20,'target_room':'Imaginary room'})
+                assert invalid['status']!='action_accepted' and len(service_calls)==count
+                # Final admission after the journal await must not trust stale
+                # registry topology or ignore an independent transport hold.
+                from custom_components.household_voice import room_focus as rf, satellite_transport as transport
+                from custom_components.household_voice.satellite_executor import MemoryJournal
+                for race in ('raw_group','native_rebind','existing_hold','late_hold'):
+                    isolated=rf.RoomFocusState(rf.AudioFocus(),MemoryJournal(),
+                        allowed_players={player_entity.entity_id},loaded=True,recovery_attempted=True)
+                    key=(ma.entry_id,'inert-controls')
+                    def mutate():
+                        if race=='raw_group':player['group_members']=['inert-controls','foreign-player']
+                        elif race=='native_rebind':registry.async_update_entity(player_entity.entity_id,new_unique_id='foreign-player')
+                        else:transport.restore_uncertain_audio(hass,provider_entry_id=key[0],native_player_id=key[1])
+                    save=isolated.journal.save
+                    async def save_then_change(value):
+                        await save(value)
+                        mutate()
+                    isolated.journal.save=save_then_change
+                    if race=='existing_hold':mutate()
+                    count=len(service_calls)
+                    try:
+                        with patch.object(rf,'get_room_focus_state',return_value=isolated):
+                            refused=await paired({'operation':'volume_set','volume_percent':35})
+                        assert refused['status']=='error' and refused['mutation_dispatched'] is False,refused
+                        assert len(service_calls)==count
+                        if race!='existing_hold':assert isolated.records[player_entity.entity_id]['status']=='pending'
+                        if race in ('existing_hold','late_hold'):assert key in transport._UNCERTAIN[hass]
+                    finally:
+                        # Isolated fixture cleanup only, never runtime recovery.
+                        player['group_members']=[]
+                        if registry.async_get(player_entity.entity_id).unique_id!='inert-controls':
+                            registry.async_update_entity(player_entity.entity_id,new_unique_id='inert-controls')
+                        transport._UNCERTAIN.get(hass,{}).pop(key,None)
+                queue['current_item']['media_item'].update(media_type='track',uri='fixture://track/1')
             request=llm.ToolInput(tool_name='household_voice__media_queue_options',tool_args={'shuffle':True,'repeat':'all'},id='controls-set')
             changed=data(await instance.async_call_tool(request))
             assert changed['settings_confirmed'] and changed['shuffle'] and changed['repeat']=='all'
@@ -108,4 +206,6 @@ async def verify_media_controls(hass, entry, context, satellite):
         dr.async_get(hass).async_remove_device(player_device.id)
         hass.config_entries._entries.pop(ma.entry_id)
     return {'actual_native_schema_and_auto_area':True,'inert_ma_source_guard_readback':True,
+            'paired_next_previous_volume_mute':True,'final_volume_admission_identity_topology_and_transport_hold':True,'relative_volume_preserves_wake_duck_baseline':True,
+            'idle_and_unknown_retained_metadata_suppressed':True,'paused_metadata_state_qualified':True,
             'book_and_area_change_protection':True,'household_contact':False,'physical_audio':False}

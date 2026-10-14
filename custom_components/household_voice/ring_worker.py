@@ -10,15 +10,18 @@ from copy import deepcopy
 import time
 
 from .satellite_transport import MAAnnouncementTransport, AudioTransportError
+from .announcement_adapter import transport_policy_from_options
 
 
 class RingWorker:
     def __init__(self, hass, entry, client, *, transport=None):
         self.hass,self.entry,self.client=hass,entry,client
         self.options=deepcopy(dict(entry.options))
+        self.transport_policy=transport_policy_from_options(self.options)
         targets={p for r in self.options.get('alarm_rooms',[]) for p in r.get('speakers',[])}
         targets.update(self.options.get('ring_fallback_speakers',[]))
         self.transport=transport or MAAnnouncementTransport(hass,targets,timeout=20,
+            transport_policy=self.transport_policy,
             spoken_media_policy=self.options.get('spoken_media_policy','pause_and_resume'))
         self.injected_transport=transport
         self.task=None
@@ -85,6 +88,7 @@ class RingWorker:
                         transport=NativeAlarmTransport(self.hass,self.entry,assistant,row.get('device_id'))
                     else:
                         transport=MAAnnouncementTransport(self.hass,valid_targets,timeout=20,
+                            transport_policy=self.transport_policy,
                             spoken_media_policy=self.options.get('spoken_media_policy','pause_and_resume'))
             if clip['target'] not in valid_targets:
                 return
@@ -128,6 +132,10 @@ class RingWorker:
                     from .room_focus import announcement_room_focus
                     async with announcement_room_focus(self.hass,self.entry,target):yield
                 else:yield
+            if clip.get('output_kind','ma')=='ma':
+                preflight=getattr(transport,'preflight',None)
+                if not callable(preflight):raise AudioTransportError('Announcement destination guard unavailable')
+                preflight(target)
             async with focus():
                 result=await transport.play(target,self.client.url+'/audio/alarm.wav',
                     volume=self.options.get('ring_volume',45)/100,chime=False,before_dispatch=current)
