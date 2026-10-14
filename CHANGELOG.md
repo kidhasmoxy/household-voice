@@ -11,9 +11,19 @@ knowledge becomes a tool. No conversation agent or router is added.
 Media play tools expose explicit exact or broad selection, so genre requests can
 use the native agent's tool arguments without relying on transcript parsing.
 Named albums, soundtrack shuffle and spoken-content constraints remain explicit.
+Native media and recipe tools resolve the current HA device area automatically,
+reuse verified Music Assistant profiles, and invalidate playback on area changes.
+Ringing-first stop dismisses the complete ringing set atomically; explicit
+alarm/timer stops cannot fall through to music. Expiring schedule-choice tokens
+require a later request and the same device/user, arguments and candidate revisions.
+The shared-tool preview has an administrator options switch and capability
+guidance rendered from available tools. Native cross-tool references are renamed
+without changing legacy API objects.
+
 Legacy router behavior is retained during staging. This preview does not migrate
-pipelines, expose a finished activation UI, remove duplicate selected APIs, or
-claim one-pipeline original recording and universal stop parity.
+pipelines, remove duplicate selected APIs, or claim acoustic stop/one-pipeline
+original-recording parity. Real-Core recording fixtures establish an owned
+question/capture gate; no production recording adapter is activated.
 
 ## 0.3.13
 

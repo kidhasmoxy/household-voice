@@ -218,6 +218,32 @@ class Scheduler:
                 db.rollback()
                 raise
 
+    def dismiss_ringing(self, request_id, expected):
+        """Atomically dismiss the complete observed ringing set, including none.
+
+        A changed set or revision aborts the whole decision. The empty decision
+        is durable and idempotent too; it is not permission to stop arbitrary
+        audio, nor a lock across an external player operation.
+        """
+        if (not isinstance(expected, dict) or len(expected)>2000
+                or any(not isinstance(key,str) or not 1<=len(key)<=120
+                       or type(value) is not int or value<1 for key,value in expected.items())):
+            raise ValueError('Invalid ringing snapshot')
+        def action(db):
+            rows=[dict(row) for row in db.execute("SELECT * FROM schedules WHERE state='ringing' ORDER BY id")]
+            if {row['id']:row['revision'] for row in rows} != expected:
+                raise ValueError('Revision conflict; ringing set changed')
+            for row in rows:
+                spec=json.loads(row['spec'])
+                recurring=row['kind']=='alarm' and not spec.get('one_shot')
+                due=next_alarm(spec['local_time'],spec['timezone'],spec['weekdays'],self.clock()) if recurring else None
+                db.execute("UPDATE schedules SET state=?,due=?,mono_due=NULL,clock_id=NULL,revision=revision+1 WHERE id=?",
+                           ('active' if recurring else 'completed',due,row['id']))
+                db.execute("UPDATE outbox SET status='dismiss' WHERE schedule_id=? AND status='ringing'",(row['id'],))
+            return {'dismissed_ids':[row['id'] for row in rows], 'dismissed_count':len(rows),
+                    'no_ringing_at_decision':not rows, 'audible_stop_confirmed':False}
+        return self._mutate(request_id, {'operation':'dismiss_ringing','expected':expected}, action)
+
     def command(self, identifier, operation, request_id, expected_revision, seconds=0, target_room=None, label=None, target_assistant_id=None):
         allowed = {"pause", "resume", "add", "set", "cancel", "dismiss", "snooze", "move", "enable", "disable", "rename", "delete"}
         if operation not in allowed:

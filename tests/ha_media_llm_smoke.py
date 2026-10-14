@@ -158,6 +158,97 @@ class MediaLLMTests(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn("actions", result.data)
         self.assertNotIn("username", result.data)
 
+    def auto_area_fixture(self):
+        helpers = types.ModuleType('homeassistant.helpers')
+        helpers.area_registry, helpers.device_registry = module.ar, module.dr
+        modules = patch.dict(sys.modules, {'homeassistant':types.ModuleType('homeassistant'),
+            'homeassistant.helpers':helpers})
+        modules.start()
+        self.addCleanup(modules.stop)
+        self.entry.options.update(assist_tools_enabled=True, satellites=[])
+        self.hass.devices.values['source-device'].area_id = 'current-area'
+        self.hass.entities.values[PLAYER].device_id = 'speaker-device'
+        self.hass.devices.values['speaker-device'] = types.SimpleNamespace(area_id='current-area', disabled_by=None)
+        area = types.SimpleNamespace(id='current-area', name='Current Room', aliases={'Family Room'})
+        self.hass.areas.values['current-area'] = area
+        self.hass.areas.areas = self.hass.areas.values
+        pairing = {'assistant_id':'assist_satellite.fixture', 'device_id':'source-device',
+            'area_id':'current-area', 'speaker_id':PLAYER, 'status':'ready', 'selection':'area',
+            'choices':[{'entity_id':PLAYER,'available':True}], 'manual_cross_area':False}
+        result = {'assistants':{'assist_satellite.fixture':pairing},
+            'outputs':{PLAYER:{'area_id':'current-area','available':True,'physical_aliases':[PLAYER,TTS]}}}
+        collector = importlib.import_module(module.__package__ + '.area_registry')
+        return result, collector
+
+    async def test_native_current_area_and_unique_profile_need_no_manual_source_row(self):
+        pairings, collector = self.auto_area_fixture()
+        self.entry.options.update(live_actions_enabled=True, media_enabled=True)
+        self.services.search_result = search(item('Jazz Chill','playlist','fixture://playlist/jazz'), 'playlists')
+        with patch.object(collector, 'collect_pairings', return_value=pairings):
+            result = await self.call(args={'query':'jazz','selection_mode':'broad_music'})
+        self.assertEqual(result.data['status'], 'action_accepted')
+        self.assertEqual(self.services.calls[0][2]['username'], 'configured-user')
+        self.assertEqual(self.services.calls[-1][2]['entity_id'], PLAYER)
+        self.assertFalse(hasattr(self.context, 'user_prompt'))
+
+    async def test_native_current_area_wins_over_old_room_mapping_and_revalidates(self):
+        pairings, collector = self.auto_area_fixture()
+        self.entry.options.update(live_actions_enabled=True, media_enabled=True)
+        self.entry.options['satellites'] = options()['satellites']
+        with patch.object(collector, 'collect_pairings', return_value=pairings):
+            registry, row, before, _ = module._resolve(self.hass, self.entry, self.context)
+            self.assertEqual(row['room_id'], 'current-area')
+            self.assertEqual(registry.resolve(source_device='source-device')['area'], 'current-area')
+            def move_source():
+                self.hass.devices.values['source-device'].area_id = 'moved-area'
+            self.services.after_search = move_source
+            result = await self.call(args={'query':'Fixture Book','kind':'book'})
+        self.assertNotEqual(result.data['status'], 'action_accepted')
+        self.assertEqual([call[1] for call in self.services.calls], ['search'])
+
+    async def test_native_area_output_and_profile_ambiguity_fail_closed(self):
+        pairings, collector = self.auto_area_fixture()
+        with patch.object(collector, 'collect_pairings', return_value=pairings):
+            for status in ('choice_required','explicitly_unpaired','speaker_unavailable',
+                           'manual_speaker_unsafe_or_unsupported'):
+                with self.subTest(status=status):
+                    pairings['assistants']['assist_satellite.fixture']['status'] = status
+                    result = await self.call(args={'query':'Fixture Book','kind':'book'})
+                    self.assertEqual(result.data['reason'], 'verified_source_and_media_configuration_required')
+            pairings['assistants']['assist_satellite.fixture']['status'] = 'ready'
+            other = deepcopy(self.entry.options['media_rooms'][0])
+            other['username'] = 'another-profile'
+            self.entry.options['media_rooms'].append(other)
+            result = await self.call(args={'query':'Fixture Book','kind':'book'})
+            self.assertEqual(result.data['reason'], 'verified_source_and_media_configuration_required')
+        self.assertEqual(self.services.calls, [])
+
+    async def test_native_area_explicit_unknown_or_duplicate_alias_never_defaults(self):
+        pairings, collector = self.auto_area_fixture()
+        self.hass.areas.values['other-area'] = types.SimpleNamespace(id='other-area', name='Other', aliases={'Family Room'})
+        with patch.object(collector, 'collect_pairings', return_value=pairings):
+            for target in ('Missing Room','Family Room'):
+                result = await self.call(args={'query':'Fixture Book','kind':'book','target_room':target})
+                self.assertEqual(result.data['reason'], 'verified_source_and_media_configuration_required')
+            result = await self.call(args={'query':'Fixture Book','kind':'book','target_room':'Current Room'})
+            self.assertEqual(result.data['status'], 'dry_run')
+
+    async def test_native_new_player_inherits_only_verified_unique_instance_profile(self):
+        pairings, collector = self.auto_area_fixture()
+        new_player = 'media_player.new_ma'
+        self.hass.entities.values[new_player] = types.SimpleNamespace(platform='music_assistant',
+            config_entry_id='ma-entry', disabled_by=None, device_id='speaker-device')
+        binding = pairings['assistants']['assist_satellite.fixture']
+        binding.update(speaker_id=new_player, selection='manual')
+        pairings['outputs'][new_player] = pairings['outputs'].pop(PLAYER)
+        with patch.object(collector, 'collect_pairings', return_value=pairings):
+            _, row, _, _ = module._resolve(self.hass,self.entry,self.context)
+            self.assertEqual(row['music_player'], new_player)
+            self.assertEqual(row['username'], 'configured-user')
+            self.hass.entities.values[new_player].config_entry_id = 'unconfigured-instance'
+            with self.assertRaises(module.MediaConfigurationError):
+                module._resolve(self.hass,self.entry,self.context)
+
     async def test_native_queue_reader_binds_entity_instance_and_active_queue(self):
         self.hass.entities.values[PLAYER].unique_id = 'native-player'
         signature = module._resolve(self.hass, self.entry, self.context)[2]
@@ -1218,6 +1309,65 @@ async def real_ha_smoke():
                 'queue_id':'fixture-queue', 'media':['fixture-instance://album/matilda'],
                 'option':'replace', 'radio_mode':False, 'shuffle':True,
                 'user':'configured-user', 'require_schema':35})
+            # Native shared-agent routing uses actual HA registries and the real
+            # pairing collector. No satellite/media row for this new source.
+            from homeassistant.components.assist_satellite import AssistSatelliteEntityFeature
+            speaker_device = dr.async_get(hass).async_get_or_create(config_entry_id=ma.entry_id,
+                identifiers={('sonos','RINCON_FIXTURE')})
+            dr.async_get(hass).async_update_device(speaker_device.id, area_id=area.id)
+            registry.async_update_entity(player.entity_id, device_id=speaker_device.id)
+            registry.async_update_entity(tts.entity_id, device_id=speaker_device.id)
+            satellite = registry.async_get_or_create('assist_satellite','esphome','native-fixture',
+                config_entry=esp, device_id=device.id)
+            hass.states.async_set(satellite.entity_id,'idle',
+                {'supported_features':int(AssistSatelliteEntityFeature.ANNOUNCE)})
+            hass.states.async_set(tts.entity_id,'idle',{'supported_features':4})
+            ma_players = {'fixture-ma':types.SimpleNamespace(player_id='RINCON_FIXTURE', available=True,
+                synced_to=None, active_group=None, group_members=[])}
+            ma.runtime_data = types.SimpleNamespace(mass=types.SimpleNamespace(
+                players=types.SimpleNamespace(get=ma_players.get)))
+            config.update(assist_tools_enabled=True, satellites=[])
+            hass.config_entries.async_update_entry(voice,options=config)
+            hass.services.async_register('music_assistant','search',fixture_search,supports_response=SupportsResponse.ONLY)
+            native_area = await instance.async_call_tool(llm.ToolInput(tool_name=module.NAMES[0],
+                tool_args={'query':'jazz','selection_mode':'broad_music'},id='native-auto-area'))
+            assert native_area.data['status'] == 'action_accepted'
+            assert calls[-1]['username'] == 'configured-user'
+            assert actions[-1][2]['entity_id'] == player.entity_id
+            assert native_area.data['room'] == area.id
+            from household_media_llm_fixture.area_registry import collect_pairings
+            discovered = collect_pairings(hass, config)
+            assert discovered['assistants'][satellite.entity_id]['speaker_id'] == player.entity_id
+            assert tts.entity_id in discovered['outputs'][player.entity_id]['physical_aliases']
+            # A second distinct MA speaker requires a dropdown override. It can
+            # inherit the unique verified profile, without adding a media row.
+            other_device = dr.async_get(hass).async_get_or_create(config_entry_id=ma.entry_id,
+                identifiers={('music_assistant','second-fixture')})
+            dr.async_get(hass).async_update_device(other_device.id,area_id=area.id)
+            other_player = registry.async_get_or_create('media_player','music_assistant','second-fixture',
+                config_entry=ma,device_id=other_device.id)
+            hass.states.async_set(other_player.entity_id,'idle')
+            ma_players['second-fixture'] = types.SimpleNamespace(player_id='second-fixture',available=True,
+                synced_to=None,active_group=None,group_members=[])
+            count = len(actions)
+            ambiguous = await instance.async_call_tool(llm.ToolInput(tool_name=module.NAMES[0],
+                tool_args={'query':'jazz','selection_mode':'broad_music'},id='native-two-outputs'))
+            assert ambiguous.data['status'] == 'clarify' and len(actions) == count
+            config['assistant_speaker_overrides'] = {satellite.entity_id:other_player.entity_id}
+            hass.config_entries.async_update_entry(voice,options=config)
+            _, auto_row, _, _ = module._resolve(hass,voice,context)
+            assert auto_row['music_player'] == other_player.entity_id and auto_row['username'] == 'configured-user'
+            # Moving the requesting device while catalog lookup is awaited must
+            # invalidate the route before any queue control or media action.
+            moved = ar.async_get(hass).async_create('Moved Room')
+            async def move_after_search(call):
+                response = await fixture_search(call)
+                dr.async_get(hass).async_update_device(device.id,area_id=moved.id)
+                return response
+            hass.services.async_register('music_assistant','search',move_after_search,supports_response=SupportsResponse.ONLY)
+            raced = await instance.async_call_tool(llm.ToolInput(tool_name=module.NAMES[0],
+                tool_args={'query':'jazz','selection_mode':'broad_music'},id='native-area-race'))
+            assert raced.data['status'] != 'action_accepted' and len(actions) == count
             unregister()
             assert api_id not in {api.id for api in llm.async_get_apis(hass)}
             print(json.dumps({"ha_version": __version__, "real_ha_media_llm_runtime": True, "registry_ownership_validated": True,
@@ -1230,6 +1380,9 @@ async def real_ha_smoke():
                 "native_conflicting_selection_rejected_without_lookup_or_action": True,
                 "profile_scoped_artist_top_tracks_with_mock_native_client": True,
                 "shuffled_soundtrack_native_play_keeps_profile_and_shuffle": True,
+                "native_area_without_manual_source_row_and_unique_profile": True,
+                "actual_pairing_collector_alias_collapse_and_dropdown_override": True,
+                "source_area_change_blocks_dispatch": True,
                 "physical_actions": False, "live_ha_contacted": False, "real_ma_contacted": False}, sort_keys=True), flush=True)
         finally:
             queue_patch.stop()

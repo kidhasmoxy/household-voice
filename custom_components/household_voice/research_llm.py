@@ -51,6 +51,12 @@ def _text(value, minimum=1, maximum=512):
 
 
 def _room(hass, entry, context):
+    if entry.options.get('assist_tools_enabled') is True:
+        from .request_area import resolve_source_area, RequestAreaError
+        try:
+            return resolve_source_area(hass, entry.options, context)['area_id']
+        except RequestAreaError as error:
+            raise RecipeError(str(error)) from error
     device_id = getattr(context, "device_id", None)
     if not _text(device_id, maximum=200) or getattr(context, "context", None) is None:
         raise RecipeError("trusted_source_room_required")

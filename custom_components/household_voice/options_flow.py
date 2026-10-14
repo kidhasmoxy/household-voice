@@ -55,7 +55,22 @@ class HouseholdVoiceOptionsFlow(config_entries.OptionsFlow):
 
     async def async_step_init(self, user_input=None):
         self._ensure_draft()
-        return self.async_show_menu(step_id="init", menu_options=["features", "assistant_pairing", "conversation_routing", "knowledge_family", "announcements", "single_turn_announcements", "phone", "satellite", "media", "alarms", "capture", "test_pairing", "audio_recovery", "native_audio_recovery", "remove", "review"])
+        return self.async_show_menu(step_id="init", menu_options=["features", "shared_assistant", "assistant_pairing", "conversation_routing", "knowledge_family", "announcements", "single_turn_announcements", "phone", "satellite", "media", "alarms", "capture", "test_pairing", "audio_recovery", "native_audio_recovery", "remove", "review"])
+
+    async def async_step_shared_assistant(self, user_input=None):
+        """Expose capabilities to the ordinary agent; never change its assignments."""
+        self._ensure_draft()
+        errors = {}
+        if user_input is not None:
+            enabled = user_input.get('assist_tools_enabled')
+            if type(enabled) is not bool:
+                errors['base'] = 'invalid_enabled'
+            else:
+                self.draft['assist_tools_enabled'] = enabled
+                return await self.async_step_init()
+        return self._form('shared_assistant', {
+            vol.Required('assist_tools_enabled', default=self.draft['assist_tools_enabled']): BooleanSelector(),
+        }, errors, user_input or self.draft)
 
     async def async_step_knowledge_family(self, user_input=None):
         """Administrative HA options only; never a model-accessible settings tool."""

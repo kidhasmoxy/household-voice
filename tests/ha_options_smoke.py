@@ -39,6 +39,14 @@ def route():
 
 
 class OptionsTests(unittest.TestCase):
+    def test_native_assist_opt_in_is_preserved_and_rejects_truthy_values(self):
+        self.assertFalse(options.validate_options({}, ENTITIES, DEVICES, SERVICES)['assist_tools_enabled'])
+        for enabled in (True, False):
+            self.assertIs(options.validate_options({'assist_tools_enabled':enabled}, ENTITIES, DEVICES, SERVICES)['assist_tools_enabled'], enabled)
+        for enabled in (1, 'true', None, []):
+            with self.subTest(enabled=enabled), self.assertRaises(options.RoutingError):
+                options.validate_options({'assist_tools_enabled':enabled}, ENTITIES, DEVICES, SERVICES)
+
     def test_area_overrides_preserve_missing_manual_and_existing_single_turn_fields(self):
         data={'assistant_speaker_overrides':{'assist_satellite.voice':'media_player.missing','assist_satellite.other':'auto','assist_satellite.none':None},
               'default_announcement_speakers':['media_player.kitchen'],'announcement_alignment_api_key':'fixture-key'}
@@ -385,6 +393,8 @@ async def real_ha_options_smoke():
             stt_provider=registry.async_get_or_create('stt','fixture','stt_provider')
             await step({'next_step_id':'capture'})
             assert (await step({'profile_id':'kitchen_capture','source_device_id':device.id,'provider_entity_id':stt_provider.entity_id}))['type']=='menu'
+            await step({'next_step_id':'shared_assistant'})
+            assert (await step({'assist_tools_enabled':True}))['type']=='menu'
             await step({'next_step_id':'features'})
             enabled={key:False for key in options.FEATURES}
             enabled.update(live_actions_enabled=True,media_enabled=True)
@@ -393,6 +403,7 @@ async def real_ha_options_smoke():
             result = await step({})
             assert result["type"] == "create_entry"
             assert entry.options["live_actions_enabled"] is True and entry.options['media_enabled'] is True
+            assert entry.options['assist_tools_enabled'] is True
             assert entry.options['single_turn_announcements_enabled'] is True
             assert entry.options['assistant_speaker_overrides'][satellite_entity.entity_id]=='auto'
             assert entry.options['announcement_alignment_api_key'] == 'fixture-secret'
@@ -477,6 +488,7 @@ async def real_ha_options_smoke():
             assert (await step({}))["type"] == "create_entry"
             assert entry.options["phones"] == [] and len(entry.options["satellites"]) == 1
             assert entry.options['live_actions_enabled'] and entry.options['media_enabled']
+            assert entry.options['assist_tools_enabled'] is True
             assert called == [], "Options flow called a physical action"
             print(json.dumps({"home_assistant_version": __version__, "real_ha_options_flow": True,
                 "registry_validated": True, "persist_reopen_remove": True, "admin_feature_switches_preserved": True,

@@ -72,7 +72,8 @@
           "single_turn_announcements": "Single-turn announcements",
           "assistant_pairing": "Assistant speakers",
           "knowledge_family": "Knowledge and family settings",
-          "native_audio_recovery": "Recover built-in speaker after uncertain audio"
+          "native_audio_recovery": "Recover built-in speaker after uncertain audio",
+          "shared_assistant": "Shared Assist tools (preview)"
         }
       },
       "announcements": {
@@ -250,6 +251,13 @@
         "data": {
           "assistant_id": "Assistant with built-in speaker",
           "confirm_audio_stopped": "I verified all pending alarm audio stopped"
+        }
+      },
+      "shared_assistant": {
+        "title": "Shared Assist tools (preview)",
+        "description": "Provide Household Voice capabilities to one ordinary Home Assistant conversation agent. This switch does not change voice pipelines or the agent prompt. Select either Assist or the Tools for Assist Home Control API; remove separately selected Household Voice APIs to avoid duplicate tools. Use the shared master prompt and filter competing built-in timer and media tools before migration. Keep source-bound recording profiles until the replacement capture path is verified. Review and save to apply. Existing live action switches remain in effect.",
+        "data": {
+          "assist_tools_enabled": "Provide native household capability tools"
         }
       }
     },

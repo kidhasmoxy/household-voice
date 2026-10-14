@@ -24,20 +24,12 @@ their respective audio features.
    your Music Assistant server can reach, then open configuration to map rooms,
    voice devices, Music Assistant
    players, announcement defaults, and optional phone presence/notification pairs.
-4. Configure the voice provider to select the Household Voice tools alongside
-   its existing house-control tools. Tool registration does not select them.
-5. Optionally choose a fallback conversation agent in Household Voice settings,
-   then select the new Household Voice router entity in one voice pipeline.
-   Exact English requests such as "make an announcement", "cancel announcement",
-   and "announcement status" use the announcement runtime directly. Recognized
-   timer changes and ringing-stop requests also run deterministically; optional
-   general knowledge uses its separate provider path. Remaining requests go to
-   your selected agent. Leaving the fallback blank keeps this router disabled.
-   For whole, simple English commands such as "stop my alarm" or "resume my book",
-   the router scopes Household Voice tool calls to the requested category. This
-   rejects conflicting tool arguments and fills an omitted category. Other wording
-   and requests sent directly to the fallback agent do not get this constraint;
-   it does not guarantee that the model will call a tool or that audio will play.
+4. For the native-tool preview, follow [shared assistant setup](docs/shared-assistant.md)
+   using one ordinary conversation agent and one editable master prompt. Tool
+   registration alone does not select or curate the agent's tools.
+5. Keep an existing legacy beta configuration until its migration gates pass.
+   Legacy APIs and the optional router remain for compatibility; do not select
+   both legacy APIs and native Household Voice tools in the same agent.
 6. Enable and test one feature and one room before expanding to the household.
 
 For manual installation, extract the release's `household_voice.zip` into
@@ -57,10 +49,11 @@ firmware update, not part of a HACS installation.
 Development preview: native Assist contribution is implemented behind the
 off-by-default `assist_tools_enabled` setting. It reuses existing Household Voice
 capabilities without a custom conversation agent, and adds source-context and
-sourced family-knowledge tools. Activation UI and full migration gates remain
-unfinished. Keep the existing beta configuration until schedule ambiguity,
-ringing-first stop, duplicate native timer tools, automatic backend area mapping
-and source-bound original recording have passed. Enabling the preview must also
+sourced family-knowledge tools. The options menu provides **Shared Assist tools
+(preview)**. Current-area media/recipe resolution, ringing-first stop and later
+request schedule-choice validation are implemented. Keep the existing beta
+configuration until provider tool selection, microphone follow-up and original
+recording migration pass their respective gates. Enabling the preview must also
 remove legacy API selections from the agent; HA's contribution callback does not
 know what other APIs that agent selected. No automatic cutover occurs.
 

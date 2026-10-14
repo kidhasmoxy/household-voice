@@ -33,6 +33,7 @@ def initial_options(existing):
     result.setdefault("spoken_media_policy", "pause_and_resume")
     result.setdefault("phone_presence_policy", "recent_five_minutes")
     result.setdefault("conversation_fallback_agent", "")
+    result.setdefault("assist_tools_enabled", False)
     result.setdefault("single_turn_announcements_enabled", False)
     result.setdefault("announcement_alignment_url", "")
     result.setdefault("announcement_alignment_model", "")
@@ -221,6 +222,8 @@ def satellite(data, entities, devices, services):
 
 def validate_options(data, entities, devices, services):
     result = initial_options(data)
+    if type(result['assist_tools_enabled']) is not bool:
+        raise RoutingError('invalid_enabled')
     try:
         result.update(validate_knowledge_settings(result))
         selected = result['knowledge_agent']

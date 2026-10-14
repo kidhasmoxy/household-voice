@@ -118,6 +118,11 @@ def _with_music_selection(arguments, context, operation):
 def _resolve(hass, entry, context, target=None):
     """Read current config and HA registries on every call and dispatch."""
     options = deepcopy(dict(entry.options))
+    if options.get('assist_tools_enabled') is True:
+        from .request_area import resolve_source_area
+        source_area = resolve_source_area(hass, options, context)
+        if not source_area['legacy']:
+            return _resolve_area(hass, options, context, source_area, target)
     configured = options.get("media_rooms", [])
     satellites = options.get("satellites", [])
     if not isinstance(configured, list) or not 1 <= len(configured) <= 100 or not isinstance(satellites, list) or len(satellites) > 200:
@@ -196,6 +201,105 @@ def _resolve(hass, entry, context, target=None):
     enabled = options.get("live_actions_enabled") is True and options.get("media_enabled") is True
     signature = hashlib.sha256(json.dumps([configured, satellites, ownership, rooms, enabled],
         sort_keys=True, allow_nan=False).encode()).hexdigest()
+    return registry, row, signature, enabled
+
+
+def _resolve_area(hass, options, context, source_area, target):
+    """Bind a native request to current HA areas and existing audio preferences."""
+    from .area_registry import collect_pairings
+    pairings = collect_pairings(hass, options)
+    devices, entities, areas = dr.async_get(hass), er.async_get(hass), ar.async_get(hass)
+    area_rows = list(areas.areas.values())
+    aliases = {}
+    for area in area_rows:
+        for name in (area.id, area.name, *(getattr(area, 'aliases', ()) or ())):
+            if _text(name):
+                aliases.setdefault(name.casefold().strip(), set()).add(area.id)
+    configured = options.get('media_rooms', [])
+    if not isinstance(configured, list) or len(configured) > 100:
+        raise MediaConfigurationError()
+    verified = []
+    for row in configured:
+        if not isinstance(row, dict):
+            raise MediaConfigurationError()
+        player = entities.async_get(row.get('music_player'))
+        owner = hass.config_entries.async_get_entry(row.get('config_entry_id'))
+        if (player is None or getattr(player, 'disabled_by', None) is not None
+                or player.platform != 'music_assistant' or player.config_entry_id != row.get('config_entry_id')
+                or owner is None or owner.domain != 'music_assistant' or owner.disabled_by is not None
+                or not _text(row.get('username'))):
+            # Stale unrelated rows cannot authorize a new destination/profile.
+            continue
+        verified.append(row)
+        device = devices.async_get(getattr(player, 'device_id', None))
+        area_id = getattr(player, 'area_id', None) or getattr(device, 'area_id', None)
+        if area_id and areas.async_get_area(area_id) and _text(row.get('room_id')):
+            aliases.setdefault(row['room_id'].casefold().strip(), set()).add(area_id)
+    target_area = source_area['area_id']
+    if target is not None:
+        matches = aliases.get(target.casefold().strip(), set()) if _text(target) else set()
+        if len(matches) != 1:
+            raise MediaConfigurationError()
+        target_area = next(iter(matches))
+    source_bindings = [row for row in pairings['assistants'].values()
+                       if row.get('device_id') == context.device_id]
+    if (len(source_bindings) != 1 or source_bindings[0].get('area_id') != source_area['area_id']
+            or source_bindings[0].get('status') in ('assistant_disabled', 'assistant_unavailable',
+                'assistant_device_unknown', 'assistant_area_unknown')):
+        raise MediaConfigurationError()
+    if target_area == source_area['area_id']:
+        binding = source_bindings[0]
+        if binding.get('status') != 'ready':
+            raise MediaConfigurationError()
+        selected = binding.get('speaker_id')
+    else:
+        bindings = [row for row in pairings['assistants'].values() if row.get('area_id') == target_area]
+        if bindings:
+            # Different per-assistant overrides make a room-only request ambiguous.
+            choices = {row.get('speaker_id') for row in bindings if row.get('status') == 'ready'}
+            if len(choices) != 1 or any(row.get('status') != 'ready' for row in bindings):
+                raise MediaConfigurationError()
+            selected = next(iter(choices))
+        else:
+            choices = [player for player, output in pairings['outputs'].items()
+                       if player.startswith('media_player.') and output.get('area_id') == target_area]
+            if len(choices) != 1:
+                raise MediaConfigurationError()
+            selected = choices[0]
+    output = pairings['outputs'].get(selected)
+    player = entities.async_get(selected) if isinstance(selected, str) else None
+    if (not output or output.get('available') is not True or player is None
+            or player.platform != 'music_assistant' or getattr(player, 'disabled_by', None) is not None):
+        raise MediaConfigurationError()
+    exact = [row for row in verified if row['music_player'] == selected]
+    profiles = exact or [row for row in verified if row['config_entry_id'] == player.config_entry_id]
+    usernames = {row['username'] for row in profiles}
+    if len(usernames) != 1:
+        raise MediaConfigurationError()
+    defaults = {row.get('default_sleep_playlist', '') for row in profiles}
+    sleep_playlist = next(iter(defaults)) if len(defaults) == 1 else ''
+    if not isinstance(sleep_playlist, str) or len(sleep_playlist) > 512:
+        raise MediaConfigurationError()
+    row = {'room_id':target_area, 'music_player':selected, 'config_entry_id':player.config_entry_id,
+           'username':next(iter(usernames)), 'default_sleep_playlist':sleep_playlist}
+    # A minimal policy registry carries the same trusted source plus the selected
+    # destination. Other areas are deliberately not inferred by the pure planner.
+    rooms = {source_area['area_id']:{'satellites':[context.device_id]}}
+    target_aliases = [name for name, owners in aliases.items() if owners == {target_area} and name != target_area]
+    rooms[target_area] = {'satellites':[context.device_id] if target_area == source_area['area_id'] else [],
+                         'music_player':selected, 'announcement_player':selected, 'aliases':target_aliases}
+    registry = RoomRegistry(rooms)
+    registry.resolve(source_device=context.device_id, target=target)
+    enabled = options.get('live_actions_enabled') is True and options.get('media_enabled') is True
+    # Exclude playing/duck state, which legitimately changes during dispatch;
+    # retain selection, topology-derived eligibility, availability and identity.
+    routing = [{key: binding.get(key) for key in ('assistant_id','device_id','area_id','status',
+        'speaker_id','selection','choices','manual_cross_area')} for binding in pairings['assistants'].values()]
+    outputs = {key:{field:value.get(field) for field in ('area_id','available','physical_aliases')}
+               for key,value in pairings['outputs'].items()}
+    signature = hashlib.sha256(json.dumps([source_area, row, configured,
+        options.get('satellites', []), options.get('assistant_speaker_overrides', {}),
+        routing, outputs, rooms, enabled], sort_keys=True, allow_nan=False).encode()).hexdigest()
     return registry, row, signature, enabled
 
 
