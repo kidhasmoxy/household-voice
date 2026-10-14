@@ -11,7 +11,7 @@ import sqlite3
 import time
 import uuid
 from contextlib import contextmanager
-from datetime import datetime, timedelta, timezone
+from datetime import date as civil_date, datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 
 
@@ -54,6 +54,33 @@ def next_alarm(local_time, tz_name, weekdays, after):
                     return candidate.timestamp()
                 break
     raise ValueError("Cannot determine next occurrence")
+
+
+def dated_alarm(local_time, tz_name, date, after):
+    """One explicit civil date; never silently roll a passed alarm to tomorrow.
+
+    Use the same first-fold / gap policy as recurring alarms. A completely
+    skipped civil day is unavailable rather than a different requested date.
+    """
+    if not isinstance(date, str) or not re.fullmatch(r'[0-9]{4}-[0-9]{2}-[0-9]{2}', date):
+        raise ValueError('Alarm date must use YYYY-MM-DD')
+    day = civil_date.fromisoformat(date)
+    if not isinstance(local_time, str) or not re.fullmatch(r'(?:[01][0-9]|2[0-3]):[0-5][0-9]', local_time):
+        raise ValueError('Use HH:MM')
+    hour, minute = map(int, local_time.split(':'))
+    zone = ZoneInfo(tz_name)
+    naive = datetime(day.year, day.month, day.day, hour, minute)
+    for shift in range(1441):
+        local = naive + timedelta(minutes=shift)
+        if local.date() != day:
+            break
+        candidate = local.replace(tzinfo=zone, fold=0)
+        roundtrip = candidate.astimezone(timezone.utc).astimezone(zone)
+        if roundtrip.replace(tzinfo=None) == local:
+            if candidate.timestamp() <= after:
+                raise ValueError('Requested alarm date and time have passed')
+            return candidate.timestamp()
+    raise ValueError('Requested civil date is unavailable in this timezone')
 
 
 class Scheduler:
@@ -158,11 +185,25 @@ class Scheduler:
                             self.clock() + seconds, {}, request_id,
                             {"seconds": seconds}, target_assistant_id=target_assistant_id, requested_target_room=target_room)
 
-    def create_alarm(self, label, local_time, tz_name, weekdays, source_room, request_id, target_room=None, one_shot=False, target_assistant_id=None):
+    def create_alarm(self, label, local_time, tz_name, weekdays, source_room, request_id, target_room=None, one_shot=False, target_assistant_id=None, date=None):
         if type(one_shot) is not bool:
             raise ValueError('one_shot must be boolean')
-        due = next_alarm(local_time, tz_name, weekdays, self.clock())
+        if date is not None and not one_shot:
+            raise ValueError('An explicit alarm date requires one_shot=true')
+        if date is not None:
+            if not isinstance(date, str) or not re.fullmatch(r'[0-9]{4}-[0-9]{2}-[0-9]{2}', date):
+                raise ValueError('Alarm date must use YYYY-MM-DD')
+            if not weekdays or any(type(d) is not int or not 0 <= d <= 6 for d in weekdays):
+                raise ValueError('weekdays must contain Monday=0 through Sunday=6')
+        # Resolve dated deadlines inside the idempotent transaction. A replay
+        # after the original deadline must return its original stored receipt.
+        due = (lambda: dated_alarm(local_time, tz_name, date, self.clock())) if date is not None else next_alarm(local_time, tz_name, weekdays, self.clock())
         spec = {"local_time": local_time, "timezone": tz_name, "weekdays": sorted(set(weekdays))}
+        if date is not None:
+            day = civil_date.fromisoformat(date)
+            if day.weekday() not in weekdays:
+                raise ValueError('Alarm date conflicts with selected weekdays')
+            spec['date'] = date
         if one_shot:
             spec['one_shot']=True
         return self._create("alarm", label, source_room, target_room or source_room,
@@ -199,9 +240,10 @@ class Scheduler:
                 destination=binding['area_id']
                 device=binding['device_id']
             identifier = str(uuid.uuid4())
-            mono_due=self.monotonic()+due-self.clock() if kind=='timer' else None
+            deadline = due() if callable(due) else due
+            mono_due=self.monotonic()+deadline-self.clock() if kind=='timer' else None
             db.execute("INSERT INTO schedules(id,kind,label,source_room,target_room,due,remaining,state,revision,spec,created,mono_due,clock_id,target_assistant_id,target_assistant_device_id) VALUES(?,?,?,?,?,?,?, ?,1,?,?,?,?,?,?)",
-                       (identifier, kind, label, source, destination, due, None, "active", json.dumps(spec), self.clock(),mono_due,self.boot_id if mono_due is not None else None,target_assistant_id,device))
+                       (identifier, kind, label, source, destination, deadline, None, "active", json.dumps(spec), self.clock(),mono_due,self.boot_id if mono_due is not None else None,target_assistant_id,device))
             return dict(db.execute("SELECT * FROM schedules WHERE id=?", (identifier,)).fetchone())
         return self._mutate(request_id, payload, action)
 
@@ -244,8 +286,9 @@ class Scheduler:
                     'no_ringing_at_decision':not rows, 'audible_stop_confirmed':False}
         return self._mutate(request_id, {'operation':'dismiss_ringing','expected':expected}, action)
 
-    def command(self, identifier, operation, request_id, expected_revision, seconds=0, target_room=None, label=None, target_assistant_id=None):
-        allowed = {"pause", "resume", "add", "set", "cancel", "dismiss", "snooze", "move", "enable", "disable", "rename", "delete"}
+    def command(self, identifier, operation, request_id, expected_revision, seconds=0, target_room=None, label=None, target_assistant_id=None,
+                local_time=None, tz_name=None, weekdays=None, one_shot=None, date=None):
+        allowed = {"pause", "resume", "add", "set", "cancel", "dismiss", "snooze", "move", "enable", "disable", "rename", "delete", "reschedule"}
         if operation not in allowed:
             raise ValueError("Unsupported operation")
         if type(expected_revision) is not int or expected_revision < 1:
@@ -258,6 +301,11 @@ class Scheduler:
         if target_assistant_id is not None:
             if operation!='move': raise ValueError('Assistant target is only valid for move')
             payload['target_assistant_id']=target_assistant_id
+        settings = {name:value for name,value in dict(local_time=local_time,timezone=tz_name,
+            weekdays=weekdays,one_shot=one_shot,date=date).items() if value is not None}
+        if settings and operation!='reschedule':
+            raise ValueError('Only reschedule takes alarm settings')
+        payload.update(settings)
         def action(db):
             row = db.execute("SELECT * FROM schedules WHERE id=?", (identifier,)).fetchone()
             if not row:
@@ -297,6 +345,47 @@ class Scheduler:
                 r[key] += seconds
                 if key=='due':
                     r['mono_due']+=seconds
+            elif operation == 'reschedule':
+                if r['kind']!='alarm' or r['state'] not in ('active','disabled') or seconds!=0 or target_room is not None or label is not None:
+                    raise ValueError('Reschedule needs an active or disabled alarm')
+                if not isinstance(local_time,str) or not re.fullmatch(r'(?:[01][0-9]|2[0-3]):[0-5][0-9]',local_time):
+                    raise ValueError('Reschedule requires HH:MM local_time')
+                spec = json.loads(r['spec'])
+                old_zone = spec['timezone']
+                spec['local_time'] = local_time
+                if tz_name is not None:
+                    ZoneInfo(tz_name)
+                    spec['timezone'] = tz_name
+                if weekdays is not None:
+                    if not isinstance(weekdays,list) or not weekdays or any(type(d) is not int or not 0<=d<=6 for d in weekdays):
+                        raise ValueError('weekdays must contain Monday=0 through Sunday=6')
+                    spec['weekdays'] = sorted(set(weekdays))
+                if one_shot is not None and type(one_shot) is not bool:
+                    raise ValueError('one_shot must be boolean')
+                once = one_shot if one_shot is not None else False if weekdays is not None else spec.get('one_shot',False)
+                if date is not None and not once:
+                    raise ValueError('An explicit date cannot silently replace a recurring alarm')
+                if once:
+                    spec['one_shot'] = True
+                    if date is not None:
+                        spec['date'] = date
+                    elif 'date' not in spec and r['due'] is not None:
+                        # Legacy one-shots have no civil date in spec. Preserve
+                        # their already scheduled date during a clock-only edit.
+                        spec['date'] = datetime.fromtimestamp(r['due'],ZoneInfo(old_zone)).date().isoformat()
+                    elif 'date' not in spec:
+                        raise ValueError('Choose an explicit date for this disabled legacy one-shot alarm')
+                else:
+                    spec.pop('one_shot',None)
+                    spec.pop('date',None)
+                if 'date' in spec:
+                    deadline = dated_alarm(spec['local_time'],spec['timezone'],spec['date'],now)
+                    if civil_date.fromisoformat(spec['date']).weekday() not in spec['weekdays']:
+                        raise ValueError('Alarm date conflicts with selected weekdays')
+                else:
+                    deadline = next_alarm(spec['local_time'],spec['timezone'],spec['weekdays'],now)
+                r.update(spec=json.dumps(spec),due=deadline if r['state']=='active' else None,
+                    mono_due=None,clock_id=None)
             elif operation=='rename':
                 r['label']=self._text(label,'label')
             elif operation=='delete':
@@ -323,13 +412,19 @@ class Scheduler:
             elif operation in ("cancel", "disable"):
                 if operation == 'disable' and r['kind'] != 'alarm':
                     raise ValueError('Only alarms can be disabled; cancel the timer')
+                if operation=='disable' and r['due'] is not None:
+                    spec=json.loads(r['spec'])
+                    if spec.get('one_shot') and 'date' not in spec:
+                        spec['date']=datetime.fromtimestamp(r['due'],ZoneInfo(spec['timezone'])).date().isoformat()
+                        r['spec']=json.dumps(spec)
                 r.update(state="cancelled" if operation == "cancel" else "disabled", due=None)
                 r.update(mono_due=None,clock_id=None)
             elif operation == "enable":
                 if r["kind"] != "alarm" or r["state"] != "disabled":
                     raise ValueError("Only disabled alarms can enable")
                 s = json.loads(r["spec"])
-                r.update(state="active", due=next_alarm(s["local_time"], s["timezone"], s["weekdays"], now))
+                deadline = dated_alarm(s['local_time'], s['timezone'], s['date'], now) if 'date' in s else next_alarm(s["local_time"], s["timezone"], s["weekdays"], now)
+                r.update(state="active", due=deadline)
             elif operation == "dismiss":
                 if r["state"] != "ringing":
                     raise ValueError("Schedule is not ringing")
@@ -342,8 +437,8 @@ class Scheduler:
             if operation in ("cancel", "disable", "dismiss", "snooze", "delete"):
                 db.execute("UPDATE outbox SET status=? WHERE schedule_id=? AND status='ringing'", (operation, identifier))
             r["revision"] += 1
-            db.execute("UPDATE schedules SET target_room=?,due=?,remaining=?,state=?,revision=?,label=?,mono_due=?,clock_id=?,target_assistant_id=?,target_assistant_device_id=? WHERE id=?",
-                       (r["target_room"], r["due"], r["remaining"], r["state"], r["revision"],r['label'],r['mono_due'],r['clock_id'],r['target_assistant_id'],r['target_assistant_device_id'], identifier))
+            db.execute("UPDATE schedules SET target_room=?,due=?,remaining=?,state=?,revision=?,label=?,mono_due=?,clock_id=?,target_assistant_id=?,target_assistant_device_id=?,spec=? WHERE id=?",
+                       (r["target_room"], r["due"], r["remaining"], r["state"], r["revision"],r['label'],r['mono_due'],r['clock_id'],r['target_assistant_id'],r['target_assistant_device_id'],r['spec'], identifier))
             return r
         return self._mutate(request_id, payload, action)
 

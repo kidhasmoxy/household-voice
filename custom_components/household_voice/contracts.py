@@ -1,11 +1,12 @@
 """Shared validation without HA imports; backend remains authoritative."""
 import math
 import re
+from datetime import date as civil_date
 from urllib.parse import urlsplit, urlunsplit
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 from uuid import uuid4
 
-OPERATIONS = {"pause", "resume", "add", "set", "cancel", "dismiss", "snooze", "move", "enable", "disable", "rename", "delete"}
+OPERATIONS = {"pause", "resume", "add", "set", "cancel", "dismiss", "snooze", "move", "enable", "disable", "rename", "delete", "reschedule"}
 
 
 def normalize_url(value):
@@ -44,8 +45,8 @@ def validate_payload(service, data):
     required = {"create_timer": {"label", "seconds", "source_room"},
                 "create_alarm": {"label", "local_time", "timezone", "weekdays", "source_room","target_assistant_id"},
                 "command": {"identifier", "operation", "expected_revision"}}
-    optional = {"create_timer": {"target_room","target_assistant_id"}, "create_alarm": {"target_room", "one_shot"},
-                "command": {"seconds", "target_room", "label","target_assistant_id"}}
+    optional = {"create_timer": {"target_room","target_assistant_id"}, "create_alarm": {"target_room", "one_shot", "date"},
+                "command": {"seconds", "target_room", "label","target_assistant_id", "local_time", "timezone", "weekdays", "one_shot", "date"}}
     if service not in required or not required[service].issubset(data) or set(data) - required[service] - optional[service] - {"config_entry_id", "request_id"}:
         raise ValueError("Unknown service, missing required fields, or extra fields")
     result = dict(data)
@@ -70,6 +71,14 @@ def validate_payload(service, data):
         if not isinstance(days, list) or not days or any(type(day) is not int or not 0 <= day <= 6 for day in days):
             raise ValueError("weekdays must be a nonempty list, Monday=0 through Sunday=6")
         result["weekdays"] = sorted(set(days))
+        if 'date' in result:
+            value = result['date']
+            if not isinstance(value, str) or not re.fullmatch(r'[0-9]{4}-[0-9]{2}-[0-9]{2}', value):
+                raise ValueError('Alarm date must use YYYY-MM-DD')
+            day = civil_date.fromisoformat(value)
+            if day.weekday() not in result['weekdays'] or result.get('one_shot', True) is not True:
+                raise ValueError('An alarm date requires a compatible one-shot alarm')
+            result['one_shot'] = True
     if service == "command":
         op = result["operation"]
         if op == "set": number(result.get("seconds"), "seconds", 0, 604800, True)
@@ -84,4 +93,29 @@ def validate_payload(service, data):
             raise ValueError("Move requires an assistant for alarms or a room for timers")
         if op == "rename" and "label" not in result:
             raise ValueError("Rename requires label")
+        fields = {'local_time','timezone','weekdays','one_shot','date'}
+        if fields.intersection(result) and op!='reschedule':
+            raise ValueError('Only reschedule takes alarm settings')
+        if op=='reschedule':
+            if not isinstance(result.get('local_time'),str) or not re.fullmatch(r'(?:[01][0-9]|2[0-3]):[0-5][0-9]',result['local_time']):
+                raise ValueError('Reschedule requires HH:MM local_time')
+            if 'seconds' in result or {'target_room','label','target_assistant_id'}.intersection(result):
+                raise ValueError('Reschedule only changes alarm settings')
+            if 'timezone' in result:
+                try:
+                    ZoneInfo(result['timezone'])
+                except (ValueError, TypeError, ZoneInfoNotFoundError):
+                    raise ValueError('Use a valid IANA timezone') from None
+            if 'date' in result:
+                value = result['date']
+                if not isinstance(value,str) or not re.fullmatch(r'[0-9]{4}-[0-9]{2}-[0-9]{2}',value):
+                    raise ValueError('Alarm date must use YYYY-MM-DD')
+                civil_date.fromisoformat(value)
+            if 'weekdays' in result:
+                days = result['weekdays']
+                if not isinstance(days,list) or not days or any(type(d) is not int or not 0<=d<=6 for d in days):
+                    raise ValueError('Invalid alarm weekdays')
+                result['weekdays'] = sorted(set(days))
+            if 'one_shot' in result and type(result['one_shot']) is not bool:
+                raise ValueError('one_shot must be boolean')
     return result

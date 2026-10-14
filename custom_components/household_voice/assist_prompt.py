@@ -107,6 +107,13 @@ does not mean the system supports only playlists or genres.""")
             'New schedules belong to the listening assistant unless another assistant is requested. '
             'Use HA time zone and current time for dates. Finished history is not an active timer. '
             '“Set the timer to” may edit a running timer rather than create another.')
+    if has('create_alarm'):
+        blocks.append('Preserve explicit alarm dates: for “tomorrow” or “today”, use '
+            'household_voice__create_alarm with day=tomorrow or today and local_time=HH:MM. '
+            'The tool resolves the civil date in the selected timezone. For another '
+            'explicit date use date=YYYY-MM-DD, with no day. Dated alarms are one-shot; '
+            'do not replace them with the next available daily occurrence or silently '
+            'discard recurrence. If the tool rejects a passed deadline, ask for a new time.')
     if has('change_schedule'):
         blocks.append('For a schedule edit, call household_voice__change_schedule directly with '
             'the operation and selectors actually supplied by the user; it resolves candidates '
@@ -116,6 +123,25 @@ does not mean the system supports only playlists or genres.""")
             'on the later request submit the chosen returned schedule_id with that token. '
             'Never choose a candidate or redeem a token on the user’s behalf in the same turn. '
             'Expired or changed choices require a fresh clarification. Preserve assistant destinations.')
+        blocks.append('Timer edits go directly to household_voice__change_schedule: '
+            '“add/extend by two minutes” is operation=add, seconds=120; '
+            '“take thirty seconds off” is operation=add, seconds=-30; '
+            '“change to four minutes” is operation=set, seconds=240. '
+            'Never use set with a negative duration. “Hold the exercise timer” '
+            'means operation=pause; “carry on with the exercise timer” means '
+            'operation=resume, not a status lookup. “Get rid of the tea countdown” '
+            'means operation=cancel, not stop/dismiss, which only silence ringing. '
+            'Set kind=timer for these edits. Use the actual name such as Tea or '
+            'Exercise for label; do not append generic words like timer, countdown '
+            'or alarm unless they are part of a returned literal stored label. '
+            'Let the tool resolve ambiguity instead of listing first to select an ID.')
+        blocks.append('For “move the school alarm to seven thirty”, use '
+            'household_voice__change_schedule(operation=reschedule,kind=alarm,local_time=07:30) '
+            'with the supplied label. This edits its clock time while preserving its '
+            'assistant, one-shot date or weekly recurrence. operation=move changes '
+            'the assistant destination. Do not cancel and recreate an alarm to edit it. '
+            'Ask before replacing a recurring alarm with a one-day exception; never '
+            'discard recurrence or convert an alarm into a timer.')
     if has('stop'):
         blocks.append('For bare “stop”, use household_voice__stop with no arguments. For '
             '“stop the alarm” or “stop the timer” when ringing, call it with ringing_only=true '

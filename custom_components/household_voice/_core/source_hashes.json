@@ -9,7 +9,7 @@
       "source": "household_voice/announcements.py"
     },
     "api.py": {
-      "sha256": "3c1d4ce77f61ac57204b83b68a8542ba96d6ed2fe0f458fa386acc4c2116bfd8",
+      "sha256": "c3a995031893c37a5b09ca9cca786aed51f4bb33244e1768be7447cc7ae98029",
       "source": "household_voice/api.py"
     },
     "brave_search.py": {
@@ -45,7 +45,7 @@
       "source": "household_voice/runtime.py"
     },
     "scheduler.py": {
-      "sha256": "8f743a59b9a40c7c9422e4bf39689748d49c04d08c7780acfb936701a99419b8",
+      "sha256": "8b93a0c7b1899e21c3af5263bafd052daed378db384464be752a882c44e36517",
       "source": "household_voice/scheduler.py"
     }
   },

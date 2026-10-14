@@ -13,9 +13,9 @@ from typing import Literal
 from .routing import RoomRegistry
 
 Operation = Literal['list', 'stop', 'pause', 'resume', 'add', 'cancel', 'dismiss',
-                    'snooze', 'move', 'enable', 'disable', 'rename', 'delete', 'set']
+                    'snooze', 'move', 'enable', 'disable', 'rename', 'delete', 'set', 'reschedule']
 OPERATIONS = ('list', 'stop', 'pause', 'resume', 'add', 'cancel', 'dismiss', 'snooze',
-              'move', 'enable', 'disable', 'rename', 'delete', 'set')
+              'move', 'enable', 'disable', 'rename', 'delete', 'set', 'reschedule')
 STATES = ('active', 'paused', 'ringing', 'cancelled', 'disabled', 'completed', 'missed', 'deleted')
 TERMINAL = ('cancelled', 'completed', 'missed', 'deleted')
 
@@ -45,6 +45,11 @@ class ScheduleRequest:
     new_target_room: str | None = None
     new_label: str | None = None
     include_terminal: bool = False
+    local_time: str | None = None
+    timezone: str | None = None
+    date: str | None = None
+    weekdays: list[int] | None = None
+    one_shot: bool | None = None
 
     def __post_init__(self):
         if self.operation not in OPERATIONS or self.kind not in (None, 'timer', 'alarm') or self.room_scope not in ('target', 'source'):
@@ -62,6 +67,16 @@ class ScheduleRequest:
             raise ValueError('Only move takes a destination room')
         if self.new_label is not None and self.operation!='rename':
             raise ValueError('Only rename takes a new label')
+        fields = ('local_time','timezone','date','weekdays','one_shot')
+        if any(getattr(self, name) is not None for name in fields) and self.operation!='reschedule':
+            raise ValueError('Only reschedule takes alarm settings')
+        for name in ('local_time','timezone','date'):
+            if getattr(self,name) is not None:
+                _text(getattr(self,name),name)
+        if self.weekdays is not None and (not isinstance(self.weekdays,list) or not self.weekdays or any(type(d) is not int or not 0<=d<=6 for d in self.weekdays)):
+            raise ValueError('Invalid alarm weekdays')
+        if self.one_shot is not None and type(self.one_shot) is not bool:
+            raise ValueError('Invalid alarm recurrence')
 
 
 @dataclass(frozen=True)
@@ -145,6 +160,8 @@ def _eligible(record, operation):
         return record.kind=='alarm' and record.state=='disabled'
     if operation=='disable':
         return record.kind=='alarm' and record.state in ('active', 'ringing')
+    if operation=='reschedule':
+        return record.kind=='alarm' and record.state in ('active','disabled')
     return operation=='delete' or record.state not in TERMINAL
 
 
@@ -214,6 +231,10 @@ def plan_schedule(request: ScheduleRequest, snapshot: ScheduleSnapshot, context:
         if request.new_label is None:
             return _result('clarify', 'new_label_required', question='What should I call it?')
         command['label'] = request.new_label.strip()
+    if operation=='reschedule':
+        if request.local_time is None:
+            return _result('clarify','alarm_time_required',question='What time should the alarm be?',selected=_choice(selected,now))
+        command.update({name:getattr(request,name) for name in ('local_time','timezone','date','weekdays','one_shot') if getattr(request,name) is not None})
     return _result('ready', 'single_schedule_selected', command=command,
                    selected=_choice(selected, now), preconditions={'snapshot_observed_at': snapshot.observed_at,
                    'compare_revision_atomically': True, 'never_retry_with_new_revision_without_reselection': True})

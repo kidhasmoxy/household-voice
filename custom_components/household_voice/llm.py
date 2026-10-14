@@ -12,9 +12,11 @@ separately enabled worker. Successful storage does not confirm an audible alarm.
 from collections import OrderedDict
 import asyncio
 from copy import deepcopy
+from datetime import datetime, timedelta
 import hashlib
 import json
 import time
+from zoneinfo import ZoneInfo
 
 from aiohttp import ClientError
 import probatio
@@ -49,30 +51,32 @@ def async_get_tools(hass, llm_context, api_id):
 
 INTEGRATION = 'household_voice'
 NAMES = ('household_list_schedules', 'household_create_timer', 'household_create_alarm', 'household_change_schedule')
-OPERATIONS = ('stop', 'pause', 'resume', 'add', 'set', 'cancel', 'dismiss', 'snooze', 'move', 'enable', 'disable', 'rename', 'delete')
+OPERATIONS = ('stop', 'pause', 'resume', 'add', 'set', 'cancel', 'dismiss', 'snooze', 'move', 'enable', 'disable', 'rename', 'delete', 'reschedule')
 SELECTORS = {'schedule_id': str, 'label': str, 'kind': probatio.In(('timer', 'alarm')), 'room': str,
              'room_scope': probatio.In(('target', 'source'))}
 SCHEMAS = {
     NAMES[0]: probatio.Schema({**{probatio.Optional(k): v for k,v in SELECTORS.items()}, probatio.Optional('include_terminal'): bool}),
     NAMES[1]: probatio.Schema({probatio.Required('seconds'): probatio.Any(int, float), probatio.Optional('label'): str, probatio.Optional('target_room'): str,probatio.Optional('target_assistant_id'):str}),
     NAMES[2]: probatio.Schema({probatio.Required('local_time'): str, probatio.Optional('label'): str,
-        probatio.Optional('timezone'): str, probatio.Optional('weekdays'): [int], probatio.Optional('one_shot'): bool, probatio.Optional('target_assistant'): str}),
+        probatio.Optional('timezone'): str, probatio.Optional('weekdays'): [int], probatio.Optional('one_shot'): bool, probatio.Optional('target_assistant'): str,
+        probatio.Optional('date'): str, probatio.Optional('day'): probatio.In(('today','tomorrow'))}),
     NAMES[3]: probatio.Schema({probatio.Required('operation'): probatio.In(OPERATIONS),
         **{probatio.Optional(k): v for k,v in SELECTORS.items()}, probatio.Optional('seconds'): probatio.Any(int, float),
         probatio.Optional('new_target_room'): str, probatio.Optional('new_target_assistant'): str, probatio.Optional('new_label'): str,
-        probatio.Optional('choice_token'): str}),
+        probatio.Optional('choice_token'): str, probatio.Optional('local_time'): str, probatio.Optional('timezone'): str,
+        probatio.Optional('date'): str, probatio.Optional('weekdays'): [int], probatio.Optional('one_shot'): bool}),
 }
 FIELDS = {
     NAMES[0]: set(SELECTORS) | {'include_terminal'},
     NAMES[1]: {'seconds', 'label', 'target_room','target_assistant_id'},
-    NAMES[2]: {'local_time', 'label', 'timezone', 'weekdays', 'one_shot', 'target_assistant'},
-    NAMES[3]: set(SELECTORS) | {'operation', 'seconds', 'new_target_room', 'new_target_assistant', 'new_label','choice_token'},
+    NAMES[2]: {'local_time', 'label', 'timezone', 'weekdays', 'one_shot', 'target_assistant', 'date', 'day'},
+    NAMES[3]: set(SELECTORS) | {'operation', 'seconds', 'new_target_room', 'new_target_assistant', 'new_label','choice_token','local_time','timezone','date','weekdays','one_shot'},
 }
 DESCRIPTIONS = {
     NAMES[0]: 'List household timers and alarms globally, including those created in other rooms. Labels are exact stored labels. If the exact label or ID is not already known, list by kind and optionally room without a label filter, then use the returned schedule ID. Do not append words such as alarm or timer to a stored label.',
     NAMES[1]: 'Create one new countdown timer. Do not use this for changing an existing timer or a referential set request. Ask which timer when an update is ambiguous. Source assistant comes from the trusted voice device. An explicitly requested target_room or target_assistant_id must resolve to one assistant. Check returned audio_delivery for whether ringing is enabled.',
-    NAMES[2]: 'Create one local-time alarm bound to an assistant and its paired speaker. By default use the listening assistant; target_assistant is only for an explicitly requested other assistant ID or unambiguous name. Never choose a generic room speaker. weekdays uses Monday=0, Tuesday=1, Wednesday=2, Thursday=3, Friday=4, Saturday=5, Sunday=6. Weekdays Monday through Friday are [0,1,2,3,4]; weekends are [5,6]. Omitted timezone uses Home Assistant timezone. Omitted weekdays means every day; omitted one_shot is true unless weekdays are supplied. Check returned audio_delivery for whether ringing is enabled.',
-    NAMES[3]: 'Change one existing schedule. set changes absolute remaining seconds; add adjusts remaining seconds. When choices are returned, ask which one and wait for a later user request. Then repeat the same operation arguments with the returned choice_token and selected schedule_id. Listing is not selection. Never guess IDs or revisions. Use household_voice__stop for bare stop: ringing schedules have priority over media.',
+    NAMES[2]: 'Create one local-time alarm bound to an assistant and its paired speaker. By default use the listening assistant; target_assistant is only for an explicitly requested other assistant ID or unambiguous name. Never choose a generic room speaker. Preserve an explicitly requested day: day=today or tomorrow is resolved by the tool using its current local date; date=YYYY-MM-DD is for another explicit date. Never supply both. Dated alarms are one-shot, not recurring; an already passed date/time is rejected rather than moved to tomorrow. With no day/date use the next occurrence. weekdays uses Monday=0, Tuesday=1, Wednesday=2, Thursday=3, Friday=4, Saturday=5, Sunday=6. Weekdays Monday through Friday are [0,1,2,3,4]; weekends are [5,6]. Omitted timezone uses Home Assistant timezone. Omitted weekdays means every day; omitted one_shot is true unless weekdays are supplied. Check returned audio_delivery for whether ringing is enabled.',
+    NAMES[3]: 'Change one existing schedule. set changes timer remaining seconds; add adjusts timer remaining seconds. For an alarm time edit use operation=reschedule, kind=alarm, local_time=HH:MM. It preserves the assistant, existing one-shot civil date and recurrence unless replacements are explicit. Optional date=YYYY-MM-DD, timezone, weekdays and one_shot update alarm settings; never discard recurrence merely to satisfy an ambiguous single-date exception. move changes assistant destination, not clock time. When choices are returned, ask which one and wait for a later user request. Then repeat the same operation arguments with the returned choice_token and selected schedule_id. Listing is not selection. Never guess IDs or revisions. Use household_voice__stop for bare stop: ringing schedules have priority over media.',
 }
 
 
@@ -170,6 +174,9 @@ class ScheduleTool(llm.Tool):
                 # An omitted type must not create a pointless selector question
                 # for one timer; multiple candidates still require a bound choice.
                 args.setdefault('kind','timer')
+            if (self.name == NAMES[3] and self.api.entry.options.get('assist_tools_enabled') is True
+                    and args.get('operation')=='reschedule'):
+                args.setdefault('kind','alarm')
             args = constrain_arguments('schedules', 'list' if self.name == NAMES[0] else args.get('operation', self.name), args, llm_context)
             reference=trusted_schedule_edit(llm_context)
             if reference is not None:
@@ -301,7 +308,16 @@ class ScheduleTool(llm.Tool):
                         return tool_result(llm,data=_response('clarify','choose_available_assistant_with_paired_speaker',assistants=data.get('assistants',[])))
                     payload['target_assistant_id']=selected['id']
                     payload.setdefault('timezone', hass.config.time_zone)
+                    if 'day' in payload:
+                        if 'date' in payload:
+                            return tool_result(llm,data=_response('clarify','choose_one_alarm_date'))
+                        day=payload.pop('day')
+                        local_today=datetime.fromtimestamp(self.api.clock(),ZoneInfo(payload['timezone'])).date()
+                        payload['date']=(local_today+timedelta(days=day=='tomorrow')).isoformat()
                     payload.setdefault('one_shot', 'weekdays' not in payload)
+                    if 'date' in payload:
+                        if payload.get('one_shot') is not True:
+                            return tool_result(llm,data=_response('clarify','choose_dated_or_recurring_alarm'))
                     payload.setdefault('weekdays', list(range(7)))
                 payload = validate_payload(service, payload)
             mutation = await self.api.coordinator.client.mutate(service, payload)

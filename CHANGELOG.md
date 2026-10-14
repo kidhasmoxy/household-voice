@@ -2,6 +2,12 @@
 
 ## 0.3.14
 
+Alarms now preserve an explicit date or resolve today/tomorrow in the requested
+timezone. Existing alarm clock changes use guarded rescheduling, preserving the
+assistant, stored date/recurrence and disabled state, with revision and bound
+clarification checks. The manager adds an optional date picker and clock editing.
+Actual Home Assistant CI covers the date, DST, replay and rescheduling contracts.
+
 Development preview of native Assist tool contribution. An off-by-default setting
 contributes capability tools through Home Assistant's standard LLM platform,
 reusing the existing API objects, executors, caches and locks. A read-only source

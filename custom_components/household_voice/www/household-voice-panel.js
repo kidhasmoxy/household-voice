@@ -25,6 +25,7 @@ class HouseholdVoiceManagerCard extends HTMLElement {
     <label id="target_room_label">Ring room<select name="target_room"><option value="">Same as source</option></select></label>
     <label id="minutes">Minutes<input name="minutes" type="number" min="0.01" max="10080" step="any" value="5"></label>
     <label class="alarm" hidden>Time<input name="local_time" type="time" value="07:00"></label>
+    <label class="alarm" hidden>Date (optional)<input name="date" type="date"><span class="muted">A specific date rings once.</span></label>
     <label>Assistant<select name="target_assistant_id"><option value="">Choose an assistant</option></select><span id="speaker-preview" class="muted"></span></label>
     <label class="alarm" hidden>Alarm timezone<input name="timezone"></label>
     <fieldset class="alarm" hidden><legend>Days</legend>${["Mon","Tue","Wed","Thu","Fri","Sat","Sun"].map((name,index)=>`<label class="check"><input name="day_${index}" type="checkbox" checked>${name}</label>`).join("")}</fieldset>
@@ -47,6 +48,12 @@ class HouseholdVoiceManagerCard extends HTMLElement {
       form.elements.target_assistant_id.required = alarm;
     };
     form.elements.target_assistant_id.onchange = () => { this.useAssistantRoom(); form.elements.kind.onchange(); };
+    form.elements.date.onchange = () => {
+      const dated=Boolean(form.elements.date.value);
+      if (dated) form.elements.one_shot.checked=true;
+      form.elements.one_shot.disabled=dated;
+      for (let index=0;index<7;index++) form.elements[`day_${index}`].disabled=dated;
+    };
     this.shadowRoot.querySelector("#show-timer-history").checked=Boolean(this.showTimerHistory);
     this.shadowRoot.querySelector("#show-timer-history").onchange = event => { this.showTimerHistory=event.target.checked; this.renderRows(); };
     form.onsubmit = async (event) => {
@@ -70,6 +77,7 @@ class HouseholdVoiceManagerCard extends HTMLElement {
         Object.assign(payload, {target_assistant_id:assistant.id, source_room:assistant.area_id,
           local_time: form.elements.local_time.value, timezone: form.elements.timezone.value.trim(),
           weekdays: Array.from({length:7},(_,index)=>index).filter(index=>form.elements[`day_${index}`].checked), one_shot: form.elements.one_shot.checked});
+        if (form.elements.date.value) Object.assign(payload,{date:form.elements.date.value,one_shot:true,weekdays:[0,1,2,3,4,5,6]});
       }
       await this.call(`create_${kind}`, payload);
     };
@@ -209,6 +217,15 @@ class HouseholdVoiceManagerCard extends HTMLElement {
       if (row.kind === "timer" && ["active", "paused"].includes(row.state)) { button("+1 minute", "add", {seconds:60}); button("−1 minute", "add", {seconds:-60}); }
       if (row.state === "ringing") { button("Dismiss", "dismiss"); button("Snooze 5 min", "snooze", {seconds:300}); }
       if (row.kind === "alarm") { if (row.state === "disabled") button("Enable", "enable"); else if (["active", "ringing"].includes(row.state)) button("Disable", "disable"); }
+      if (row.kind === "alarm" && ["active","disabled"].includes(row.state)) {
+        let spec={}; try { spec=typeof row.spec === "string" ? JSON.parse(row.spec) : row.spec || {}; } catch (_) {}
+        const label=document.createElement("label"); label.textContent="Alarm time";
+        const time=document.createElement("input"); time.type="time"; time.required=true;
+        time.value=spec.local_time || ""; time.disabled=this.busy;
+        time.setAttribute("aria-label",`New time for ${row.label}`);label.append(time);controls.append(label);
+        const change=document.createElement("button"); change.textContent="Change time"; change.disabled=this.busy;
+        change.onclick=()=> { if (time.reportValidity()) this.call("command",{identifier:row.id,expected_revision:row.revision,operation:"reschedule",local_time:time.value}); };controls.append(change);
+      }
       if (["active", "paused", "ringing"].includes(row.state)) button("Cancel", "cancel");
       button("Rename", "rename");
       if (row.kind === "alarm" || row.target_assistant_id) {
