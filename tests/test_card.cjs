@@ -4,18 +4,22 @@ const vm = require("node:vm");
 const assert = require("node:assert/strict");
 const path = require("node:path");
 class Node {
-  constructor() { this.children=[]; this.textContent=""; }
+  constructor() { this.children=[]; this.textContent=""; this.value=""; }
   append(...nodes) { this.children.push(...nodes); }
   replaceChildren() { this.children=[]; }
+  replaceWith(value) { Object.assign(this,value); }
+  setAttribute(name,value) { this[name]=value; }
 }
-let Card;
-const context = {HTMLElement:class {}, customElements:{define:(_,value)=>Card=value},
+let Card; const classes=new Map();
+const context = {HTMLElement:class {}, customElements:{define:(name,value)=>{classes.set(name,value);if(name==='household-voice-manager-card') Card=value;},get:name=>classes.get(name)},
   window:{customCards:[],confirm:()=>true,prompt:()=>"new room"}, document:{createElement:()=>new Node()},
   crypto:{randomUUID:()=>"fixture-request-uuid"}, Date, Intl, setInterval, clearInterval};
-vm.runInNewContext(fs.readFileSync(path.join(__dirname,"../dashboard/household-voice-card.js"),"utf8"),context);
+vm.runInNewContext(fs.readFileSync(path.join(__dirname,"../custom_components/household_voice/www/household-voice-panel.js"),"utf8"),context);
 (async () => {
   const card = new Card();
-  const nodes = Object.fromEntries(["#rows","#mode","#status","#events","form button"].map(key=>[key,new Node()]));
+  const nodes = Object.fromEntries(["#rows","#mode","#status","#events","form button","#pairing-rows","#pairing-configure","#pairing-guidance","#speaker-preview","#timer-history-count"].map(key=>[key,new Node()]));
+  nodes.form={elements:Object.fromEntries(['source_room','target_room','kind','target_assistant_id'].map(key=>[key,new Node()]))};
+  nodes.form.elements.kind.value='timer';
   card.shadowRoot={querySelector:key=>nodes[key]};
   card.config={entity:"sensor.test"};
   const calls=[];

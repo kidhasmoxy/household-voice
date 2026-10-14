@@ -153,7 +153,7 @@
     "tests/ha_options_smoke.py": "fda99231bab42a39b5895675c13cf43120ac07979e0803b22bbe80c7c5a63b27",
     "tests/ha_recording_transport_smoke.py": "779280a97f8f14bcb3ed19314841ee73b44ed241f77ebc5ef23afbdd8ccf8f97",
     "tests/ha_research_llm_smoke.py": "350a6c0fcd8b3752daef5cbfce8ac5c666520b7732472c3e3f54ac6f6057779a",
-    "tests/test_card.cjs": "e99d0125653d7190c6b85cd618344ad1a0167e9424eb6764644e897371e9727a",
+    "tests/test_card.cjs": "0c446fa7b5f879d93da2eb5bdc92aad4d012537ea1283aeaf7566770271c44e7",
     "tests/test_echomuse_panel.cjs": "875b10031db9f88896d87b14633b4824bc891e9ad4f4a8c6d734ecced2fbbd57",
     "tests/test_panel.cjs": "2eef172ba0067e18c04b7a2296a7830485f2a840bce07d9cb5f07806750365ba",
     "tests/test_recording_panel.cjs": "c00e727916547b232719398156ed932e5ff5754e790fbf56b838317c12f802fd",
