@@ -160,6 +160,9 @@ class BroadcastRuntime:
 
     async def async_start(self, device_id, context, *, target_rooms=None,
                           include_home_phones=True, request_id=None):
+        from .native_recording_journal import source_is_held
+        if source_is_held(self.hass,device_id):
+            return _result("error","recording_source_requires_recovery")
         if not isinstance(device_id, str) or not device_id or context is None:
             return _result('clarify', 'trusted_voice_device_required')
         request_id = request_id or 'broadcast-' + secrets.token_hex(24)
@@ -205,6 +208,9 @@ class BroadcastRuntime:
 
     async def async_start_inline(self, device_id, context, *, transcript, body, request_id):
         """Consume the exact current STT capability before scheduling any work."""
+        from .native_recording_journal import source_is_held
+        if source_is_held(self.hass,device_id):
+            return _result("error","recording_source_requires_recovery")
         if (not isinstance(device_id, str) or not device_id or context is None
                 or not isinstance(request_id, str) or not 1 <= len(request_id) <= 200
                 or inline_announcement(transcript) != body):
@@ -270,6 +276,9 @@ class BroadcastRuntime:
                 if not self.enabled or self._binding_resolver(session.device_id) != (session.satellite, session.wrapper):
                     raise BroadcastError('Capture binding changed')
             if captured is None:
+                from .native_recording_journal import source_is_held
+                if source_is_held(self.hass,session.device_id):
+                    raise BroadcastError("recording_source_requires_recovery")
                 arm = session.wrapper.arm(session.device_id, ttl=30)
                 session.nonce, session.phase = arm.nonce, 'asking'
                 async with asyncio.timeout(50):

@@ -353,6 +353,87 @@ class HouseholdVoiceEchoMuseManager extends HTMLElement {
 }
 if (!customElements.get("household-voice-echomuse-manager")) customElements.define("household-voice-echomuse-manager",HouseholdVoiceEchoMuseManager);
 
+class HouseholdVoiceRecordingRecovery extends HTMLElement {
+  constructor() {
+    super(); this.attachShadow({mode:'open'}); this.generation=0; this.busy=false; this.data=null;
+    this.shadowRoot.innerHTML=`<style>
+      :host{display:block;margin-top:20px}details{padding:16px;border:1px solid var(--divider-color);border-radius:12px;background:var(--card-background-color)}
+      summary{font-weight:500;cursor:pointer}p{line-height:1.5;color:var(--secondary-text-color)}label{display:block;margin:12px 0}
+      select,button{font:inherit;padding:9px;border:1px solid var(--divider-color);border-radius:8px;background:var(--card-background-color);color:var(--primary-text-color)}
+      select{max-width:100%}.controls{display:flex;gap:10px;flex-wrap:wrap}[hidden]{display:none!important}
+    </style><details><summary>Recording recovery</summary>
+      <p>Use this only when an announcement recording is blocked after an interrupted request. First check the selected assistant and confirm that its microphone has stopped recording. Clearing a hold does not stop the microphone or play an announcement.</p>
+      <p id="recording-mode"></p><label>Assistant <select id="recording-source" aria-label="Assistant to recover"></select></label>
+      <p id="recording-source-status"></p><label><input id="recording-confirm" type="checkbox"> I checked this assistant and its microphone has stopped recording.</label>
+      <div class="controls"><button id="recording-refresh">Refresh status</button><button id="recording-recover">Clear recording hold</button></div>
+      <p id="recording-status" role="status" aria-live="polite"></p>
+    </details>`;
+    this.shadowRoot.querySelector('#recording-source').onchange=()=>{this.resetConfirmation();this.render();};
+    this.shadowRoot.querySelector('#recording-confirm').onchange=()=>this.render();
+    this.shadowRoot.querySelector('#recording-refresh').onclick=()=>this.load();
+    this.shadowRoot.querySelector('#recording-recover').onclick=()=>this.recover();
+  }
+  authorized() { return this._hass?.user?.is_admin===true && Boolean(this.entry) && this.enabled===true; }
+  connectedCallback() { if (this.authorized()) this.load(); }
+  configure(hass,entry,enabled) {
+    const changed=this.entry!==entry || this.enabled!==enabled || this._hass?.connection!==hass?.connection || this._hass?.user?.id!==hass?.user?.id;
+    this._hass=hass;this.entry=entry;this.enabled=enabled;this.hidden=!this.authorized();
+    if (changed || !this.authorized()) { this.generation++;this.busy=false;this.data=null;this.resetConfirmation();this.message('');this.choices(); }
+    this.render();if (changed && this.authorized()) this.load();
+  }
+  disconnectedCallback() { this.generation++;this.busy=false;this.data=null;this.resetConfirmation(); }
+  resetConfirmation() { this.shadowRoot.querySelector('#recording-confirm').checked=false; }
+  message(value) { this.shadowRoot.querySelector('#recording-status').textContent=value; }
+  choices() {
+    const select=this.shadowRoot.querySelector('#recording-source'),previous=select.value;select.replaceChildren();
+    const blank=document.createElement('option');blank.value='';blank.textContent='Choose an assistant';select.append(blank);
+    for (const row of this.data?.sources || []) {
+      if (!row.assistant_id) continue;
+      const option=document.createElement('option');option.value=row.assistant_id;
+      option.textContent=this._hass?.states?.[row.assistant_id]?.attributes?.friendly_name || row.assistant_id;
+      select.append(option);
+    }
+    select.value=(this.data?.sources || []).some(row=>row.assistant_id===previous) ? previous : '';
+  }
+  selected() { const id=this.shadowRoot.querySelector('#recording-source').value;return this.data?.sources?.find(row=>row.assistant_id===id); }
+  canRecover() {
+    const row=this.selected();return this.authorized() && !this.busy && this.data?.enabled===true && this.data?.paused===false &&
+      row?.available===true && row.busy===false && row.recovery_required===true && this.shadowRoot.querySelector('#recording-confirm').checked===true;
+  }
+  async load() {
+    if (!this.authorized() || this.busy) return;
+    const generation=++this.generation;this.busy=true;this.resetConfirmation();this.render();
+    try {
+      const data=await this._hass.callWS({type:'household_voice/native_recording',operation:'list'});
+      if (generation!==this.generation || !this.authorized()) return;
+      this.data=data;this.choices();this.message('Status refreshed. Verify the microphone before clearing a hold.');
+    } catch (_) { if (generation===this.generation && this.authorized()) { this.data=null;this.choices();this.message('Unable to load recording status. Check the integration and connection, then refresh.'); } }
+    finally { if (generation===this.generation) { this.busy=false;this.render(); } }
+  }
+  async recover() {
+    if (!this.canRecover()) return;
+    const assistant_id=this.selected().assistant_id,generation=++this.generation;this.busy=true;this.resetConfirmation();this.render();
+    try {
+      const result=await this._hass.callWS({type:'household_voice/native_recording',operation:'recover',assistant_id,confirm_microphone_stopped:true});
+      if (generation!==this.generation || !this.authorized()) return;
+      this.message(result.cleared===true ? 'Recording hold cleared. This did not stop or test the microphone.' : 'No recording hold was cleared. Refresh status before trying again.');
+      this.data=null;this.choices();
+      const data=await this._hass.callWS({type:'household_voice/native_recording',operation:'list'});
+      if (generation===this.generation && this.authorized()) { this.data=data;this.choices(); }
+    } catch (_) { if (generation===this.generation && this.authorized()) { this.data=null;this.choices();this.message('Recovery failed or its result is uncertain. Refresh status and check the microphone before trying again.'); } }
+    finally { if (generation===this.generation) { this.busy=false;this.render(); } }
+  }
+  render() {
+    this.shadowRoot.querySelector('#recording-refresh').disabled=this.busy || !this.authorized();
+    this.shadowRoot.querySelector('#recording-recover').disabled=!this.canRecover();
+    this.shadowRoot.querySelector('#recording-source').disabled=this.busy || !this.data;
+    this.shadowRoot.querySelector('#recording-confirm').disabled=this.busy || !this.selected();
+    this.shadowRoot.querySelector('#recording-mode').textContent=this.data ? `Recording ${this.data.paused ? 'paused' : this.data.enabled ? 'enabled' : 'unavailable'}. Worker ${this.data.worker_connected ? 'connected' : 'disconnected'}.` : '';
+    const row=this.selected();this.shadowRoot.querySelector('#recording-source-status').textContent=row ? `${row.available ? 'Available' : 'Unavailable'} · ${row.busy ? 'Recording request active' : 'No active recording request'} · ${row.recovery_required ? 'Recovery required' : 'No recording hold'}` : '';
+  }
+}
+if (!customElements.get('household-voice-recording-recovery')) customElements.define('household-voice-recording-recovery',HouseholdVoiceRecordingRecovery);
+
 class HouseholdVoicePanel extends HTMLElement {
   constructor() {
     super();
@@ -374,7 +455,7 @@ class HouseholdVoicePanel extends HTMLElement {
       <a id="configure" href="/config/integrations/integration/household_voice" hidden>Assistant speakers &amp; settings</a></div>
       <p id="guidance" hidden>Choose Configure → Assistant speakers to pair an assistant with a room speaker using dropdowns, then Review and save. Broadcast volume, default rooms and phone notifications are also in Configure.</p>
       <p id="status" role="status" aria-live="polite">Loading household schedules…</p>
-      <button id="retry" hidden>Retry loading schedules</button><div id="card"></div><div id="echomuse"></div>
+      <button id="retry" hidden>Retry loading schedules</button><div id="card"></div><div id="echomuse"></div><div id="recording"></div>
     </main>`;
     this.shadowRoot.querySelector("select").onchange = event => {
       this._selected = event.target.value; this.render();
@@ -400,6 +481,7 @@ class HouseholdVoicePanel extends HTMLElement {
     this._registryGeneration++;
     this._loading = false;
     this._echo?.disconnectedCallback();
+    this._recording?.disconnectedCallback();
   }
   async loadRegistry() {
     if (!this._hass?.callWS) return;
@@ -460,6 +542,14 @@ class HouseholdVoicePanel extends HTMLElement {
       const attrs=this._hass.states[this._selected].attributes;
       this._echo.configure(this._hass,attrs.config_entry_id,attrs.assistants || []);
     } else this._echo?.configure(this._hass,null,[]);
+    const recordingRoot=this.shadowRoot.querySelector('#recording');
+    const attrs=this._selected ? this._hass.states[this._selected]?.attributes : null;
+    const recordingEnabled=attrs?.native_recording?.enabled===true;
+    recordingRoot.hidden=!admin || !recordingEnabled;
+    if (admin && recordingEnabled) {
+      if (!this._recording) { this._recording=document.createElement('household-voice-recording-recovery');recordingRoot.replaceChildren(this._recording); }
+      this._recording.configure(this._hass,attrs.config_entry_id,true);
+    } else this._recording?.configure(this._hass,null,false);
   }
 }
 if (!customElements.get("household-voice-panel")) customElements.define("household-voice-panel", HouseholdVoicePanel);

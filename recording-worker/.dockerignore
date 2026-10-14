@@ -1,0 +1,7 @@
+**
+!Dockerfile
+!.dockerignore
+!LICENSE
+!requirements.txt
+!recording_worker/
+!recording_worker/*.py

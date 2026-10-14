@@ -126,6 +126,20 @@ async def async_setup(hass, config):
 
 
 async def async_setup_entry(hass, entry):
+    native_recording=entry.options.get('native_recording_enabled') is True
+    if native_recording:
+        from .native_recording import validate_options
+        from .native_recording_lifecycle import DATA_KEY
+        validate_options(hass,entry)
+        if DATA_KEY in hass.data:
+            old=hass.data[DATA_KEY]
+            if getattr(old,'entry',None) is not entry:
+                raise ConfigEntryNotReady('Native recording cleanup is still owned by the previous entry')
+            try:await async_unload_entry(hass,entry)
+            except Exception:
+                raise ConfigEntryNotReady('Native recording cleanup is still running; retry after it ends') from None
+    from .native_recording_journal import async_get_shared_journal
+    await async_get_shared_journal(hass)
     local = entry.data.get('mode') == 'embedded'
     if local:
         from .local_setup import async_create_local_client
@@ -150,10 +164,11 @@ async def async_setup_entry(hass, entry):
     coordinator.satellite_runtime=None
     coordinator.echomuse_runtime=None
     coordinator.native_duck_runtime=None
+    coordinator.native_recording=None
     coordinator.platforms=[Platform.SENSOR]
     if entry.options.get('conversation_fallback_agent'):
         coordinator.platforms.append(Platform.CONVERSATION)
-    if entry.options.get('stt_capture_enabled') is True:
+    if entry.options.get('stt_capture_enabled') is True and not native_recording:
         coordinator.platforms.append(Platform.STT)
     hass.data.setdefault(DOMAIN, {})[entry.entry_id] = coordinator
     from .satellite_runtime import async_setup_satellite_runtime, SatelliteDependencyNotReady
@@ -168,6 +183,9 @@ async def async_setup_entry(hass, entry):
                 and entry.options.get('native_room_ducking_enabled') is True):
             from .native_duck import async_setup_native_duck
             coordinator.native_duck_runtime=await async_setup_native_duck(hass,entry)
+        if native_recording:
+            from .native_recording import async_setup_native_recording
+            coordinator.native_recording=await async_setup_native_recording(hass,entry,coordinator)
         await coordinator.broadcast_runtime.async_start_worker()
         await coordinator.ring_worker.async_start()
         entry.async_on_unload(async_register_llm(hass, entry, coordinator))
@@ -181,6 +199,8 @@ async def async_setup_entry(hass, entry):
         if local:
             from homeassistant.const import EVENT_HOMEASSISTANT_STOP
             async def stop_local_engine(event):
+                if coordinator.native_recording:
+                    await coordinator.native_recording.close()
                 if coordinator.native_duck_runtime:
                     await coordinator.native_duck_runtime.async_close()
                 if coordinator.echomuse_runtime:
@@ -192,6 +212,13 @@ async def async_setup_entry(hass, entry):
                 await client.async_close()
             entry.async_on_unload(hass.bus.async_listen_once(EVENT_HOMEASSISTANT_STOP, stop_local_engine))
     except BaseException as error:
+        if coordinator.native_recording:
+            await coordinator.native_recording.close()
+        else:
+            from .native_recording_lifecycle import DATA_KEY
+            partial=hass.data.get(DATA_KEY)
+            if partial is not None and getattr(partial,"entry",None) is entry:
+                await partial.close()
         if coordinator.native_duck_runtime:
             await coordinator.native_duck_runtime.async_close()
         if coordinator.echomuse_runtime:
@@ -214,9 +241,15 @@ async def async_setup_entry(hass, entry):
 
 
 async def async_unload_entry(hass, entry):
+    from .native_recording_lifecycle import DATA_KEY
+    owned=hass.data.get(DATA_KEY)
+    if owned is not None and getattr(owned,'entry',None) is entry:
+        await owned.close()
     coordinator=hass.data[DOMAIN].get(entry.entry_id)
     if coordinator is None:
         return True
+    if getattr(coordinator,'native_recording',None):
+        await coordinator.native_recording.close()
     if getattr(coordinator,'native_duck_runtime',None):
         await coordinator.native_duck_runtime.async_close()
     if coordinator.echomuse_runtime:

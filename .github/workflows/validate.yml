@@ -11,7 +11,7 @@ jobs:
       fail-fast: false
       matrix:
         home-assistant: ["2026.9.4", "2026.10.1"]
-        fixture: ["ha_embedded_smoke.py", "ha_native_alarm_smoke.py", "ha_native_duck_smoke.py", "ha_media_llm_smoke.py", "ha_research_llm_smoke.py", "ha_options_smoke.py", "ha_recording_transport_smoke.py", "ha_dated_alarm_smoke.py"]
+        fixture: ["ha_embedded_smoke.py", "ha_native_alarm_smoke.py", "ha_native_duck_smoke.py", "ha_media_llm_smoke.py", "ha_research_llm_smoke.py", "ha_options_smoke.py", "ha_recording_transport_smoke.py", "ha_dated_alarm_smoke.py", "ha_native_recording_smoke.py"]
     steps:
       - uses: actions/checkout@v4
         with:
@@ -21,7 +21,9 @@ jobs:
           docker run --rm --network none --cap-drop ALL
           --security-opt no-new-privileges --read-only
           --tmpfs /tmp:rw,mode=1777,size=256m --memory 1g --cpus 2
-          -e PYTHONDONTWRITEBYTECODE=1 -v "$PWD:/source:ro"
+          -e PYTHONDONTWRITEBYTECODE=1
+          -e RECORDING_WORKER_PROOF=${{ matrix.fixture == 'ha_native_recording_smoke.py' && '1' || '0' }}
+          -v "$PWD:/source:ro"
           --entrypoint python ghcr.io/home-assistant/home-assistant:${{ matrix.home-assistant }}
           /source/tests/${{ matrix.fixture }}
           ${{ (matrix.fixture == 'ha_media_llm_smoke.py' || matrix.fixture == 'ha_research_llm_smoke.py' || matrix.fixture == 'ha_options_smoke.py') && '--ha-runtime' || '' }}
@@ -34,6 +36,11 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.13'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: node --check custom_components/household_voice/www/household-voice-panel.js
+      - run: node tests/test_panel.cjs && node tests/test_echomuse_panel.cjs && node tests/test_recording_panel.cjs && node tests/test_card.cjs
       - run: python -m compileall -q custom_components
       - run: python -m unittest discover -s tests -v
       - run: python scripts/build_release.py

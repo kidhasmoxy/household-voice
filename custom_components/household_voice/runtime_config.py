@@ -41,7 +41,11 @@ async def async_configure(client,options,*,hass=None):
     if hass is not None:
         from .area_registry import collect_pairings
         discovered=collect_pairings(hass,options)
-    desired=configuration(options,discovered)
+    if hass is not None and options.get("native_recording_enabled") is True:
+        from .native_recording_bindings import configuration_with_native_sources
+        desired=configuration_with_native_sources(hass,options,discovered)
+    else:
+        desired=configuration(options,discovered)
     if not options and not (discovered or {}).get('assistants'):
         return discovered
     current=await client.runtime_config()

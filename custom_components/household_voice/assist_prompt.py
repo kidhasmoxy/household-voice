@@ -100,6 +100,17 @@ does not mean the system supports only playlists or genres.""")
     if has('media_stop'):
         blocks.append('Use household_voice__media_stop for an explicit media stop. '
                       'It preserves spoken-content progress and does not dismiss alarms.')
+    if has('media_status'):
+        blocks.append('Use household_voice__media_status for what is playing, its artist/album, '
+            'position or current shuffle/repeat settings. Report returned metadata only; '
+            'a position is an observation, not a precise live clock.')
+    if has('media_queue_options'):
+        blocks.append('Use household_voice__media_queue_options to change existing music playback: '
+            'shuffle=true or false; repeat=one for the current track, all for the queue, off to stop repeating. '
+            'Supply only requested settings. This does not search or replace playback. '
+            'Respect spoken-content and dynamic-mix restrictions. Use existing native next/previous controls. '
+            'No content-safe playback sleep timer is currently exposed; do not substitute an audible '
+            'household timer or promise a delayed media stop. Never retry an uncertain queue change.')
     schedules = [PREFIX + name for name in ('create_timer', 'create_alarm', 'list_schedules', 'change_schedule') if has(name)]
     if schedules:
         blocks.append('Shared schedule tools: ' + ', '.join(schedules) + '. '
@@ -168,11 +179,15 @@ does not mean the system supports only playlists or genres.""")
             'Ground factual speech in its evidence, say when uncertain, and follow the editable '
             'parental policy. Never bypass a blocked or unavailable result with unrestricted search.')
     if has('find_place'):
-        blocks.append('Use household_voice__find_place for a requested weather location; '
+        blocks.append('Use household_voice__find_place for an explicitly named other weather location; '
             'ask which place if ambiguous. Keep returned place_id rather than inventing coordinates.')
     if has('forecast'):
-        blocks.append('Use household_voice__forecast for current/future weather, with a returned '
-            'place_id. Preserve requested location, dates, units and forecast detail. '
+        blocks.append('Use household_voice__forecast for current/future weather. For weather here, '
+            'at home, an unspecified location, or “Do I need a raincoat?”, omit place_id so '
+            'the backend uses Home Assistant’s configured home location. For an explicit other '
+            'place, find and clarify its location first, then pass the returned place_id. '
+            'Never invent coordinates or IDs, or turn an invalid explicit place into a home forecast. '
+            'Preserve requested location, dates, units and forecast detail. '
             'Keep conditions, forecast dates and precipitation probability distinct.')
     recipes = [PREFIX + name for name in ('find_recipe', 'read_recipe', 'start_recipe', 'recipe_step') if has(name)]
     if recipes:

@@ -1,0 +1,15 @@
+name: Household Voice Recording Worker (candidate)
+version: 0.0.3
+slug: household_voice_recording_worker
+description: Optional native capture transport; disabled until backend approval.
+arch:
+  - amd64
+startup: application
+boot: manual
+init: false
+homeassistant_api: true
+hassio_api: false
+options:
+  enabled: false
+schema:
+  enabled: bool

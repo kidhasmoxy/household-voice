@@ -1,0 +1,33 @@
+name: Recording worker build only
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - recording-worker/**
+      - .github/workflows/recording-worker.yml
+permissions:
+  contents: read
+jobs:
+  amd64:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - name: Build local image
+        run: docker build --platform linux/amd64 --build-arg BUILD_ARCH=amd64 --build-arg BUILD_VERSION=0.0.3 -t recording-worker-check recording-worker
+      - name: Disabled and missing-token startup
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/hv-worker-options"
+          printf '%s\n' '{"enabled":false}' > "$RUNNER_TEMP/hv-worker-options/options.json"
+          result=$(docker run --rm --network none --read-only --cap-drop ALL --security-opt no-new-privileges --user 10001:10001 --mount "type=bind,src=$RUNNER_TEMP/hv-worker-options,dst=/data,readonly" recording-worker-check)
+          test "$result" = '{"status": "disabled"}'
+          printf '%s\n' '{"enabled":true}' > "$RUNNER_TEMP/hv-worker-options/options.json"
+          result=$(docker run --rm --network none --read-only --cap-drop ALL --security-opt no-new-privileges --user 10001:10001 --mount "type=bind,src=$RUNNER_TEMP/hv-worker-options,dst=/data,readonly" recording-worker-check)
+          test "$result" = '{"status": "authorization_unavailable"}'
+      - name: Synthetic loopback and public packaging tests
+        run: |
+          docker run --rm --network none --read-only --cap-drop ALL --security-opt no-new-privileges --user 10001:10001 --tmpfs /tmp:rw,nosuid,noexec,size=64m,mode=1777 --mount "type=bind,src=$GITHUB_WORKSPACE/recording-worker,dst=/work/recording-worker,readonly" --env PYTHONDONTWRITEBYTECODE=1 --env PYTHONPATH=/app --entrypoint python recording-worker-check -m unittest discover -s /work/recording-worker/tests -p 'test_*.py' -v

@@ -1,0 +1,5 @@
+{
+  "upstream": "voice-replacement/recording-worker/recording_worker/protocol.py",
+  "version": 2,
+  "sha256": "1b2c572277ce68449ceb77275d17ab1f6c8932e50ffe182d29ea1a9690322e52"
+}

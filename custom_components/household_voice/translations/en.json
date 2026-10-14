@@ -255,9 +255,10 @@
       },
       "shared_assistant": {
         "title": "Shared Assist tools (preview)",
-        "description": "Provide Household Voice capabilities to one ordinary Home Assistant conversation agent. This switch does not change voice pipelines or the agent prompt. Select either Assist or the Tools for Assist Home Control API; remove separately selected Household Voice APIs to avoid duplicate tools. Use the shared master prompt and filter competing built-in timer and media tools before migration. Keep source-bound recording profiles until the replacement capture path is verified. Review and save to apply. Existing live action switches remain in effect.",
+        "description": "Provide Household Voice tools to one shared Home Assistant voice agent. This switch does not change its prompt or assigned pipelines. Shared-pipeline recordings use the optional Recording Worker app and each assistant’s existing Home Assistant room, without individual recording profiles. Keep this preview disabled until the app and recording test are ready. Live announcements and native capability tools must be enabled before saving shared-pipeline recordings. Conversation replies remain on the assistant. Review and save to apply.",
         "data": {
-          "assist_tools_enabled": "Provide native household capability tools"
+          "assist_tools_enabled": "Provide native household capability tools",
+          "native_recording_enabled": "Record announcements on a shared voice pipeline (preview)"
         }
       }
     },
@@ -294,7 +295,10 @@
       "invalid_knowledge_agent": "Select an available Local OpenAI conversation agent before enabling knowledge.",
       "invalid_knowledge_search_entry": "Select an existing Tools for Assist configuration or automatic credential reuse.",
       "invalid_knowledge_key": "Enter a valid API key without whitespace, or leave blank to reuse a configured key.",
-      "invalid_knowledge_budget": "Choose whole-number request limits in the allowed ranges."
+      "invalid_knowledge_budget": "Choose whole-number request limits in the allowed ranges.",
+      "native_recording_prerequisites": "Enable native capability tools, live actions and announcements first.",
+      "native_recording_embedded_required": "Shared-pipeline recordings require the coordinator inside Home Assistant.",
+      "native_recording_one_authority_required": "Shared-pipeline recordings require one enabled Household Voice integration."
     }
   }
 }

@@ -6,9 +6,14 @@ BACKENDS = '_household_voice_backup_backends'
 
 
 async def _resume(backends):
-    results = await asyncio.gather(*(item.async_resume_after_backup()
-        for item in reversed(backends)), return_exceptions=True)
-    return any(isinstance(result, BaseException) for result in results)
+    failed=False
+    # Resume storage and dependencies before any recording delivery worker.
+    ordered=sorted(reversed(backends),key=lambda item:bool(getattr(item,'native_recording_owner',False)))
+    for item in ordered:
+        if failed and getattr(item,'native_recording_owner',False):continue
+        try:await item.async_resume_after_backup()
+        except BaseException:failed=True
+    return failed
 
 
 async def async_pre_backup(hass):
@@ -30,7 +35,8 @@ async def async_pre_backup(hass):
         paused.append(controls)
         await controls.async_pause_for_backup()
         for coordinator in list(hass.data.get(DOMAIN, {}).values()):
-            for client in (getattr(coordinator, 'native_duck_runtime', None),
+            for client in (getattr(coordinator, 'native_recording', None),
+                           getattr(coordinator, 'native_duck_runtime', None),
                            getattr(coordinator, 'echomuse_runtime', None), coordinator.client):
                 pause = getattr(client, 'async_pause_for_backup', None)
                 if pause is not None:

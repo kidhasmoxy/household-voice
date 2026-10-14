@@ -23,19 +23,21 @@ def _physical_ids(device):
     return tuple('mac:'+value for value in macs if len(value)==12)
 
 
-def collect_pairings(hass,options):
+def collect_pairings(hass,options, *, read_only=False):
     """Synchronous event-loop registry read; recompute for each routed operation.
 
     MA transport currently supports MA outputs only. Native Sonos entities remain
     eligible room-volume controls. Provider groups are conservatively excluded
-    unless the collector can establish a fixed, same-area endpoint.
+    unless the collector can establish a fixed, same-area endpoint. read_only
+    permits observing an existing preferred grouped output; callers must never
+    use that view to authorize playback or queue mutations.
     """
     from homeassistant.helpers import area_registry as ar, device_registry as dr, entity_registry as er
     area_entries=list(_entries(ar.async_get(hass).areas))
     devices_raw={item.id:item for item in _entries(dr.async_get(hass).devices)}
     registry=list(_entries(er.async_get(hass).entities))
     area_names={item.id:item.name for item in area_entries}
-    devices=tuple(Device(item.id,getattr(item,'area_id',None),getattr(item,'disabled_by',None) is not None) for item in devices_raw.values())
+    devices=tuple(Device(item.id,getattr(dr,"async_get_effective_area_id",lambda _hass,device:getattr(device,"area_id",None))(hass,item),getattr(item,'disabled_by',None) is not None) for item in devices_raw.values())
     entities=[]; names={}; aliases={}
     for item in registry:
         if not item.entity_id.startswith(('assist_satellite.','media_player.')): continue
@@ -79,7 +81,7 @@ def collect_pairings(hass,options):
             if isinstance(value,str) and 1<=len(value)<=120)[:19]
         entities.append(Entity(item.entity_id,item.device_id,getattr(item,'area_id',None),integration,disabled,available,
             output_capable=integration=='music_assistant',volume_capable=volume,playing=getattr(state,'state',None)=='playing',
-            topology=topology,physical_ids=physical,native_output_capable=native_output))
+            topology='single' if read_only else topology,physical_ids=physical,native_output_capable=native_output))
     wire={'areas':area_names,'devices':[asdict(item) for item in devices],'entities':[asdict(item) for item in entities]}
     revision=hashlib.sha256(json.dumps(wire,sort_keys=True,default=str).encode()).hexdigest()
     snapshot=DiscoverySnapshot(revision,tuple(area_names),devices,tuple(entities))

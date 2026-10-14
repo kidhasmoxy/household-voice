@@ -92,6 +92,7 @@ class ResearchTests(unittest.IsolatedAsyncioTestCase):
         self.client=Client()
         self.entry=types.SimpleNamespace(entry_id='fixture',title='Fixture',options={'satellites':[{'satellite_device_id':'voice','room_id':'kitchen'}]})
         self.hass=types.SimpleNamespace(devices=types.SimpleNamespace(async_get=lambda value:types.SimpleNamespace(disabled_by=None) if value=='voice' else None))
+        self.hass.config=types.SimpleNamespace(latitude=51.5,longitude=-0.12)
         self.context=types.SimpleNamespace(device_id='voice',context=types.SimpleNamespace(id='turn',user_id=None))
         self.store=FixtureStore()
         self.api=module.HouseholdResearchAPI(self.hass,self.entry,self.client,
@@ -119,6 +120,61 @@ class ResearchTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual((await self.call(1,{'place_id':identifier,'days':days})).data['reason'],'invalid_forecast_request')
         self.now+=901
         self.assertEqual((await self.call(1,{'place_id':identifier})).data['reason'],'place_selection_expired')
+
+    async def test_home_forecast_uses_current_trusted_coordinates_without_place_search(self):
+        result=await self.call(1,{})
+        self.assertEqual(result.data['status'],'ready')
+        self.assertEqual(result.data['place'],'Home')
+        self.assertEqual(self.client.calls,[('forecast',{'latitude':51.5,'longitude':-0.12,'days':3,'units':'fahrenheit'})])
+        self.hass.config.latitude=0;self.hass.config.longitude=0
+        await self.call(1,{'days':1,'units':'celsius'})
+        self.assertEqual(self.client.calls[-1],('forecast',{'latitude':0,'longitude':0,'days':1,'units':'celsius'}))
+        self.assertFalse(self.api.places)
+
+    async def test_invalid_explicit_place_never_uses_home(self):
+        for identifier in ('','forged',None,True):
+            result=await self.call(1,{'place_id':identifier})
+            self.assertIn(result.data['status'],('clarify','error'))
+        places=await self.call(0,{'query':'Springfield'})
+        identifier=places.data['places'][0]['place_id'];self.now+=901
+        result=await self.call(1,{'place_id':identifier})
+        self.assertEqual(result.data['reason'],'place_selection_expired')
+        self.assertFalse(any(operation=='forecast' for operation,_ in self.client.calls))
+
+    async def test_invalid_home_coordinates_never_fetch(self):
+        for latitude,longitude in ((None,1),(True,1),('51.5',1),(float('nan'),1),
+                (float('inf'),1),(91,1),(-91,1),(1,181),(1,-181),(1,False)):
+            with self.subTest(latitude=latitude,longitude=longitude):
+                self.hass.config.latitude=latitude;self.hass.config.longitude=longitude
+                result=await self.call(1,{})
+                self.assertEqual(result.data['reason'],'home_weather_location_not_configured')
+        del self.hass.config
+        self.assertEqual((await self.call(1,{})).data['reason'],'home_weather_location_not_configured')
+        self.assertFalse(self.client.calls)
+
+    async def test_home_forecast_rejects_model_coordinates_days_and_units(self):
+        for args in ({'latitude':1},{'longitude':2},{'days':True},{'days':0},{'days':8},
+                     {'days':1.5},{'units':'kelvin'},{'units':None}):
+            result=await self.call(1,args)
+            self.assertIn(result.data['status'],('clarify','error'))
+        self.assertFalse(self.client.calls)
+
+    async def test_home_coordinate_echo_removed_without_mutating_cached_provider_response(self):
+        cached={'latitude':51.5,'longitude':-0.12,'daily':{},'daily_units':{},'source':'Fixture'}
+        async def forecast(*args):return cached
+        self.client.research=forecast
+        result=await self.call(1,{})
+        self.assertNotIn('latitude',result.data['forecast'])
+        self.assertNotIn('longitude',result.data['forecast'])
+        self.assertEqual(cached['latitude'],51.5)
+
+    async def test_remote_forecast_does_not_depend_on_valid_home_configuration(self):
+        self.hass.config.latitude=None
+        places=await self.call(0,{'query':'Springfield'})
+        result=await self.call(1,{'place_id':places.data['places'][1]['place_id']})
+        self.assertEqual(result.data['status'],'ready')
+        self.assertEqual(result.data['place'],'Springfield')
+        self.assertEqual(self.client.calls[-1][1]['latitude'],39.8)
 
     async def test_recipe_read_start_step_retry_and_restart(self):
         page=await self.call(2,{'url':'https://example.org/recipe'})
@@ -229,6 +285,24 @@ async def real_ha_smoke():
             assert places.data['requires_selection']
             weather=await call(1,{'place_id':places.data['places'][0]['place_id']},'weather')
             assert weather.data['forecast']['source']=='Open-Meteo'
+            # Actual HA config coordinates; native context has no user transcript.
+            hass.config.latitude=51.5;hass.config.longitude=-0.12
+            before=len(client.calls)
+            home=await call(1,{'days':1,'units':'celsius'},'home-weather')
+            assert home.data['status']=='ready' and home.data['place']=='Home'
+            assert client.calls[before:]==[('forecast',{'latitude':51.5,'longitude':-0.12,'days':1,'units':'celsius'})]
+            for args in ({'place_id':'unknown'},{'place_id':''},{'place_id':None},
+                         {'days':True},{'latitude':1},{'units':'kelvin'}):
+                before=len(client.calls)
+                invalid=await call(1,args,'invalid-home-weather-'+str(before))
+                assert invalid.data['status'] in ('clarify','error')
+                assert len(client.calls)==before
+            hass.config.latitude=float('nan')
+            invalid=await call(1,{},'invalid-home-location')
+            assert invalid.data['reason']=='home_weather_location_not_configured'
+            hass.config.latitude=0;hass.config.longitude=0
+            assert (await call(1,{},'changed-home-location')).data['status']=='ready'
+            assert client.calls[-1][1]['latitude']==0 and client.calls[-1][1]['longitude']==0
             page=await call(2,{'url':'https://example.org/recipe'},'read')
             assert (await call(3,{'recipe_id':page.data['recipes'][0]['recipe_id']},'start')).data['step_number']==1
             second=await call(4,{'operation':'next'},'next')
@@ -254,6 +328,7 @@ async def real_ha_smoke():
             print(json.dumps({'ha_version':__version__,'real_ha_research_api':True,'actual_ha_store_persistence':True,
                 'native_source_area_without_manual_mapping':True,'legacy_recipe_progress_preserved':True,
                 'place_selection':True,'recipe_navigation_retry':True,'registration_unload':True,
+                'home_forecast_actual_config_no_place_search':True,'invalid_explicit_place_never_falls_back_home':True,
                 'network_responses':'fixtures','physical_actions':False,'live_ha_contacted':False}),flush=True)
         finally:
             await hass.async_stop(force=True)

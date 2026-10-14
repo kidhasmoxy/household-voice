@@ -143,10 +143,14 @@ def build_assist_tools(hass, context, apis):
         matches = [api for api in recognized if isinstance(api, api_type)]
         if len(matches) != 1 or enabled_option and entry.options.get(enabled_option) is not True:
             continue
-        if api_type is BroadcastAPI and (entry.options.get('stt_capture_enabled') is not True
-                or getattr(matches[0].coordinator, 'broadcast_runtime', None) is None):
+        if api_type is BroadcastAPI and ((entry.options.get('stt_capture_enabled') is not True
+                and entry.options.get('native_recording_enabled') is not True) or getattr(matches[0].coordinator, 'broadcast_runtime', None) is None):
             continue
         tools.extend(AssistCapabilityTool(tool_type(name, matches[0]), legacy_names) for name in names)
+        if api_type is HouseholdMediaAPI:
+            from .media_controls import MediaControlTool, NAMES as control_names
+            tools.extend(AssistCapabilityTool(MediaControlTool(name, matches[0]), legacy_names)
+                         for name in control_names)
         if api_type is HouseholdScheduleAPI:
             from .schedule_stop import HouseholdStopTool
             tools.append(HouseholdStopTool(matches[0]))

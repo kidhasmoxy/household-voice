@@ -3,7 +3,9 @@
 Home Assistant custom integration for shared timers and alarms, Music Assistant
 playback, recorded announcements, and room speaker configuration. The durable
 coordinator runs inside Home Assistant. No companion app, container, cloud
-account, or paid subscription is required for the core features.
+account, or paid subscription is required for the core features. Original recordings
+on a single shared voice pipeline use an optional [Recording Worker app](recording-worker/README.md),
+which transports native microphone audio and leaves scheduling and playback in the integration.
 
 This is the **0.3.14 prerelease**. Automated tests cover implementation
 contracts; actual microphone capture, speaker delivery, phone presence, firmware,
@@ -101,7 +103,8 @@ know what other APIs that agent selected. No automatic cutover occurs.
 - Ambiguous recognized timer edits ask which timer you mean. Follow-up choices
   are tied to the device, conversation, and saved revision. Saying "stop" first
   dismisses all currently ringing household timers and alarms without cancelling
-  countdowns or future alarms. Use the router in each relevant voice pipeline.
+  countdowns or future alarms. The native-tool preview handles these through the
+  shared ordinary agent; the older router remains only for existing beta setups.
 - Shared room volume handling preserves manual changes and retries confirmed
   restores when an unavailable speaker returns. Group and physical-speaker aliases
   are checked before ducking; discovery does not enable external speech by itself.
@@ -117,8 +120,10 @@ signed audio links. The default phone policy requires a home report within five
 minutes. Configuration can instead require a report within one hour or accept the
 current Home Assistant home state without an age limit. Away, unknown, and
 unavailable states are excluded under every policy. Choose the policy that matches
-your phone's reporting behavior. Configure a separate STT wrapper/pipeline for each capture
-satellite; shared wrappers cannot safely establish microphone identity.
+your phone's reporting behavior. For original recordings on one shared pipeline,
+use the optional Recording Worker and the opt-in native backend described in
+[shared assistant setup](docs/shared-assistant.md). Existing legacy recording
+profiles need a separate STT wrapper per satellite; do not share those wrappers.
 
 For stock assistants, enable **Lower room speakers during native assistant
 conversations (beta)**. Conversation stays on the assistant's built-in speaker;

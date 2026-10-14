@@ -39,6 +39,20 @@ def route():
 
 
 class OptionsTests(unittest.TestCase):
+    def test_native_recording_defaults_off_and_requires_explicit_live_shared_announcements(self):
+        self.assertFalse(options.validate_options({},ENTITIES,DEVICES,SERVICES)['native_recording_enabled'])
+        for value in (1,'true',None,[]):
+            with self.subTest(value=value), self.assertRaises(options.RoutingError):
+                options.validate_options({'native_recording_enabled':value},ENTITIES,DEVICES,SERVICES)
+        for flags in ({'assist_tools_enabled':True},
+                      {'assist_tools_enabled':True,'live_actions_enabled':True},
+                      {'live_actions_enabled':True,'announcements_enabled':True}):
+            with self.subTest(flags=flags), self.assertRaises(options.RoutingError):
+                options.validate_options({**flags,'native_recording_enabled':True},ENTITIES,DEVICES,SERVICES)
+        configured=options.validate_options({'native_recording_enabled':True,'assist_tools_enabled':True,
+            'live_actions_enabled':True,'announcements_enabled':True},ENTITIES,DEVICES,SERVICES)
+        self.assertTrue(configured['native_recording_enabled'])
+
     def test_native_assist_opt_in_is_preserved_and_rejects_truthy_values(self):
         self.assertFalse(options.validate_options({}, ENTITIES, DEVICES, SERVICES)['assist_tools_enabled'])
         for enabled in (True, False):

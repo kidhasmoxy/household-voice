@@ -115,14 +115,14 @@ def _with_music_selection(arguments, context, operation):
     return {**arguments, 'query': style, 'selection_mode': 'broad_music'}
 
 
-def _resolve(hass, entry, context, target=None):
+def _resolve(hass, entry, context, target=None, *, read_only=False):
     """Read current config and HA registries on every call and dispatch."""
     options = deepcopy(dict(entry.options))
     if options.get('assist_tools_enabled') is True:
         from .request_area import resolve_source_area
         source_area = resolve_source_area(hass, options, context)
         if not source_area['legacy']:
-            return _resolve_area(hass, options, context, source_area, target)
+            return _resolve_area(hass, options, context, source_area, target, read_only=read_only)
     configured = options.get("media_rooms", [])
     satellites = options.get("satellites", [])
     if not isinstance(configured, list) or not 1 <= len(configured) <= 100 or not isinstance(satellites, list) or len(satellites) > 200:
@@ -198,16 +198,16 @@ def _resolve(hass, entry, context, target=None):
         raise MediaConfigurationError()
     resolved = registry.resolve(source_device=context.device_id, target=target)
     row = room_options[resolved["area"]]
-    enabled = options.get("live_actions_enabled") is True and options.get("media_enabled") is True
-    signature = hashlib.sha256(json.dumps([configured, satellites, ownership, rooms, enabled],
+    enabled = not read_only and options.get("live_actions_enabled") is True and options.get("media_enabled") is True
+    signature = hashlib.sha256(json.dumps([configured, satellites, ownership, rooms, enabled, read_only],
         sort_keys=True, allow_nan=False).encode()).hexdigest()
     return registry, row, signature, enabled
 
 
-def _resolve_area(hass, options, context, source_area, target):
+def _resolve_area(hass, options, context, source_area, target, *, read_only=False):
     """Bind a native request to current HA areas and existing audio preferences."""
     from .area_registry import collect_pairings
-    pairings = collect_pairings(hass, options)
+    pairings = collect_pairings(hass, options, read_only=True) if read_only else collect_pairings(hass, options)
     devices, entities, areas = dr.async_get(hass), er.async_get(hass), ar.async_get(hass)
     area_rows = list(areas.areas.values())
     aliases = {}
@@ -290,7 +290,7 @@ def _resolve_area(hass, options, context, source_area, target):
                          'music_player':selected, 'announcement_player':selected, 'aliases':target_aliases}
     registry = RoomRegistry(rooms)
     registry.resolve(source_device=context.device_id, target=target)
-    enabled = options.get('live_actions_enabled') is True and options.get('media_enabled') is True
+    enabled = not read_only and options.get('live_actions_enabled') is True and options.get('media_enabled') is True
     # Exclude playing/duck state, which legitimately changes during dispatch;
     # retain selection, topology-derived eligibility, availability and identity.
     routing = [{key: binding.get(key) for key in ('assistant_id','device_id','area_id','status',
@@ -299,7 +299,7 @@ def _resolve_area(hass, options, context, source_area, target):
                for key,value in pairings['outputs'].items()}
     signature = hashlib.sha256(json.dumps([source_area, row, configured,
         options.get('satellites', []), options.get('assistant_speaker_overrides', {}),
-        routing, outputs, rooms, enabled], sort_keys=True, allow_nan=False).encode()).hexdigest()
+        routing, outputs, rooms, enabled, read_only], sort_keys=True, allow_nan=False).encode()).hexdigest()
     return registry, row, signature, enabled
 
 

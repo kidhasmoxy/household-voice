@@ -125,7 +125,8 @@ async def verify_assist_tools(hass, entry):
             media_names = {tool.name for tool in media_instance.tools
                            if tool.name.startswith('household_voice__media_')}
             assert media_names == {'household_voice__media_play','household_voice__media_resume',
-                                   'household_voice__media_pause','household_voice__media_stop'}
+                                   'household_voice__media_pause','household_voice__media_stop',
+                                   'household_voice__media_status','household_voice__media_queue_options'}
             assert 'media_type=album' in media_instance.api_prompt
             assert 'shuffle=true' in media_instance.api_prompt
             for number,args in enumerate(({'query':'jazz','selection_mode':'broad_music'},
@@ -135,6 +136,8 @@ async def verify_assist_tools(hass, entry):
                 data = result.data if hasattr(result,'data') else result
                 assert data['reason'] == 'verified_source_and_media_configuration_required'
             service.assert_not_awaited()
+            from ha_media_controls_smoke import verify_media_controls
+            await verify_media_controls(hass,fixture_entry,context,satellite)
             fixture_entry.options = {}
             result = await tools[0].async_call(hass, llm.ToolInput(tool_name=tools[0].name,
                 tool_args={}, id='disabled-stale-tool'), context)

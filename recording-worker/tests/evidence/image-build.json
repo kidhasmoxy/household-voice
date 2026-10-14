@@ -1,0 +1,281 @@
+{
+  "image_manifest_digest": "sha256:12263249881c820596ea8bb218236ce47440ddd16b79124de2b8375a42e69416",
+  "image_config_digest": "sha256:3db71a0e0cc6444272b815da04882810a98762146e1c32b2040b9226f019ed1b",
+  "image_tar_sha256": "7fcd622c38a34190775559448bdbf6f26e47fb6b7a318401a317eaf2796b5f06",
+  "image_tar_bytes": 28931584,
+  "oci_archive_sha256": "0958a5153b9f16b115c83d2b7b637eae2059dabe624ed21099c94e93ef27f49b",
+  "layers_verified": 9,
+  "runtime_allowlist": [
+    "LICENSE",
+    "recording_worker/__init__.py",
+    "recording_worker/__main__.py",
+    "recording_worker/client.py",
+    "recording_worker/protocol.py",
+    "requirements.txt"
+  ],
+  "source_hash": "53f30af5d1097becc1c953502c2dd600144c4c676c30b85df1a846db26ce8e8c",
+  "final_image_user": "worker (UID10001)",
+  "layer_source_owner": "0:0; no group/world write",
+  "extracted_rootfs_ownership": "UID0 helper; app source ownership matches layer metadata; not a containerd owner test",
+  "disabled_entrypoint": true,
+  "enabled_without_token": true,
+  "malformed_options_fixed_status": true,
+  "loopback_protocol_suite": true,
+  "execution_uid": 10001,
+  "execution_gid": 10001,
+  "supplementary_groups": [],
+  "application_source_not_writable_by_worker": true,
+  "isolated_helper_only_capabilities": [
+    "SYS_CHROOT",
+    "SETUID",
+    "SETGID"
+  ],
+  "runtime_capabilities": "all dropped after isolated chroot",
+  "no_new_privileges": true,
+  "runtime_tests_kind": "built-rootfs execution; not Supervisor or containerd installation",
+  "production_adjacent_validator_import_required": false,
+  "test_only_validator": "reviewed canonical recording_session.py in portable tests/fixtures",
+  "verified_at": "2026-10-14T10:39:12.350625+00:00",
+  "supervisor_token_used": false,
+  "registry_push": false,
+  "home_assistant_contacted": false,
+  "physical_audio_test": false,
+  "locally_reverified_oci_blobs": true,
+  "version": "0.0.3 unpublished candidate",
+  "built_architecture": "amd64",
+  "arm64_build_tested": false,
+  "supervisor_installation_tested": false,
+  "containerd_launch_tested": false,
+  "production_backend_tested": false,
+  "stock_supervisor_app_token_tested": false,
+  "loopback_test_count": 55,
+  "source_files": {
+    "Dockerfile": "e4aa8b5604b1400211e96c914b3cbfba086daa170abe6c2f15750f35645379e4",
+    ".dockerignore": "b6c485c5babfc440f2e1bcaea0cbb716911a72ddde1a6e90d18601ba14445142",
+    "LICENSE": "9f2f1d71d4483b46b5875d049472dccac0d89fd0b78d9b9fd04223db313b96f4",
+    "requirements.txt": "7e9f59481b38fe603b00a5028d59912c41182494aa766c745791b7427dcead6c",
+    "recording_worker/__init__.py": "7e7eeb8daf5955a4dd7eca3de6be33790e0111c278094ec064d8abe71171d774",
+    "recording_worker/__main__.py": "da7cd9f733f2486456c63e766ee9c33a1d0fa47e7d1ac5f5799f5ad9b3c35f76",
+    "recording_worker/client.py": "d52b59a47fa8abcf98dba99d612631e16163fa5204ff774e631fd199a002d466",
+    "recording_worker/protocol.py": "1b2c572277ce68449ceb77275d17ab1f6c8932e50ffe182d29ea1a9690322e52"
+  },
+  "test_validator_sha256": "c59f0bc4266a2fc25ed9036fc2727d5eb193231fa26e8fbb5cced1e19dc28524",
+  "startup_network_budgets_seconds": {
+    "http_websocket_connect": 5,
+    "whole_authentication": 5,
+    "control_registration": 5,
+    "websocket_close": 2
+  },
+  "python_base": "python:3.14-alpine@sha256:f6a589d43c42b9e7f7dc67a12d37132491f362859a5d750607710cc56da3bc72",
+  "python_platform_digests": {
+    "amd64": "sha256:7f2ec713f0436c59df2362d973b6a05af9e87ba78f0e94f5245c302984a7a1fd",
+    "arm64": "sha256:aae362254cea6b75fe812f0b428f10b3b361a090fe5655fb1d03937f6d38cda9"
+  },
+  "resolved_packages": {
+    "aiohappyeyeballs": "2.7.1",
+    "aiohttp": "3.14.4",
+    "aiosignal": "1.4.0",
+    "attrs": "26.1.0",
+    "frozenlist": "1.8.0",
+    "idna": "3.20",
+    "multidict": "6.9.1",
+    "pip": "26.2.1",
+    "propcache": "0.5.4",
+    "yarl": "1.25.1"
+  },
+  "dependency_license_metadata": [
+    {
+      "distribution": "aiohappyeyeballs-2.7.1.dist-info",
+      "license_files": [
+        "usr/local/lib/python3.14/site-packages/aiohappyeyeballs-2.7.1.dist-info/licenses/LICENSE"
+      ],
+      "name": "aiohappyeyeballs",
+      "version": "2.7.1",
+      "license_expression": null,
+      "license_field": "PSF-2.0"
+    },
+    {
+      "distribution": "aiohttp-3.14.4.dist-info",
+      "license_files": [
+        "usr/local/lib/python3.14/site-packages/aiohttp-3.14.4.dist-info/licenses/LICENSE.txt",
+        "usr/local/lib/python3.14/site-packages/aiohttp-3.14.4.dist-info/licenses/vendor/llhttp/LICENSE"
+      ],
+      "name": "aiohttp",
+      "version": "3.14.4",
+      "license_expression": "Apache-2.0 AND MIT",
+      "license_field": null
+    },
+    {
+      "distribution": "aiosignal-1.4.0.dist-info",
+      "license_files": [
+        "usr/local/lib/python3.14/site-packages/aiosignal-1.4.0.dist-info/licenses/LICENSE"
+      ],
+      "name": "aiosignal",
+      "version": "1.4.0",
+      "license_expression": null,
+      "license_field": "Apache 2.0"
+    },
+    {
+      "distribution": "attrs-26.1.0.dist-info",
+      "license_files": [
+        "usr/local/lib/python3.14/site-packages/attrs-26.1.0.dist-info/licenses/LICENSE"
+      ],
+      "name": "attrs",
+      "version": "26.1.0",
+      "license_expression": "MIT",
+      "license_field": null
+    },
+    {
+      "distribution": "frozenlist-1.8.0.dist-info",
+      "license_files": [
+        "usr/local/lib/python3.14/site-packages/frozenlist-1.8.0.dist-info/licenses/LICENSE"
+      ],
+      "name": "frozenlist",
+      "version": "1.8.0",
+      "license_expression": null,
+      "license_field": "Apache-2.0"
+    },
+    {
+      "distribution": "idna-3.20.dist-info",
+      "license_files": [
+        "usr/local/lib/python3.14/site-packages/idna-3.20.dist-info/licenses/LICENSE.md"
+      ],
+      "name": "idna",
+      "version": "3.20",
+      "license_expression": "BSD-3-Clause",
+      "license_field": null
+    },
+    {
+      "distribution": "multidict-6.9.1.dist-info",
+      "license_files": [
+        "usr/local/lib/python3.14/site-packages/multidict-6.9.1.dist-info/licenses/LICENSE"
+      ],
+      "name": "multidict",
+      "version": "6.9.1",
+      "license_expression": null,
+      "license_field": "Apache License 2.0"
+    },
+    {
+      "distribution": "pip-26.2.1.dist-info",
+      "license_files": [
+        "usr/local/lib/python3.14/site-packages/pip-26.2.1.dist-info/licenses/AUTHORS.txt",
+        "usr/local/lib/python3.14/site-packages/pip-26.2.1.dist-info/licenses/LICENSE.txt",
+        "usr/local/lib/python3.14/site-packages/pip-26.2.1.dist-info/licenses/src/pip/_vendor/cachecontrol/LICENSE.txt",
+        "usr/local/lib/python3.14/site-packages/pip-26.2.1.dist-info/licenses/src/pip/_vendor/certifi/LICENSE",
+        "usr/local/lib/python3.14/site-packages/pip-26.2.1.dist-info/licenses/src/pip/_vendor/distlib/LICENSE.txt",
+        "usr/local/lib/python3.14/site-packages/pip-26.2.1.dist-info/licenses/src/pip/_vendor/distro/LICENSE",
+        "usr/local/lib/python3.14/site-packages/pip-26.2.1.dist-info/licenses/src/pip/_vendor/idna/LICENSE.md",
+        "usr/local/lib/python3.14/site-packages/pip-26.2.1.dist-info/licenses/src/pip/_vendor/msgpack/COPYING",
+        "usr/local/lib/python3.14/site-packages/pip-26.2.1.dist-info/licenses/src/pip/_vendor/packaging/LICENSE",
+        "usr/local/lib/python3.14/site-packages/pip-26.2.1.dist-info/licenses/src/pip/_vendor/packaging/LICENSE.APACHE",
+        "usr/local/lib/python3.14/site-packages/pip-26.2.1.dist-info/licenses/src/pip/_vendor/packaging/LICENSE.BSD",
+        "usr/local/lib/python3.14/site-packages/pip-26.2.1.dist-info/licenses/src/pip/_vendor/pkg_resources/LICENSE",
+        "usr/local/lib/python3.14/site-packages/pip-26.2.1.dist-info/licenses/src/pip/_vendor/platformdirs/LICENSE",
+        "usr/local/lib/python3.14/site-packages/pip-26.2.1.dist-info/licenses/src/pip/_vendor/pygments/LICENSE",
+        "usr/local/lib/python3.14/site-packages/pip-26.2.1.dist-info/licenses/src/pip/_vendor/pyproject_hooks/LICENSE",
+        "usr/local/lib/python3.14/site-packages/pip-26.2.1.dist-info/licenses/src/pip/_vendor/requests/LICENSE",
+        "usr/local/lib/python3.14/site-packages/pip-26.2.1.dist-info/licenses/src/pip/_vendor/resolvelib/LICENSE",
+        "usr/local/lib/python3.14/site-packages/pip-26.2.1.dist-info/licenses/src/pip/_vendor/rich/LICENSE",
+        "usr/local/lib/python3.14/site-packages/pip-26.2.1.dist-info/licenses/src/pip/_vendor/tomli/LICENSE",
+        "usr/local/lib/python3.14/site-packages/pip-26.2.1.dist-info/licenses/src/pip/_vendor/tomli_w/LICENSE",
+        "usr/local/lib/python3.14/site-packages/pip-26.2.1.dist-info/licenses/src/pip/_vendor/truststore/LICENSE",
+        "usr/local/lib/python3.14/site-packages/pip-26.2.1.dist-info/licenses/src/pip/_vendor/urllib3/LICENSE.txt"
+      ],
+      "name": "pip",
+      "version": "26.2.1",
+      "license_expression": "MIT",
+      "license_field": null
+    },
+    {
+      "distribution": "propcache-0.5.4.dist-info",
+      "license_files": [
+        "usr/local/lib/python3.14/site-packages/propcache-0.5.4.dist-info/licenses/LICENSE",
+        "usr/local/lib/python3.14/site-packages/propcache-0.5.4.dist-info/licenses/NOTICE"
+      ],
+      "name": "propcache",
+      "version": "0.5.4",
+      "license_expression": null,
+      "license_field": "Apache-2.0"
+    },
+    {
+      "distribution": "yarl-1.25.1.dist-info",
+      "license_files": [
+        "usr/local/lib/python3.14/site-packages/yarl-1.25.1.dist-info/licenses/LICENSE",
+        "usr/local/lib/python3.14/site-packages/yarl-1.25.1.dist-info/licenses/NOTICE"
+      ],
+      "name": "yarl",
+      "version": "1.25.1",
+      "license_expression": null,
+      "license_field": "Apache-2.0"
+    }
+  ],
+  "scope": "isolated no-push image build and validated-rootfs execution; no household action",
+  "stock_core_client_runs": [
+    {
+      "version": "2026.9.4",
+      "image": "ghcr.io/home-assistant/home-assistant@sha256:3e6710a7ab2a61311d9d899b719f6c3657791c63e8f4942cec4ebc42401d6b76",
+      "log_sha256": "8686cda93114972eead4ae47de8e726ec30dde8314d6d82492438aab118e81f5",
+      "real_authenticated_ws": true,
+      "real_native_question_pipeline": true,
+      "synthetic_hardware_and_stt": true,
+      "worker_proof": {
+        "actual_native_question_to_existing_capture_api": true,
+        "generated_binding_no_stt_wrapper": true,
+        "exact_original_wav_stored": true,
+        "existing_outbox_survives_authority_restart": true,
+        "original_broadcast_runtime_delivery_worker": true,
+        "phone_target_transcript_preserved": true,
+        "duplicate_request_no_recapture": true,
+        "backup_quiescence": true,
+        "three_lost_upload_acks_recovered_without_audio_retry": true,
+        "actual_v2_rotation_after_durable_release_seeded_119_tombstones": true,
+        "native_cancel_retains_unknown_source_hold": true,
+        "backup_resume_preserves_hold": true,
+        "synthetic_transport_only": true,
+        "supervisor_proxy_tested": false,
+        "production_adapter_proven": false
+      }
+    },
+    {
+      "version": "2026.10.1",
+      "image": "ghcr.io/home-assistant/home-assistant@sha256:130241f28d01fa80dfa3b44f7d89781c188d8642ecab9024f079f19f9f82baa0",
+      "log_sha256": "c3db086fc6b84cbefc21f62245b96ff02c7670733aa23d93cdb7c29644cc15ca",
+      "real_authenticated_ws": true,
+      "real_native_question_pipeline": true,
+      "synthetic_hardware_and_stt": true,
+      "worker_proof": {
+        "actual_native_question_to_existing_capture_api": true,
+        "generated_binding_no_stt_wrapper": true,
+        "exact_original_wav_stored": true,
+        "existing_outbox_survives_authority_restart": true,
+        "original_broadcast_runtime_delivery_worker": true,
+        "phone_target_transcript_preserved": true,
+        "duplicate_request_no_recapture": true,
+        "backup_quiescence": true,
+        "three_lost_upload_acks_recovered_without_audio_retry": true,
+        "actual_v2_rotation_after_durable_release_seeded_119_tombstones": true,
+        "native_cancel_retains_unknown_source_hold": true,
+        "backup_resume_preserves_hold": true,
+        "synthetic_transport_only": true,
+        "supervisor_proxy_tested": false,
+        "production_adapter_proven": false
+      }
+    }
+  ],
+  "stock_core_worker_sources_sha256": {
+    "client.py": "d52b59a47fa8abcf98dba99d612631e16163fa5204ff774e631fd199a002d466",
+    "protocol.py": "1b2c572277ce68449ceb77275d17ab1f6c8932e50ffe182d29ea1a9690322e52",
+    "__init__.py": "7e7eeb8daf5955a4dd7eca3de6be33790e0111c278094ec064d8abe71171d774",
+    "__main__.py": "da7cd9f733f2486456c63e766ee9c33a1d0fa47e7d1ac5f5799f5ad9b3c35f76"
+  },
+  "entrypoint_registration_stock_core_tested": false,
+  "stock_core_scope": "Current client with isolated draft backend; production adapter and Supervisor remain untested",
+  "protocol_version": 2,
+  "stock_core_proof_limitations": [
+    "Synthetic hardware/STT and output only",
+    "Native prompt is fixture-gated until capture ACK; physical timing unproven",
+    "Rotation threshold seeded with119 consumed tombstones, not119 actual Core captures",
+    "Installed Supervisor token preflight not run",
+    "Canonical composition, native recovery UI and physical acceptance not wired"
+  ]
+}
