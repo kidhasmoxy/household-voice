@@ -2,7 +2,7 @@
   "files": {
     ".gitattributes": "8d75fbed0329d55480242ea79c61cbdd3da312c700298bfba9572b81ec325cc6",
     ".github/workflows/recording-worker.yml": "177bf3e4b5a43210ab2bbfe6effe54edfb677e2a76af96cc45701937d84f5c77",
-    ".github/workflows/release.yml": "7e9339e10708c46377ec5b62e970cc8448eacd110101f243ec8192a37ef12049",
+    ".github/workflows/release.yml": "617809096c9af989c1459928471becb049ed9d274034b6237f21845aaf6ca8ce",
     ".github/workflows/validate.yml": "8c1bfd5b2b1a6b28d87ef946e53b1772d1d1d2074d5acf6c0139c08c62f1bac2",
     ".gitignore": "21f103a51802e49dfb71f8e77bd53dc666adb3fb322efb8019a86ee20cb7f4e0",
     "CHANGELOG.md": "5e066a9b9eb68d670c24ac0a1b726b20be255634c4fdab0225ba9c0788f39aa7",
