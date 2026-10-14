@@ -33,6 +33,8 @@ def initial_options(existing):
     result.setdefault("spoken_media_policy", "pause_and_resume")
     result.setdefault("phone_presence_policy", "recent_five_minutes")
     result.setdefault("conversation_fallback_agent", "")
+    result.setdefault("assist_tools_enabled", False)
+    result.setdefault("native_recording_enabled", False)
     result.setdefault("single_turn_announcements_enabled", False)
     result.setdefault("announcement_alignment_url", "")
     result.setdefault("announcement_alignment_model", "")
@@ -221,6 +223,8 @@ def satellite(data, entities, devices, services):
 
 def validate_options(data, entities, devices, services):
     result = initial_options(data)
+    if type(result['assist_tools_enabled']) is not bool or type(result['native_recording_enabled']) is not bool:
+        raise RoutingError('invalid_enabled')
     try:
         result.update(validate_knowledge_settings(result))
         selected = result['knowledge_agent']
@@ -233,6 +237,9 @@ def validate_options(data, entities, devices, services):
     result.update(alignment_options(result))
     result["conversation_fallback_agent"] = conversation_fallback(result["conversation_fallback_agent"], entities)
     result.update(feature_options(result))
+    if result['native_recording_enabled'] and not all(result[key] for key in
+            ('assist_tools_enabled','live_actions_enabled','announcements_enabled')):
+        raise RoutingError('native_recording_prerequisites')
     overrides=result['assistant_speaker_overrides']
     if not isinstance(overrides,dict) or len(overrides)>100:
         raise RoutingError('invalid_mapping')

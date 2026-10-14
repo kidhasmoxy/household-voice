@@ -1,5 +1,52 @@
 # Changelog
 
+## 0.3.14
+
+Opt-in native recorded-announcement backend reuses the existing recording store,
+durable outbox and playback guards. An optional amd64 Recording Worker app carries
+original PCM through the public Core capture API; no extra conversation agent,
+STT engine or scheduler is added. HA registries generate source bindings. Setup,
+reload, backup, unknown-source recovery and shutdown use owned lifecycle checks.
+Unknown recording holds survive changing recording modes. The admin sidebar adds
+dropdown-based recording recovery. Both integration and app options default off;
+Supervisor authorization and physical room acceptance remain deployment gates.
+
+Media tools can report current content, including grouped speakers, without
+changing playback. Explicit shuffle/repeat edits retain profile, source and
+spoken-content safeguards before each dispatch; uncertain changes are not replayed
+or rolled back. Omitted forecast locations now use configured HA home coordinates;
+explicit invalid or stale place identifiers never fall back to home.
+
+Alarms now preserve an explicit date or resolve today/tomorrow in the requested
+timezone. Existing alarm clock changes use guarded rescheduling, preserving the
+assistant, stored date/recurrence and disabled state, with revision and bound
+clarification checks. The manager adds an optional date picker and clock editing.
+Actual Home Assistant CI covers the date, DST, replay and rescheduling contracts.
+
+Development preview of native Assist tool contribution. An off-by-default setting
+contributes capability tools through Home Assistant's standard LLM platform,
+reusing the existing API objects, executors, caches and locks. A read-only source
+context tool resolves the requesting device from HA's registry, and sourced family
+knowledge becomes a tool. No conversation agent or router is added.
+
+Media play tools expose explicit exact or broad selection, so genre requests can
+use the native agent's tool arguments without relying on transcript parsing.
+Named albums, soundtrack shuffle and spoken-content constraints remain explicit.
+Native media and recipe tools resolve the current HA device area automatically,
+reuse verified Music Assistant profiles, and invalidate playback on area changes.
+Ringing-first stop dismisses the complete ringing set atomically; explicit
+alarm/timer stops cannot fall through to music. Expiring schedule-choice tokens
+require a later request and the same device/user, arguments and candidate revisions.
+The shared-tool preview has an administrator options switch and capability
+guidance rendered from available tools. Native cross-tool references are renamed
+without changing legacy API objects.
+
+Legacy router behavior is retained during staging. This preview does not migrate
+pipelines, remove duplicate selected APIs, or claim acoustic stop/one-pipeline
+original-recording parity. Real-Core fixtures exercise the canonical integration
+and owned question/capture gate with synthetic hardware and STT. Body-only audio
+from a one-request announcement is not implemented in this native path.
+
 ## 0.3.13
 
 Removes integration-added media response, lookup and dispatch deadlines. Slow

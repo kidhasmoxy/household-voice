@@ -35,6 +35,7 @@ create_alarm:
     config_entry_id: {name: Coordinator entry ID, selector: {text: {}}}
     label: {name: Label, required: true, selector: {text: {}}}
     local_time: {name: Time (HH:MM), required: true, selector: {text: {}}}
+    date: {name: Specific date, description: Optional YYYY-MM-DD date for a one-shot alarm; a past deadline is rejected., selector: {date: {}}}
     timezone: {name: IANA timezone, required: true, example: America/New_York, selector: {text: {}}}
     weekdays: {name: Days, description: JSON integer list from Monday=0 to Sunday=6., required: true, example: '[0,1,2,3,4,5,6]', selector: {object: {}}}
     one_shot: {name: Only next occurrence, default: false, selector: {boolean: {}}}
@@ -53,9 +54,14 @@ command:
       required: true
       selector:
         select:
-          options: [pause, resume, add, set, cancel, dismiss, snooze, move, enable, disable, rename, delete]
+          options: [pause, resume, add, set, cancel, dismiss, snooze, move, enable, disable, rename, delete, reschedule]
     expected_revision: {name: Current revision, required: true, selector: {number: {min: 1, max: 2147483647, mode: box}}}
     seconds: {name: Add/subtract or snooze seconds, selector: {number: {min: -604800, max: 604800, mode: box}}}
+    local_time: {name: New alarm time (HH:MM), selector: {text: {}}}
+    date: {name: New alarm date, selector: {date: {}}}
+    timezone: {name: New IANA timezone, selector: {text: {}}}
+    weekdays: {name: New alarm weekdays, selector: {object: {}}}
+    one_shot: {name: One-shot alarm, selector: {boolean: {}}}
     target_room: {name: New room for timer move, selector: {text: {}}}
     target_assistant_id: {name: New assistant for alarm move, selector: {entity: {domain: assist_satellite}}}
     label: {name: New label for rename, selector: {text: {}}}

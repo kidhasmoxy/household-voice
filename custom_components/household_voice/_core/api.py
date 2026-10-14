@@ -31,8 +31,9 @@ class ScheduleAPI:
     def dispatch(self, operation, payload):
         schemas = {
             'timer': ({'label', 'seconds', 'source_room', 'request_id'}, {'target_room','target_assistant_id'}),
-            'alarm': ({'label', 'local_time', 'timezone', 'weekdays', 'source_room', 'request_id','target_assistant_id'}, {'target_room', 'one_shot'}),
-            'command': ({'identifier', 'operation', 'request_id', 'expected_revision'}, {'seconds', 'target_room', 'label','target_assistant_id'}),
+            'alarm': ({'label', 'local_time', 'timezone', 'weekdays', 'source_room', 'request_id','target_assistant_id'}, {'target_room', 'one_shot', 'date'}),
+            'command': ({'identifier', 'operation', 'request_id', 'expected_revision'}, {'seconds', 'target_room', 'label','target_assistant_id', 'local_time','timezone','weekdays','one_shot','date'}),
+            'dismiss_ringing': ({'request_id', 'expected'}, set()),
         }
         if operation not in schemas:
             raise APIError('Unknown operation', 404)
@@ -42,7 +43,12 @@ class ScheduleAPI:
         data = dict(payload)
         if operation == 'alarm':
             data['tz_name'] = data.pop('timezone')
+        elif operation == 'command' and 'timezone' in data:
+            data['tz_name'] = data.pop('timezone')
         try:
+            if operation == 'dismiss_ringing':
+                return {'mode':'dry_run','ha_connected':False,
+                        'ringing_decision':self.scheduler.dismiss_ringing(**data)}
             result = getattr(self.scheduler, {'timer': 'create_timer', 'alarm': 'create_alarm', 'command': 'command'}[operation])(**data)
             return {'mode': 'dry_run', 'ha_connected': False, 'schedule': result}
         except (ValueError, TypeError, KeyError, OverflowError) as exc:

@@ -12,9 +12,11 @@ separately enabled worker. Successful storage does not confirm an audible alarm.
 from collections import OrderedDict
 import asyncio
 from copy import deepcopy
+from datetime import datetime, timedelta
 import hashlib
 import json
 import time
+from zoneinfo import ZoneInfo
 
 from aiohttp import ClientError
 import probatio
@@ -27,44 +29,54 @@ from .api import CoordinatorConflict, CoordinatorError
 from .contracts import validate_payload
 from .policy.routing import RoomRegistry
 from .policy.schedule_tools import ScheduleContext, ScheduleRecord, ScheduleRequest, ScheduleSnapshot, plan_schedule
+from .schedule_selection import ScheduleChoices
 
 
 @callback
 def async_get_tools(hass, llm_context, api_id):
-    """Do not inject named Household Voice APIs into HA's default Assist API.
-
-    HA discovers this module as an LLM platform because it is named llm.py.
-    Our tools are registered separately as explicitly selectable APIs below.
-    None is the platform contract for contributing no tools or prompt.
-    """
-    return None
+    """Opt-in native Assist contribution; legacy APIs retain their own state."""
+    if api_id != 'assist':
+        return None
+    get_apis = getattr(llm, 'async_get_apis', None)
+    if get_apis is None:
+        return None
+    apis = [api for api in get_apis(hass)
+            if getattr(getattr(api, 'entry', None), 'options', {}).get('assist_tools_enabled') is True
+            and getattr(api.entry, 'disabled_by', None) is None]
+    if not apis:
+        return None
+    from .assist_tools import build_assist_tools
+    return build_assist_tools(hass, llm_context, apis)
 
 
 INTEGRATION = 'household_voice'
 NAMES = ('household_list_schedules', 'household_create_timer', 'household_create_alarm', 'household_change_schedule')
-OPERATIONS = ('stop', 'pause', 'resume', 'add', 'set', 'cancel', 'dismiss', 'snooze', 'move', 'enable', 'disable', 'rename', 'delete')
+OPERATIONS = ('stop', 'pause', 'resume', 'add', 'set', 'cancel', 'dismiss', 'snooze', 'move', 'enable', 'disable', 'rename', 'delete', 'reschedule')
 SELECTORS = {'schedule_id': str, 'label': str, 'kind': probatio.In(('timer', 'alarm')), 'room': str,
              'room_scope': probatio.In(('target', 'source'))}
 SCHEMAS = {
     NAMES[0]: probatio.Schema({**{probatio.Optional(k): v for k,v in SELECTORS.items()}, probatio.Optional('include_terminal'): bool}),
     NAMES[1]: probatio.Schema({probatio.Required('seconds'): probatio.Any(int, float), probatio.Optional('label'): str, probatio.Optional('target_room'): str,probatio.Optional('target_assistant_id'):str}),
     NAMES[2]: probatio.Schema({probatio.Required('local_time'): str, probatio.Optional('label'): str,
-        probatio.Optional('timezone'): str, probatio.Optional('weekdays'): [int], probatio.Optional('one_shot'): bool, probatio.Optional('target_assistant'): str}),
+        probatio.Optional('timezone'): str, probatio.Optional('weekdays'): [int], probatio.Optional('one_shot'): bool, probatio.Optional('target_assistant'): str,
+        probatio.Optional('date'): str, probatio.Optional('day'): probatio.In(('today','tomorrow'))}),
     NAMES[3]: probatio.Schema({probatio.Required('operation'): probatio.In(OPERATIONS),
         **{probatio.Optional(k): v for k,v in SELECTORS.items()}, probatio.Optional('seconds'): probatio.Any(int, float),
-        probatio.Optional('new_target_room'): str, probatio.Optional('new_target_assistant'): str, probatio.Optional('new_label'): str}),
+        probatio.Optional('new_target_room'): str, probatio.Optional('new_target_assistant'): str, probatio.Optional('new_label'): str,
+        probatio.Optional('choice_token'): str, probatio.Optional('local_time'): str, probatio.Optional('timezone'): str,
+        probatio.Optional('date'): str, probatio.Optional('weekdays'): [int], probatio.Optional('one_shot'): bool}),
 }
 FIELDS = {
     NAMES[0]: set(SELECTORS) | {'include_terminal'},
     NAMES[1]: {'seconds', 'label', 'target_room','target_assistant_id'},
-    NAMES[2]: {'local_time', 'label', 'timezone', 'weekdays', 'one_shot', 'target_assistant'},
-    NAMES[3]: set(SELECTORS) | {'operation', 'seconds', 'new_target_room', 'new_target_assistant', 'new_label'},
+    NAMES[2]: {'local_time', 'label', 'timezone', 'weekdays', 'one_shot', 'target_assistant', 'date', 'day'},
+    NAMES[3]: set(SELECTORS) | {'operation', 'seconds', 'new_target_room', 'new_target_assistant', 'new_label','choice_token','local_time','timezone','date','weekdays','one_shot'},
 }
 DESCRIPTIONS = {
     NAMES[0]: 'List household timers and alarms globally, including those created in other rooms. Labels are exact stored labels. If the exact label or ID is not already known, list by kind and optionally room without a label filter, then use the returned schedule ID. Do not append words such as alarm or timer to a stored label.',
     NAMES[1]: 'Create one new countdown timer. Do not use this for changing an existing timer or a referential set request. Ask which timer when an update is ambiguous. Source assistant comes from the trusted voice device. An explicitly requested target_room or target_assistant_id must resolve to one assistant. Check returned audio_delivery for whether ringing is enabled.',
-    NAMES[2]: 'Create one local-time alarm bound to an assistant and its paired speaker. By default use the listening assistant; target_assistant is only for an explicitly requested other assistant ID or unambiguous name. Never choose a generic room speaker. weekdays uses Monday=0, Tuesday=1, Wednesday=2, Thursday=3, Friday=4, Saturday=5, Sunday=6. Weekdays Monday through Friday are [0,1,2,3,4]; weekends are [5,6]. Omitted timezone uses Home Assistant timezone. Omitted weekdays means every day; omitted one_shot is true unless weekdays are supplied. Check returned audio_delivery for whether ringing is enabled.',
-    NAMES[3]: 'Change one existing schedule. set changes the absolute remaining seconds of an active or paused timer; add adjusts remaining seconds. An ID returned by listing is not user selection when multiple candidates match: ask which one and await the answer. Never guess a label or ID. Bare stop ringing priority is handled by the trusted conversation router; this tool still selects one schedule. Never infer a revision or cancel all schedules.',
+    NAMES[2]: 'Create one local-time alarm bound to an assistant and its paired speaker. By default use the listening assistant; target_assistant is only for an explicitly requested other assistant ID or unambiguous name. Never choose a generic room speaker. Preserve an explicitly requested day: day=today or tomorrow is resolved by the tool using its current local date; date=YYYY-MM-DD is for another explicit date. Never supply both. Dated alarms are one-shot, not recurring; an already passed date/time is rejected rather than moved to tomorrow. With no day/date use the next occurrence. weekdays uses Monday=0, Tuesday=1, Wednesday=2, Thursday=3, Friday=4, Saturday=5, Sunday=6. Weekdays Monday through Friday are [0,1,2,3,4]; weekends are [5,6]. Omitted timezone uses Home Assistant timezone. Omitted weekdays means every day; omitted one_shot is true unless weekdays are supplied. Check returned audio_delivery for whether ringing is enabled.',
+    NAMES[3]: 'Change one existing schedule. set changes timer remaining seconds; add adjusts timer remaining seconds. For an alarm time edit use operation=reschedule, kind=alarm, local_time=HH:MM. It preserves the assistant, existing one-shot civil date and recurrence unless replacements are explicit. Optional date=YYYY-MM-DD, timezone, weekdays and one_shot update alarm settings; never discard recurrence merely to satisfy an ambiguous single-date exception. move changes assistant destination, not clock time. When choices are returned, ask which one and wait for a later user request. Then repeat the same operation arguments with the returned choice_token and selected schedule_id. Listing is not selection. Never guess IDs or revisions. Use household_voice__stop for bare stop: ringing schedules have priority over media.',
 }
 
 
@@ -156,6 +168,15 @@ class ScheduleTool(llm.Tool):
                 raise ValueError('Unexpected tool fields')
             self.parameters(args)
             args = deepcopy(args)
+            if (self.name == NAMES[3] and self.api.entry.options.get('assist_tools_enabled') is True
+                    and args.get('operation') in ('add','set','pause','resume')):
+                # These operations only apply to timers in the schedule contract.
+                # An omitted type must not create a pointless selector question
+                # for one timer; multiple candidates still require a bound choice.
+                args.setdefault('kind','timer')
+            if (self.name == NAMES[3] and self.api.entry.options.get('assist_tools_enabled') is True
+                    and args.get('operation')=='reschedule'):
+                args.setdefault('kind','alarm')
             args = constrain_arguments('schedules', 'list' if self.name == NAMES[0] else args.get('operation', self.name), args, llm_context)
             reference=trusted_schedule_edit(llm_context)
             if reference is not None:
@@ -186,6 +207,17 @@ class ScheduleTool(llm.Tool):
             if self.name in (NAMES[1],NAMES[2]) or self.name==NAMES[3] and args.get('operation')=='move':
                 await self.api.coordinator.async_request_refresh()
             data = await self.api.coordinator.client.schedules()
+            choice_authorized=False
+            if self.name==NAMES[3] and self.api.entry.options.get('assist_tools_enabled') is True:
+                if 'choice_token' in args:
+                    try:
+                        args=self.api.choices.redeem(args['choice_token'],llm_context,args,data['schedules'])
+                        choice_authorized=True
+                    except ValueError:
+                        return tool_result(llm,data=_response('clarify','schedule_choice_invalid_or_expired',
+                            question='Please tell me which timer or alarm to change again.'))
+            elif 'choice_token' in args:
+                return tool_result(llm,data=_response('clarify','schedule_choice_not_available'))
             registry = _registry(data)
             for field in ('room','new_target_room'):
                 if field in args:
@@ -194,6 +226,7 @@ class ScheduleTool(llm.Tool):
                         return tool_result(llm,data=_response('clarify','unknown_or_ambiguous_room',rooms=data['rooms']))
                     args[field]=resolved
             if self.name in (NAMES[0], NAMES[3]):
+                choice_args=deepcopy(args)
                 move_assistant=args.pop('new_target_assistant',None)
                 selected_assistant=None
                 if move_assistant is not None:
@@ -204,11 +237,27 @@ class ScheduleTool(llm.Tool):
                         return tool_result(llm,data=_response('clarify','assistant_unavailable_or_ambiguous',assistants=data.get('assistants',[])))
                     args['new_target_room']=selected_assistant['area_id']
                 snapshot = ScheduleSnapshot(self.api.clock(), tuple(ScheduleRecord.from_row(row) for row in data['schedules']))
+                if (self.name==NAMES[3] and self.api.entry.options.get('assist_tools_enabled') is True
+                        and 'schedule_id' in args and not choice_authorized):
+                    # Resolve assistant destinations first; preserve the original
+                    # destination selector in the follow-up capability.
+                    broad={k:v for k,v in args.items() if k not in ('schedule_id','label')}
+                    selection=plan_schedule(ScheduleRequest(**broad),snapshot,ScheduleContext(request_id),registry,now=self.api.clock())
+                    if selection.get('reason') in ('ambiguous_schedule','selector_required') and len(selection.get('choices',[]))>1:
+                        repeated={k:v for k,v in choice_args.items() if k not in ('schedule_id','label')}
+                        token=self.api.choices.issue(llm_context,repeated,selection['choices'])
+                        return tool_result(llm,data=_response('clarify','schedule_choice_required',
+                            choices=selection['choices'],choice_token=token,repeat_arguments=repeated,
+                            question='Which timer or alarm did you mean?'))
                 request = ScheduleRequest(**({'operation': 'list'} if self.name==NAMES[0] else {}), **args)
                 plan = plan_schedule(request, snapshot, ScheduleContext(request_id), registry, now=self.api.clock())
                 if plan['status']!='ready':
                     result = _response(plan['status'], plan['reason'], selection=_public_plan(plan),assistants=data.get('assistants',[]),
                                        coordinator_mode=data.get('mode', 'unknown'))
+                    if (self.name==NAMES[3] and self.api.entry.options.get('assist_tools_enabled') is True
+                            and len(plan.get('choices',[]))>1 and plan.get('reason') in ('ambiguous_schedule','selector_required')):
+                        result['choice_token']=self.api.choices.issue(llm_context,choice_args,plan['choices'])
+                        result['repeat_arguments']=choice_args
                     return tool_result(llm, data=result)
                 service, payload = 'command', plan['command']
                 if args.get('operation')=='move':
@@ -221,6 +270,13 @@ class ScheduleTool(llm.Tool):
                         payload['target_room']=selected_assistant['area_id']
             else:
                 source = _source(self.api.entry, llm_context, registry,data)
+                if self.api.entry.options.get('assist_tools_enabled') is True:
+                    from .request_area import resolve_source_area, RequestAreaError
+                    try:
+                        location=resolve_source_area(hass,self.api.entry.options,llm_context)
+                        source=_room(data,registry,location['area_id'])
+                    except RequestAreaError:
+                        source=None
                 if source is None:
                     return tool_result(llm, data=_response('clarify', 'trusted_source_room_required',
                         question='This voice device needs a room mapping in Household Voice settings.'))
@@ -252,7 +308,16 @@ class ScheduleTool(llm.Tool):
                         return tool_result(llm,data=_response('clarify','choose_available_assistant_with_paired_speaker',assistants=data.get('assistants',[])))
                     payload['target_assistant_id']=selected['id']
                     payload.setdefault('timezone', hass.config.time_zone)
+                    if 'day' in payload:
+                        if 'date' in payload:
+                            return tool_result(llm,data=_response('clarify','choose_one_alarm_date'))
+                        day=payload.pop('day')
+                        local_today=datetime.fromtimestamp(self.api.clock(),ZoneInfo(payload['timezone'])).date()
+                        payload['date']=(local_today+timedelta(days=day=='tomorrow')).isoformat()
                     payload.setdefault('one_shot', 'weekdays' not in payload)
+                    if 'date' in payload:
+                        if payload.get('one_shot') is not True:
+                            return tool_result(llm,data=_response('clarify','choose_dated_or_recurring_alarm'))
                     payload.setdefault('weekdays', list(range(7)))
                 payload = validate_payload(service, payload)
             mutation = await self.api.coordinator.client.mutate(service, payload)
@@ -287,6 +352,7 @@ class HouseholdScheduleAPI(llm.API):
         self.entry, self.coordinator, self.clock = entry, coordinator, clock
         self.completed = OrderedDict()
         self.call_lock = asyncio.Lock()
+        self.choices = ScheduleChoices(clock)
 
     async def async_get_api_instance(self, llm_context):
         return llm.APIInstance(api=self, llm_context=llm_context,

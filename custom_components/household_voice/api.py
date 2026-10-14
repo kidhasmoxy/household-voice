@@ -60,6 +60,17 @@ class VoiceClient:
             raise CoordinatorError("Coordinator room metadata is incompatible")
         return data
 
+    async def dismiss_ringing(self, request_id, expected):
+        result = await self._request('POST','/v1/schedules/dismiss_ringing',
+                                     {'request_id':request_id,'expected':expected})
+        decision=result.get('ringing_decision')
+        if (not isinstance(decision,dict) or type(decision.get('dismissed_count')) is not int
+                or not isinstance(decision.get('dismissed_ids'),list)
+                or decision['dismissed_count']!=len(decision['dismissed_ids'])
+                or decision.get('no_ringing_at_decision') is not (decision['dismissed_count']==0)):
+            raise CoordinatorError('Ringing decision incompatible; do not stop media or retry')
+        return result
+
     async def mutate(self, service, data):
         payload = validate_payload(service, data)
         payload.pop("config_entry_id", None)

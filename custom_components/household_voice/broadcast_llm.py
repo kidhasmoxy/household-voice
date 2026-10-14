@@ -25,7 +25,7 @@ class BroadcastTool(llm.Tool):
     def __init__(self, name, api):
         self.name, self.api, self.parameters = name, api, SCHEMAS[name]
         self.description = {
-            NAMES[0]: 'Start a recorded household announcement. After your current reply finishes the device asks what to announce and records one answer. Do not ask for the announcement text yourself or send message text to this tool. Omitted rooms means the configured announcement group, and only freshly home phones are notified.',
+            NAMES[0]: 'Start a recorded household announcement. After your current reply finishes the device asks what to announce and records one answer. Do not ask for the announcement text yourself or send message text to this tool. Omitted rooms means the configured announcement group. Phones receive the exact transcript when they satisfy the configured home-presence policy.',
             NAMES[1]: 'Cancel this voice device\'s active recording question or pending announcement targets. Already accepted audio or notifications cannot be retracted.',
             NAMES[2]: 'Check this voice device\'s latest announcement workflow and delivery outcomes. Service acceptance is not proof someone heard or received it.',
         }[name]

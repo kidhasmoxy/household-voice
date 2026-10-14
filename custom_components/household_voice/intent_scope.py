@@ -183,6 +183,7 @@ def _constrain_media_destination(family, operation, arguments, llm_context):
             # No user catalog-choice event exists in this ambiguous fallback.
             # selected_uri would bypass the full literal title match in policy.
             or 'selected_uri' in arguments
+            or arguments.get('selection_mode', 'exact') != 'exact'
             or arguments.get('kind', 'music') != 'music'):
         raise ScopeConflict()
     query, target = _literal_slot(expected.get('query')), _literal_slot(expected.get('target_room'))

@@ -1,0 +1,8 @@
+{
+  "origin": "canonical custom_components/household_voice/recording_session.py",
+  "origin_project": "https://github.com/kidhasmoxy/household-voice",
+  "sha256": "c59f0bc4266a2fc25ed9036fc2727d5eb193231fa26e8fbb5cced1e19dc28524",
+  "purpose": "test-only; excluded from runtime image",
+  "origin_raw_sha256": "623593140abdc80617bce03715e1326da82184d67f4f50fa77a51897b545583d",
+  "line_endings": "canonical source normalized to LF"
+}

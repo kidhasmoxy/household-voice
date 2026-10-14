@@ -44,7 +44,7 @@ async def async_setup_entry(hass, entry, async_add_entities):
     selected pipeline before arming; the administrator assigns each dedicated
     wrapper to its source satellite after reviewing the integration.
     """
-    if entry.options.get("stt_capture_enabled") is not True:
+    if entry.options.get("stt_capture_enabled") is not True or entry.options.get("native_recording_enabled") is True:
         return
     coordinator = hass.data["household_voice"][entry.entry_id]
     runtime = getattr(coordinator, "broadcast_runtime", None)

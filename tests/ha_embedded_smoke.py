@@ -100,6 +100,8 @@ async def main():
             assert 'Household Voice' not in assist.api_prompt
             assert len([api for api in llm.async_get_apis(hass) if api.id.startswith('household_voice_')]) == 4
             proof['real_llm_platform_discovery_no_duplicate_assist_tools'] = True
+            from ha_assist_tools_smoke import verify_assist_tools
+            proof['native_assist_tools_scaffold'] = await verify_assist_tools(hass, entry)
             # Real multi-API wrapping uses api.name, not api.id, as tool namespace.
             # Keep names valid for OpenAI-compatible function schemas, even when
             # a user renames the config entry to a long or non-ASCII title.

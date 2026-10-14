@@ -3,9 +3,11 @@
 Home Assistant custom integration for shared timers and alarms, Music Assistant
 playback, recorded announcements, and room speaker configuration. The durable
 coordinator runs inside Home Assistant. No companion app, container, cloud
-account, or paid subscription is required for the core features.
+account, or paid subscription is required for the core features. Original recordings
+on a single shared voice pipeline use an optional [Recording Worker app](recording-worker/README.md),
+which transports native microphone audio and leaves scheduling and playback in the integration.
 
-This is the **0.3.13 prerelease**. Automated tests cover implementation
+This is the **0.3.14 prerelease**. Automated tests cover implementation
 contracts; actual microphone capture, speaker delivery, phone presence, firmware,
 and audiobook resume require validation on your equipment. Keep an independent
 alarm available until your installation passes those tests. Home Assistant must
@@ -24,20 +26,12 @@ their respective audio features.
    your Music Assistant server can reach, then open configuration to map rooms,
    voice devices, Music Assistant
    players, announcement defaults, and optional phone presence/notification pairs.
-4. Configure the voice provider to select the Household Voice tools alongside
-   its existing house-control tools. Tool registration does not select them.
-5. Optionally choose a fallback conversation agent in Household Voice settings,
-   then select the new Household Voice router entity in one voice pipeline.
-   Exact English requests such as "make an announcement", "cancel announcement",
-   and "announcement status" use the announcement runtime directly. Recognized
-   timer changes and ringing-stop requests also run deterministically; optional
-   general knowledge uses its separate provider path. Remaining requests go to
-   your selected agent. Leaving the fallback blank keeps this router disabled.
-   For whole, simple English commands such as "stop my alarm" or "resume my book",
-   the router scopes Household Voice tool calls to the requested category. This
-   rejects conflicting tool arguments and fills an omitted category. Other wording
-   and requests sent directly to the fallback agent do not get this constraint;
-   it does not guarantee that the model will call a tool or that audio will play.
+4. For the native-tool preview, follow [shared assistant setup](docs/shared-assistant.md)
+   using one ordinary conversation agent and one editable master prompt. Tool
+   registration alone does not select or curate the agent's tools.
+5. Keep an existing legacy beta configuration until its migration gates pass.
+   Legacy APIs and the optional router remain for compatibility; do not select
+   both legacy APIs and native Household Voice tools in the same agent.
 6. Enable and test one feature and one room before expanding to the household.
 
 For manual installation, extract the release's `household_voice.zip` into
@@ -53,6 +47,17 @@ device package and can be pinned to a reviewed source commit. It is a separate
 firmware update, not part of a HACS installation.
 
 ## Features and configuration
+
+Development preview: native Assist contribution is implemented behind the
+off-by-default `assist_tools_enabled` setting. It reuses existing Household Voice
+capabilities without a custom conversation agent, and adds source-context and
+sourced family-knowledge tools. The options menu provides **Shared Assist tools
+(preview)**. Current-area media/recipe resolution, ringing-first stop and later
+request schedule-choice validation are implemented. Keep the existing beta
+configuration until provider tool selection, microphone follow-up and original
+recording migration pass their respective gates. Enabling the preview must also
+remove legacy API selections from the agent; HA's contribution callback does not
+know what other APIs that agent selected. No automatic cutover occurs.
 
 - Durable, shared timers and recurring or one-shot alarms with revision-checked
   commands, restart recovery, bounded ringing, and an HA management page.
@@ -98,7 +103,8 @@ firmware update, not part of a HACS installation.
 - Ambiguous recognized timer edits ask which timer you mean. Follow-up choices
   are tied to the device, conversation, and saved revision. Saying "stop" first
   dismisses all currently ringing household timers and alarms without cancelling
-  countdowns or future alarms. Use the router in each relevant voice pipeline.
+  countdowns or future alarms. The native-tool preview handles these through the
+  shared ordinary agent; the older router remains only for existing beta setups.
 - Shared room volume handling preserves manual changes and retries confirmed
   restores when an unavailable speaker returns. Group and physical-speaker aliases
   are checked before ducking; discovery does not enable external speech by itself.
@@ -114,8 +120,10 @@ signed audio links. The default phone policy requires a home report within five
 minutes. Configuration can instead require a report within one hour or accept the
 current Home Assistant home state without an age limit. Away, unknown, and
 unavailable states are excluded under every policy. Choose the policy that matches
-your phone's reporting behavior. Configure a separate STT wrapper/pipeline for each capture
-satellite; shared wrappers cannot safely establish microphone identity.
+your phone's reporting behavior. For original recordings on one shared pipeline,
+use the optional Recording Worker and the opt-in native backend described in
+[shared assistant setup](docs/shared-assistant.md). Existing legacy recording
+profiles need a separate STT wrapper per satellite; do not share those wrappers.
 
 For stock assistants, enable **Lower room speakers during native assistant
 conversations (beta)**. Conversation stays on the assistant's built-in speaker;

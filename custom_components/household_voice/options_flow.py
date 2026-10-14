@@ -55,7 +55,25 @@ class HouseholdVoiceOptionsFlow(config_entries.OptionsFlow):
 
     async def async_step_init(self, user_input=None):
         self._ensure_draft()
-        return self.async_show_menu(step_id="init", menu_options=["features", "assistant_pairing", "conversation_routing", "knowledge_family", "announcements", "single_turn_announcements", "phone", "satellite", "media", "alarms", "capture", "test_pairing", "audio_recovery", "native_audio_recovery", "remove", "review"])
+        return self.async_show_menu(step_id="init", menu_options=["features", "shared_assistant", "assistant_pairing", "conversation_routing", "knowledge_family", "announcements", "single_turn_announcements", "phone", "satellite", "media", "alarms", "capture", "test_pairing", "audio_recovery", "native_audio_recovery", "remove", "review"])
+
+    async def async_step_shared_assistant(self, user_input=None):
+        """Expose capabilities to the ordinary agent; never change its assignments."""
+        self._ensure_draft()
+        errors = {}
+        if user_input is not None:
+            enabled = user_input.get('assist_tools_enabled')
+            native = user_input.get('native_recording_enabled',self.draft['native_recording_enabled'])
+            if type(enabled) is not bool or type(native) is not bool:
+                errors['base'] = 'invalid_enabled'
+            else:
+                self.draft['assist_tools_enabled'] = enabled
+                self.draft['native_recording_enabled'] = native
+                return await self.async_step_init()
+        return self._form('shared_assistant', {
+            vol.Required('assist_tools_enabled', default=self.draft['assist_tools_enabled']): BooleanSelector(),
+            vol.Optional('native_recording_enabled', default=self.draft['native_recording_enabled']): BooleanSelector(),
+        }, errors, user_input or self.draft)
 
     async def async_step_knowledge_family(self, user_input=None):
         """Administrative HA options only; never a model-accessible settings tool."""
@@ -484,6 +502,12 @@ class HouseholdVoiceOptionsFlow(config_entries.OptionsFlow):
         errors = {}
         if user_input is not None:
             try:
+                if self.draft.get('native_recording_enabled'):
+                    if self.config_entry.data.get('mode')!='embedded':
+                        raise RoutingError('native_recording_embedded_required')
+                    entries=[item for item in self.hass.config_entries.async_entries('household_voice') if item.disabled_by is None]
+                    if len(entries)!=1 or entries[0].entry_id!=self.config_entry.entry_id:
+                        raise RoutingError('native_recording_one_authority_required')
                 result = validate_options(self.draft, *self._registry())
             except RoutingError as exc:
                 errors["base"] = str(exc)
