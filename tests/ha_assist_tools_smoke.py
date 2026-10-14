@@ -30,7 +30,7 @@ async def verify_assist_tools(hass, entry):
         fixture_entry.options = {'assist_tools_enabled':True, 'knowledge_enabled':True}
         assert platform.async_get_tools(hass, context, 'other-api') is None
         with patch.object(knowledge_llm, 'async_answer', new_callable=AsyncMock) as answer, \
-                patch.object(hass.services, 'async_call', new_callable=AsyncMock) as service:
+                patch.object(type(hass.services), 'async_call', new_callable=AsyncMock) as service:
             answer.return_value = {'status':'ready', 'speech':'Fixture sourced answer.',
                 'sources':[], 'household_actions':False}
             contribution = platform.async_get_tools(hass, context, 'assist')

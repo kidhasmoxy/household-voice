@@ -94,7 +94,7 @@
     "scripts/brand_icon.py": "c469f34fa9748894dee4c918e96c4ad163419896a172e33fed2c39c8694dd77a",
     "scripts/build_release.py": "86b216fe8b44561ad50f0d8c1f996c8d7869c47dc4b5c3cc1fc558efb34154a9",
     "scripts/update_manifest.py": "33bc8bf17ae64ca89e1a6f8cbacc6f2255487759f5cd73c01ed58c79f5634fe9",
-    "tests/ha_assist_tools_smoke.py": "88d60a4469a267483520ff4c18fbd38573c5b1273753eb9be0fef09f372657e8",
+    "tests/ha_assist_tools_smoke.py": "121c03c010ee54771a27d89182c4e9dbd8d8e141ef4bdb9cbb13afb7a5e4018b",
     "tests/ha_conversation_router_smoke.py": "0167caa713ad4e240ff54564436e82c5f556b2e129bf50f49acdf46ef8c06438",
     "tests/ha_embedded_smoke.py": "262b3d52d409e012ff317c80455c8156f7df58ea03389d96e59987b6949b5437",
     "tests/ha_media_llm_smoke.py": "1e38e4e4875a8fd69ee841e103b0aaf8bb128917fb95d29de450a7a75fe28a36",
