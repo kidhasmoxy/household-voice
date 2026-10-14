@@ -8,6 +8,7 @@ import asyncio
 import base64
 import json
 import logging
+import os
 import tempfile
 from types import MappingProxyType
 
@@ -93,6 +94,7 @@ async def main():
             hass.auth = await auth_manager_from_config(hass, [], [])
             assert await async_setup_component(hass, 'network', {})
             assert await async_setup_component(hass, 'websocket_api', {})
+            assert await async_setup_component(hass, 'auth', {})
             component = EntityComponent(logging.getLogger(__name__), 'stt', hass)
             component.register_shutdown()
             hass.data[STT] = component
@@ -303,7 +305,12 @@ async def main():
             cases.append('capture_requires_administrator')
             await hass.async_block_till_done()
             assert not hass.data[KEY_ASSIST_PIPELINE].device_audio_queues
-            print(json.dumps({'ha_version':__version__,'cases':cases,'real_authenticated_ws':True,'real_native_question_pipeline':True,'synthetic_hardware_and_stt':True,'production_adapter_proven':False}))
+            worker_proof = None
+            if os.environ.get('RECORDING_WORKER_PROOF') == '1':
+                from ha_recording_worker_checks import run_worker_checks
+                worker_proof = await run_worker_checks(hass,http,make_satellite,finish,pcm1)
+                cases.append('actual_worker_native_capture_backend_ws_end_barrier')
+            print(json.dumps({'ha_version':__version__,'cases':cases,'real_authenticated_ws':True,'real_native_question_pipeline':True,'synthetic_hardware_and_stt':True,'production_adapter_proven':False,'worker_proof':worker_proof}))
         finally:
             for task in tasks:
                 if not task.done(): task.cancel()

@@ -46,6 +46,8 @@ def service_schema(name):
 
 async def async_setup(hass, config):
     hass.data.setdefault(DOMAIN, {})
+    from .assist_inventory import async_register as async_register_inventory
+    async_register_inventory(hass)
     async def handle(call):
         entries = hass.data[DOMAIN]
         requested = call.data.get(CONF_ENTRY)

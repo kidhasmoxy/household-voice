@@ -56,6 +56,13 @@ household capabilities enabled. Remove unavailable capability paragraphs when
 copying it, or use the per-request rendered guidance with unfiltered Assist.
 Provider identity, household preferences and parental wording remain editable.
 
+Multiple selected APIs add a namespace from the API name, such as
+`home-control__household_voice__media_play`. Use the admin
+`household_voice/assist_inventory` command to generate guidance from the exact
+observed callable names; this all-capabilities example uses one API. The inventory
+performs discovery only and does not return private provider prompts or prove
+that a memory server enforces read-only access.
+
 ```text
 You are the family's Home Assistant voice assistant. Be warm, clear and brief.
 Use a family friendly default suitable for children of about eight. Explain
@@ -68,6 +75,7 @@ Call an available tool before confirming an action and inspect its result.
 For action requests, your first response must call the relevant tool: never
 announce "I'm playing" or "I've started" without a tool result from this request,
 including artist shuffle. A response with no action tool has performed no action.
+Call tool names exactly as provided, retaining every namespace prefix.
 Distinguish stored, requested, completed, ambiguous, unavailable and uncertain.
 Do not claim audible playback from service acceptance or a dry-run plan. Never
 retry an uncertain mutation automatically. Correct completion matters more than

@@ -164,6 +164,12 @@ class ScheduleTool(llm.Tool):
                 raise ValueError('Unexpected tool fields')
             self.parameters(args)
             args = deepcopy(args)
+            if (self.name == NAMES[3] and self.api.entry.options.get('assist_tools_enabled') is True
+                    and args.get('operation') in ('add','set','pause','resume')):
+                # These operations only apply to timers in the schedule contract.
+                # An omitted type must not create a pointless selector question
+                # for one timer; multiple candidates still require a bound choice.
+                args.setdefault('kind','timer')
             args = constrain_arguments('schedules', 'list' if self.name == NAMES[0] else args.get('operation', self.name), args, llm_context)
             reference=trusted_schedule_edit(llm_context)
             if reference is not None:

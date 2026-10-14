@@ -9,7 +9,8 @@
   "requirements": [],
   "dependencies": [
     "frontend",
-    "http"
+    "http",
+    "websocket_api"
   ],
   "codeowners": [
     "@kidhasmoxy"
