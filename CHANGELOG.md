@@ -1,5 +1,29 @@
 # Changelog
 
+## 0.3.16
+
+Shared-pipeline original recordings use an explicit, durable, versioned standard
+Music Assistant announcement contract. Microphone provenance is independent of
+whether a speaker advertises native, AirPlay or other output protocols. The
+existing Music Assistant renderer, chime handling and configured group behavior
+are retained; no separate Music Assistant fork is required.
+
+Older native handoffs keep their verified-native policy. Missing, corrupt or
+inconsistent contract/source/receipt evidence cannot downgrade them. New contracts
+are part of immutable handoff identity and resolved by the embedded authority,
+not trusted from caller metadata. Exact spoken queue ownership, uncertain-output
+holds, final source/destination checks and no-replay rules remain.
+
+Enabling native microphone capture no longer changes unrelated alarm/EchoMuse
+playback policy. Original conversation audio stays on the satellite. Shared
+pipeline migration still requires proving the existing recording app's supported
+Supervisor-token registration before changing pipeline assignments. Device
+pipeline preferences can be saved while a satellite is offline; physical capture
+and hearing remain separate acceptance tests.
+
+Install ZIP metadata is explicit so Windows and Linux builds produce identical
+bytes for the same reviewed sources. No worker runtime/image update is required.
+
 ## 0.3.15
 
 Valid native microphones no longer depend on their music speaker pairing.

@@ -13,12 +13,46 @@ import re
 import base64
 from pathlib import Path
 
+STANDARD_MA_CONTRACT='native_question_standard_ma_v1'
+
+def request_signature(source,targets,contract=None):
+    """Bind source, frozen destinations and playback semantics in one identity."""
+    identity=[source,targets]
+    if contract is not None:
+        if contract!=STANDARD_MA_CONTRACT:raise ValueError('recording_contract_unverified')
+        identity.append({'capture':'native_owned_question','playback_contract':contract})
+    return hashlib.sha256(json.dumps(identity,sort_keys=True).encode()).hexdigest()
+
+def _native_policy(row,captures,recording_id):
+    """Old rows remain strict; only coherent new authority receipts opt in."""
+    row=dict(row)
+    contract=row.get('playback_contract')
+    if contract is None:return 'verified_native'
+    if contract!=STANDARD_MA_CONTRACT:raise ValueError('recording_contract_unverified')
+    try:
+        source=json.loads(row['source_identity']);targets=json.loads(row['targets'])
+        if (not isinstance(source,dict) or source.get('device_id')!=row['source']
+                or not isinstance(targets,list) or not targets
+                or row['phase'] not in ('ready','queued') or row['cancel_requested']
+                or row['recording_id']!=recording_id
+                or row['nonce']!='native_'+hashlib.sha256(row['request_id'].encode()).hexdigest()
+                or row['signature']!=request_signature(source,targets,contract)):
+            raise ValueError('recording_contract_unverified')
+        receipts=captures.execute('SELECT nonce,status,signature FROM capture_uploads WHERE recording_id=? LIMIT 3',(recording_id,)).fetchall()
+        signature=row['upload_signature']
+        if (not isinstance(signature,str) or not re.fullmatch('[a-f0-9]{64}',signature)
+                or len(receipts)!=1 or tuple(receipts[0])!=(row['nonce'],'complete',signature)):
+            raise ValueError('recording_contract_unverified')
+    except (KeyError,TypeError,json.JSONDecodeError) as error:
+        raise ValueError('recording_contract_unverified') from error
+    return 'standard_ma'
+
 
 def recording_transport_policy(scheduler_path,capture_path,recording_id):
     """Read durable origin under the existing embedded authority's state lock.
 
-    No metadata/schema migration. Native handoff associations and capture nonce
-    receipts predate this policy. Absence of a native row alone proves nothing:
+    Native source provenance is independent of the versioned playback contract.
+    Absence of a native row alone proves nothing:
     only one completed, non-native capture receipt may authorize legacy routing.
     """
     if not isinstance(recording_id,str) or not re.fullmatch('[a-f0-9]{32}',recording_id):
@@ -26,10 +60,14 @@ def recording_transport_policy(scheduler_path,capture_path,recording_id):
     scheduler=captures=None
     try:
         scheduler=sqlite3.connect(Path(scheduler_path).resolve().as_uri()+'?mode=ro',uri=True)
+        scheduler.row_factory=sqlite3.Row
         native=scheduler.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='native_capture_handoffs'").fetchone()
-        if native and scheduler.execute('SELECT 1 FROM native_capture_handoffs WHERE recording_id=? LIMIT 1',(recording_id,)).fetchone():
-            return 'verified_native'
+        linked=scheduler.execute('SELECT * FROM native_capture_handoffs WHERE recording_id=? LIMIT 3',(recording_id,)).fetchall() if native else []
+        if linked and all(dict(row).get('playback_contract') is None for row in linked):return 'verified_native'
         captures=sqlite3.connect(Path(capture_path).resolve().as_uri()+'?mode=ro',uri=True)
+        if linked:
+            if len(linked)!=1:raise ValueError('recording_origin_unverified')
+            return _native_policy(linked[0],captures,recording_id)
         rows=captures.execute('SELECT nonce,status FROM capture_uploads WHERE recording_id=? LIMIT 3',(recording_id,)).fetchall()
         if any(isinstance(nonce,str) and nonce.startswith('native_') for nonce,_ in rows):
             return 'verified_native'
@@ -61,6 +99,9 @@ class HandoffLedger:
                 db.execute('ALTER TABLE native_capture_handoffs ADD COLUMN created REAL NOT NULL DEFAULT 0')
             if 'upload_signature' not in {row['name'] for row in db.execute('PRAGMA table_info(native_capture_handoffs)')}:
                 db.execute('ALTER TABLE native_capture_handoffs ADD COLUMN upload_signature TEXT')
+            for name in ('playback_contract','source_identity'):
+                if name not in {row['name'] for row in db.execute('PRAGMA table_info(native_capture_handoffs)')}:
+                    db.execute(f'ALTER TABLE native_capture_handoffs ADD COLUMN {name} TEXT')
 
     @contextmanager
     def db(self):
@@ -83,9 +124,9 @@ class HandoffLedger:
         with self.db() as db:
             return self._row(db.execute('SELECT * FROM native_capture_handoffs WHERE source=? ORDER BY rowid DESC LIMIT 1',(source,)).fetchone())
 
-    def begin(self,request_id,source,targets):
+    def begin(self,request_id,source,targets,*,playback_contract=None):
         if not isinstance(request_id,str) or not 1<=len(request_id)<=200:raise ValueError('invalid_request')
-        signature=hashlib.sha256(json.dumps([source.__dict__,targets],sort_keys=True).encode()).hexdigest()
+        signature=request_signature(source.__dict__,targets,playback_contract)
         nonce='native_'+hashlib.sha256(request_id.encode()).hexdigest()
         with self.db() as db:
             old=db.execute('SELECT * FROM native_capture_handoffs WHERE request_id=?',(request_id,)).fetchone()
@@ -94,8 +135,9 @@ class HandoffLedger:
                 return self._row(old),False
             if db.execute('SELECT COUNT(*) FROM native_capture_handoffs').fetchone()[0]>=10000:
                 raise ValueError('handoff_capacity')
-            db.execute('INSERT INTO native_capture_handoffs VALUES(?,?,?,?,?,?,NULL,NULL,0,?,NULL)',
-                (request_id,signature,source.device_id,nonce,json.dumps(targets,sort_keys=True),'reserved',self.clock()))
+            db.execute('INSERT INTO native_capture_handoffs(request_id,signature,source,nonce,targets,phase,created,playback_contract,source_identity) VALUES(?,?,?,?,?,?,?,?,?)',
+                (request_id,signature,source.device_id,nonce,json.dumps(targets,sort_keys=True),'reserved',self.clock(),
+                 playback_contract,json.dumps(source.__dict__,sort_keys=True) if playback_contract is not None else None))
             return self._row(db.execute('SELECT * FROM native_capture_handoffs WHERE request_id=?',(request_id,)).fetchone()),True
 
     def advance(self,request_id,expected,phase,*,recording_id=None,broadcast_id=None,upload_signature=None):
@@ -143,7 +185,7 @@ class HandoffAuthority:
         if row is None or row['phase']!='uploading' or row['cancel_requested'] or self.captures is None:return None
         now=self.ledger.clock()
         if not row['created']<=now<row['created']+120:return None
-        expected=hashlib.sha256(json.dumps([source.__dict__,row['targets']],sort_keys=True).encode()).hexdigest()
+        expected=request_signature(source.__dict__,row['targets'],row.get('playback_contract'))
         if row['source']!=source.device_id or row['signature']!=expected:return None
         signature=row['upload_signature']
         if not isinstance(signature,str) or not re.fullmatch('[a-f0-9]{64}',signature):return None

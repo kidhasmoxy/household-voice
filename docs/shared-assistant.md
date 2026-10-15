@@ -1,6 +1,6 @@
 # Shared assistant preview
 
-This is the 0.3.15 development preview. It contributes tools to an ordinary
+This is the 0.3.16 development preview. It contributes tools to an ordinary
 Home Assistant agent; it does not add or assign a conversation agent. Automated
 contract checks are not microphone or acoustic acceptance. The optional recording
 app supports the staged native two-turn capture backend; both default disabled.
@@ -17,10 +17,12 @@ app supports the staged native two-turn capture backend; both default disabled.
    memory MCP can remain selected; its server must enforce the read-only scope.
 4. With Home Control, exclude competing native timer, catalog playback,
    pause/resume and synthesized broadcast tools using the actual inventory names.
-   Keep normal home controls and use Household Voice media control for paired
-   volume/next/previous/mute, plus Household Voice media stop. Exclude the six
-   competing native media controls listed below only when the replacement is
-   enabled. Do not remove every media entity or script. Review the inventory after
+   Keep normal home controls and Household Voice media stop. Paired media control
+   still refuses grouped mutations: hide `household_voice__media_control` and
+   retain the six existing next/previous, volume and mute controls for such setups.
+   Exclude the six competing controls only after the replacement supports the
+   configured outputs. Do not expose both control paths or remove every media
+   entity or script. Review the inventory after
    upstream updates because this filter matches exact names.
 5. Disable the pipeline's **Prefer handling commands locally** shortcut; otherwise
    timer/media sentences can bypass the curated agent. For Local OpenAI 1.12.1,
@@ -41,22 +43,24 @@ local embedded authority and its live actions, announcements and Shared Assist
 tools enabled before **Record announcements on a shared voice pipeline** can be
 selected. Source profiles are generated from HA registries, not entered manually.
 
-An otherwise valid microphone remains eligible when its music pairing is
-grouped, offline or unsupported. Announcement destinations are a separate
-authorization: native recording refuses grouped, linked/multiple-output,
-unknown or held destinations before asking for audio and before playback.
-The normal legacy configuration retains Music Assistant's existing protocol and
-physical-group routing; this is not an exact-speaker delivery guarantee. Native
-recordings retain their stricter policy through durable capture receipts even
-after the option is disabled. Missing or ambiguous provenance never grants the
-legacy path. Paired MA alarm clips apply the configured mode's output checks.
-Neither mode adds group changes or automatic retries. Spoken-content protection
-requires the exact destination queue, including on the legacy path; a member
-cannot pause or resume a different group leader's book. Cached rechecks are not
-an atomic server ownership guarantee. With MA versions that publish several
-output protocols for each Sonos, the current native preview is blocked even
-when the native protocol is active. Keep recording disabled until a supported
-exact-destination transport is available and tested.
+An otherwise valid microphone is independent of its music pairing. New native
+question captures record a trusted, versioned standard-MA playback contract in
+the existing durable handoff ledger. This reuses Music Assistant's existing
+renderer, chimes, output protocols and configured group semantics; multiple
+advertised Sonos protocols do not by themselves disqualify the microphone or
+announcement. Exact identity, availability, final destination rechecks and held
+or unknown output guards still apply before asking and before playback. This
+standard route is not an isolated-speaker, acoustic completion or owned-stop
+guarantee. It does not force group changes or add automatic replay.
+
+Older native handoffs without the new contract retain verified-native rules,
+even after the capture option changes. Contract/source/receipt inconsistencies
+refuse; recording metadata cannot override authoritative provenance. General
+alarm and EchoMuse transport policy does not change merely because native
+capture is enabled. Spoken-content protection still requires the exact queue:
+a group member cannot pause/resume a different leader's book. Cached rechecks
+are not atomic server queue ownership. Qualify actual group delivery and book
+resume before relying on them in the household.
 
 Before enabling native recording, move every satellite pipeline that uses a
 Household Voice STT wrapper to the underlying real STT provider. Native mode does
@@ -76,7 +80,8 @@ holds in the legacy capture path. Ordinary conversation and schedules remain
 available. Keep native recording enabled for the recovery UI if a hold needs
 clearing. There is no automatic capture replay or expiry-based release.
 
-Supported Home Control disabled-tool names for the pinned HA versions:
+Conservative Home Control filter for grouped-speaker setups on the pinned HA
+versions (retain the existing six generic media controls):
 
 ```yaml
 home_control_disabled_tools:
@@ -91,14 +96,14 @@ home_control_disabled_tools:
   - media_player__HassMediaSearchAndPlay
   - media_player__HassMediaPause
   - media_player__HassMediaUnpause
-  - media_player__HassMediaNext
-  - media_player__HassMediaPrevious
-  - media_player__HassSetVolume
-  - media_player__HassSetVolumeRelative
-  - media_player__HassMediaPlayerMute
-  - media_player__HassMediaPlayerUnmute
+  - household_voice__media_control
   - assist_satellite__HassBroadcast
 ```
+
+After qualifying the paired replacement, remove its quarantine and disable the
+competing raw names `media_player__HassMediaNext`, `media_player__HassMediaPrevious`,
+`media_player__HassSetVolume`, `media_player__HassSetVolumeRelative`,
+`media_player__HassMediaPlayerMute` and `media_player__HassMediaPlayerUnmute`.
 
 Audit separately exposed scripts for duplicate schedule, playback or broadcast
 execution. An integration title containing “Read Only” is not an enforcement

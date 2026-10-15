@@ -262,7 +262,7 @@ class MAAnnouncementTransport:
         HA's ANNOUNCE and MA's final feature set also cover linked/fallback paths.
         verified_native requires the complete published output list to contain
         only native, so feature support cannot come solely from a linked protocol.
-        legacy_ma deliberately retains the existing standard MA route.
+        legacy_ma and standard_ma deliberately retain the existing standard MA route.
         This is fresh client validation, not server-side topology CAS.
         """
         mass,native=self.resolve(entity_id)
@@ -274,7 +274,7 @@ class MAAnnouncementTransport:
             raise AudioTransportError('Announcement destination is unavailable')
         if _player_key(self.hass,entity_id,native) in _UNCERTAIN.get(self.hass,{}):
             raise AudioTransportError('Announcement output requires operator recovery')
-        if self.transport_policy=='legacy_ma':
+        if self.transport_policy in ('legacy_ma','standard_ma'):
             # Preserve standard MA routing, including its group/linked/fallback
             # behavior. This is not an exact physical-room scope guarantee.
             return mass,native

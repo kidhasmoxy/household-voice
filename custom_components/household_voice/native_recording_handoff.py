@@ -13,6 +13,7 @@ import secrets
 from types import SimpleNamespace
 import wave
 from .native_recording_backend import QuestionAdmissionRejected
+from .native_recording_ledger import STANDARD_MA_CONTRACT,request_signature
 
 
 def captured_answer(answer,source,nonce,captured_type):
@@ -34,7 +35,8 @@ class NativeHandoff:
         self.resolve_source,self.captured_type=resolve_source,captured_type
 
     async def begin(self,request,source,targets):
-        return await self.run_owned(self.authority.ledger.begin,request,source,targets)
+        return await self.run_owned(self.authority.ledger.begin,request,source,targets,
+                                    playback_contract=STANDARD_MA_CONTRACT)
 
     async def get(self,request):return await self.run_owned(self.authority.ledger.get,request)
 
@@ -104,7 +106,7 @@ class NativeHandoff:
             else:
                 source=self.resolve_source(row['source'])
                 if source is None:continue
-                expected=hashlib.sha256(json.dumps([source.__dict__,row['targets']],sort_keys=True).encode()).hexdigest()
+                expected=request_signature(source.__dict__,row['targets'],row.get('playback_contract'))
                 if expected!=row['signature']:continue
                 if row['phase']=='uploading':
                     resolved=await self.run_owned(self.authority.recover_upload_and_enqueue,row['request_id'],source)
@@ -119,13 +121,13 @@ def composed_runtime_type(base):
     """Subclass only question acquisition; delivery/status workers stay upstream."""
     class NativeBroadcastRuntime(base):
         def __init__(self,*args,handoff,**kwargs):
-            kwargs['transport_policy']='verified_native'
+            kwargs['transport_policy']='standard_ma'
             super().__init__(*args,**kwargs)
             # A real injected adapter must honor the same native admission policy.
             # Custom inert adapters are reserved for isolated fixtures.
             from .announcement_adapter import AnnouncementAdapter
-            if isinstance(self.adapter,AnnouncementAdapter) and self.adapter.transport_policy!='verified_native':
-                raise ValueError('Native recording requires verified native announcement routing')
+            if isinstance(self.adapter,AnnouncementAdapter) and self.adapter.transport_policy!='standard_ma':
+                raise ValueError('Native recording requires versioned standard MA announcement routing')
             self.handoff=handoff
             self._native_starting=set()
 
