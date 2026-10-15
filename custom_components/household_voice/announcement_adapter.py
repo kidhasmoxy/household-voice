@@ -16,7 +16,7 @@ import re
 import time
 from urllib.parse import urlsplit
 
-TRANSPORT_POLICIES=frozenset(('legacy_ma','verified_native'))
+TRANSPORT_POLICIES=frozenset(('legacy_ma','standard_ma','verified_native'))
 
 def validate_transport_policy(value):
     if not isinstance(value,str) or value not in TRANSPORT_POLICIES:
@@ -27,7 +27,10 @@ def transport_policy_from_options(options):
     """Entry-backed immutable option snapshots only; not a new user setting."""
     flag=options.get('native_recording_enabled',False)
     if type(flag) is not bool:raise ValueError('Invalid native recording setting')
-    return 'verified_native' if flag else 'legacy_ma'
+    # A microphone mode must not change general reply/ring playback semantics.
+    # Native composition explicitly chooses its versioned standard MA contract;
+    # old recordings carry their immutable stricter policy from the authority.
+    return 'legacy_ma'
 
 
 class AnnouncementAdapter:
@@ -118,7 +121,9 @@ class AnnouncementAdapter:
             if self.require_recording_provenance:raise ValueError('Recording origin is unverified')
             return self.transport_policy # Trusted legacy remote/injected contract; native cannot run remotely.
         validate_transport_policy(provenance)
-        return 'verified_native' if 'verified_native' in (self.transport_policy,provenance) else 'legacy_ma'
+        policies=(self.transport_policy,provenance)
+        if 'verified_native' in policies:return 'verified_native'
+        return 'standard_ma' if 'standard_ma' in policies else 'legacy_ma'
 
     def _preflight(self,player,policy=None):
         """Destination authorization before a question or any queue/provider action."""

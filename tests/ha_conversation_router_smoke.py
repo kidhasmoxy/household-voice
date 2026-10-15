@@ -44,7 +44,7 @@ async def verify_router(hass, entry):
             response = intent.IntentResponse(language=user_input.language)
             response.async_set_speech(self.reply_text)
             return conversation.ConversationResult(response=response,
-                conversation_id='01M4THYA7ZF0ZZVCC1QS46VY23', continue_conversation=True)
+                conversation_id='01TEST00000000000000000001', continue_conversation=True)
 
     fallback = Fallback()
     await component.async_add_entities([fallback])
@@ -85,10 +85,10 @@ async def verify_router(hass, entry):
         start.return_value = {'status': 'queued', 'reason': 'wait_for_prompt_then_speak_announcement'}
         cancel.return_value = {'status': 'cancelled'}
         status.return_value = {'status': 'no_change'}
-        result = await invoke('Please make an announcement.', conversation_id='01M4THYA7ZF0ZZVCC1QS46VY22')
+        result = await invoke('Please make an announcement.', conversation_id='01TEST00000000000000000000')
         start.assert_awaited_once()
         assert start.call_args.args == (device.id, context)
-        assert result.conversation_id != '01M4THYA7ZF0ZZVCC1QS46VY22'
+        assert result.conversation_id != '01TEST00000000000000000000'
         assert not result.continue_conversation and not fallback.calls
         assert result.response.speech['plain']['speech'] == ''
         await invoke('cancel the announcement')

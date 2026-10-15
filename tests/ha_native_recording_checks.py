@@ -129,7 +129,8 @@ async def check_source_destination_scope(hass,satellite,device,area,entry,compos
         player.synced_to=None
         # Actual pinned client deserializes the four public output records seen
         # on ordinary MA Sonos players. Standard legacy routing stays intact;
-        # native capture never downgrades after a strict destination refusal.
+        # Old strict contracts remain strict. New native-question contracts use
+        # standard MA group semantics, independently of capture provenance.
         linked=[dict(output_protocol_id='native',name='Native',protocol_domain='sonos',
             is_native=True,available=True,derived_from=None)] + [dict(output_protocol_id='fixture-'+domain,
             name=domain,protocol_domain=domain,is_native=False,available=True,derived_from=None)
@@ -138,6 +139,9 @@ async def check_source_destination_scope(hass,satellite,device,area,entry,compos
         player.output_protocols=[OutputProtocol.from_dict(row) for row in linked]
         player.active_output_protocol='native'
         legacy_transport=MAAnnouncementTransport(hass,{speaker.entity_id},transport_policy='legacy_ma')
+        standard_transport=MAAnnouncementTransport(hass,{speaker.entity_id},transport_policy='standard_ma')
+        standard_adapter=AnnouncementAdapter(hass,options,audio,allowed_audio_origins=['http://fixture.invalid'],
+            execution_authorized=True,transport=standard_transport,transport_policy='standard_ma',require_recording_provenance=True)
         for label,members,parent in [('solo',[],None),('leader',['scope-output','fixture-other'],None),
                                      ('member',[],'fixture-other')]:
             player.group_members=members;player.synced_to=parent;effects.clear()
@@ -146,6 +150,17 @@ async def check_source_destination_scope(hass,satellite,device,area,entry,compos
             assert await composition.runtime.handoff.get('four-output-native-'+label) is None
             assert not effects and not composition.backend.operations
             result=await legacy_transport.play(speaker.entity_id,'http://fixture.invalid/inert')
+            assert result['outcome']=='service_completed' and effects.count('provider')==1 and 'pause' not in effects
+            effects.clear();composition.runtime.adapter=standard_adapter
+            was_paused=composition.backend.paused;composition.backend.paused=True
+            try:
+                # Real source/registry/MA admission passes; intentionally stop at
+                # the disabled synthetic worker, without opening a microphone.
+                admitted=await composition.runtime.async_start(device,Context(),request_id='standard-native-'+label)
+                assert admitted['reason']=='recording_worker_unavailable',admitted
+                assert not effects and not satellite.prompt.is_set() and not satellite.started.is_set()
+            finally:composition.backend.paused=was_paused;composition.runtime.adapter=adapter
+            result=await standard_transport.play(speaker.entity_id,'http://fixture.invalid/inert')
             assert result['outcome']=='service_completed' and effects.count('provider')==1 and 'pause' not in effects
         player.group_members=[];player.synced_to=None
         # Strict provenance must survive an option-off adapter on the same outputs.
@@ -166,7 +181,9 @@ async def check_source_destination_scope(hass,satellite,device,area,entry,compos
             'actual_ma_client_model_version':version('music-assistant-models'),'actual_ma_client_version':version('music-assistant-client'),
             'actual_client_model_native_output_preflight':True,
             'four_protocol_solo_group_leader_member_legacy_provider_once':True,
-            'same_four_protocol_native_no_question_pcm_pause_provider':True,
+            'same_four_protocol_old_strict_no_question_pcm_pause_provider':True,
+            'new_standard_ma_native_capture_three_topologies_admitted_without_mic':True,
+            'new_standard_ma_three_topologies_inert_provider_once':True,
             'pending_native_recording_flag_off_keeps_strict_destination_policy':True}
     finally:
         composition.runtime.adapter=original;composition.runtime._wait_idle=old_wait
@@ -210,6 +227,7 @@ async def run_worker_checks(hass,http,make_satellite,finish,pcm):
     delivered=[]
     async def deliver(target,recording,**kwargs):
         assert await kwargs['before_dispatch']()
+        assert recording['transport_policy']=='standard_ma'
         delivered.append((target,recording['transcript']))
         return {'outcome':'service_completed','provider_completed':True}
     adapter=SimpleNamespace(targets=lambda *args:targets,deliver=deliver,preflight_targets=lambda targets:None)
@@ -298,6 +316,7 @@ async def run_worker_checks(hass,http,make_satellite,finish,pcm):
         ledger=composition.runtime.handoff.authority.ledger
         row=await client._run(ledger.get,'composed-proof')
         assert row['phase']=='uploading' and row['upload_signature'] and row['recording_id'] is None
+        assert row['playback_contract']=='native_question_standard_ma_v1' and row['source_identity']
         committed_recording=upload_calls[0]
         raw=await client._run(client._authority.recordings.audio,committed_recording)
         with wave.open(io.BytesIO(raw),'rb') as wav:assert wav.readframes(wav.getnframes())==pcm
