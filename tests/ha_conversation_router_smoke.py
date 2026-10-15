@@ -112,13 +112,13 @@ async def verify_router(hass, entry):
             assert announced.response.speech['plain']['speech'] == '' and len(fallback.calls) == before
         for text in ['Ordinary fixture request', '"make an announcement"',
                      'Put the lights on', 'Play jazz and turn off the lights']:
-            delegated = await invoke(text, language='en-US', conversation_id='01M4THYA7ZF0ZZVCC1QS46VY24')
+            delegated = await invoke(text, language='en-US', conversation_id='01TEST00000000000000000002')
             actual = fallback.calls[-1]
             assert actual.text == text and actual.context is context and actual.device_id == device.id
             assert actual.satellite_id == 'assist_satellite.fixture_router' and actual.language == 'en-US'
-            assert actual.conversation_id == '01M4THYA7ZF0ZZVCC1QS46VY24'
+            assert actual.conversation_id == '01TEST00000000000000000002'
             assert actual.extra_system_prompt == 'Fixture prompt'
-            assert delegated.conversation_id == '01M4THYA7ZF0ZZVCC1QS46VY23' and delegated.continue_conversation
+            assert delegated.conversation_id == '01TEST00000000000000000001' and delegated.continue_conversation
         assert start.await_count == 2
         fallback.loop_target = router.entity_id
         looping = await invoke('Ordinary request')
@@ -318,7 +318,7 @@ async def verify_router(hass, entry):
         pending_id=question.conversation_id
         unclear=await invoke('that one',conversation_id=pending_id)
         assert unclear.continue_conversation and len(posts)==count and len(fallback.calls)==before
-        wrong=await invoke('the first one',conversation_id='01M4THYA7ZF0ZZVCC1QS46VY29')
+        wrong=await invoke('the first one',conversation_id='01TEST00000000000000000003')
         assert 'another conversation' in wrong.response.speech['plain']['speech'] and len(posts)==count
         rows[1]['revision']+=1
         stale=await invoke('the second one',conversation_id=pending_id)
@@ -372,7 +372,7 @@ async def verify_router(hass, entry):
     before_fallback = len(fallback.calls)
     before_posts = len(posts)
     question = 'Why does the Moon change shape?'
-    history_id = '01M4THYA7ZF0ZZVCC1QS46VY25'
+    history_id = '01TEST00000000000000000004'
     with patch.object(knowledge_llm, 'async_answer', new_callable=AsyncMock) as answer:
         answer.return_value = {'status':'ready','speech':'We see different amounts of its sunlit half.',
             'sources':[{'title':'NASA Moon phases','url':'https://science.nasa.gov/moon/moon-phases/'}]}

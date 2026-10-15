@@ -144,7 +144,7 @@
     "scripts/build_release.py": "1d95c1aad3e653d7a35609e8717ef529f7b473f18097c56bd8c80e68006d4667",
     "scripts/update_manifest.py": "33bc8bf17ae64ca89e1a6f8cbacc6f2255487759f5cd73c01ed58c79f5634fe9",
     "tests/ha_assist_tools_smoke.py": "271938561412aa514385bc05fa83f213e3fba548361297fd5a6c4ec43eeee7c9",
-    "tests/ha_conversation_router_smoke.py": "8d0623856958ca395b5cb5916bc5d9115af567c9f74a3785f2f30333a67bece4",
+    "tests/ha_conversation_router_smoke.py": "17738d151e14b0e0187ef4992dc234489e2f898e67fb5d194de344140c1f177d",
     "tests/ha_dated_alarm_smoke.py": "1f5e4135d3d2abbf2ff097cb2ff6c7b2d6fcb09dcd20aa32ef08547cab2155cf",
     "tests/ha_embedded_smoke.py": "262b3d52d409e012ff317c80455c8156f7df58ea03389d96e59987b6949b5437",
     "tests/ha_media_controls_smoke.py": "8f832629b7ed343594dd01a843d910537b7d865b31bbec71e918775c41f2cc57",
