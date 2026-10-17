@@ -29,6 +29,10 @@ class RingWorker:
         self.last_error=None
         self.last_success=None
         self.stopping=False
+        self.groups=None
+        if transport is None:
+            from .alarm_groups import AlarmGroupIsolation
+            self.groups=AlarmGroupIsolation(hass,entry)
 
     def enabled(self):
         return (dict(self.entry.options)==self.options and self.options.get('live_actions_enabled') is True
@@ -41,6 +45,10 @@ class RingWorker:
     async def _loop(self):
         while self.enabled():
             try:
+                if self.groups:
+                    await self.groups.load()
+                    if self.groups.records:
+                        await self.groups.reconcile((await self.client.schedules())['schedules'])
                 # Parallel rooms, bounded network/service concurrency.
                 if len(self.pending)<8:
                     result=await self.client.claim_ring()
@@ -59,6 +67,8 @@ class RingWorker:
 
     async def _play(self, clip):
         outcome='not_invoked'
+        isolated=None
+        isolation_ready=False
         try:
             keys=('occurrence_id','target','lease')
             if (not isinstance(clip,dict) or any(not isinstance(clip.get(k),str) for k in keys)
@@ -96,7 +106,8 @@ class RingWorker:
                 if not self.enabled():
                     return False
                 valid=(await self.client.validate_ring(**args)).get('valid') is True
-                return valid and self.enabled() and (not assistant or current_assistant())
+                return (valid and self.enabled() and (not assistant or current_assistant())
+                    and (not isolation_ready or self.groups.check(target)))
             if not await current():
                 return
             target=clip['target']
@@ -125,7 +136,10 @@ class RingWorker:
                 if target is None:
                     outcome='not_invoked' if available_but_busy else 'target_unavailable'
                     return
-            outcome='service_outcome_unknown'
+            if self.groups and clip.get('output_kind','ma')=='ma':
+                isolated=await self.groups.prepare(target,clip,current)
+                isolation_ready=True
+                if not await current():return
             @asynccontextmanager
             async def focus():
                 if assistant and clip.get('output_kind','ma')=='ma' and self.injected_transport is None:
@@ -137,6 +151,8 @@ class RingWorker:
                 if not callable(preflight):raise AudioTransportError('Announcement destination guard unavailable')
                 preflight(target)
             async with focus():
+                if self.groups:await self.groups.begin_play(isolated)
+                outcome='service_outcome_unknown'
                 result=await transport.play(target,self.client.url+'/audio/alarm.wav',
                     volume=self.options.get('ring_volume',45)/100,chime=False,before_dispatch=current)
             outcome=result.get('outcome','service_outcome_unknown')
@@ -145,10 +161,13 @@ class RingWorker:
         except asyncio.CancelledError:
             raise
         except AudioTransportError:
-            outcome='target_unavailable'
+            outcome='target_unavailable' if outcome=='not_invoked' else 'service_outcome_unknown'
         except Exception:
             self.last_error='ring_transport_failed'
         finally:
+            if self.groups:
+                try:await self.groups.finish(isolated,outcome)
+                except Exception:self.last_error='alarm_group_journal_unavailable'
             if 'args' in locals():
                 try:
                     await self.client.ack_ring(**args,outcome=outcome)

@@ -14,14 +14,14 @@ import time
 
 from homeassistant.core import callback
 
-from .area_registry import collect_pairings
+from .area_registry import collect_room_volume_pairings
 from .room_focus import AnnouncementRoomFocus, RoomVolumeController, get_room_focus_state
 
 ACTIVE = frozenset({"listening", "processing", "responding"})
 
 
 class NativeDuckRuntime:
-    def __init__(self, hass, entry, *, discover=collect_pairings, authority=None,
+    def __init__(self, hass, entry, *, discover=collect_room_volume_pairings, authority=None,
                  poll_seconds=5, max_activity_seconds=300, idle_grace_seconds=.4, clock=time.monotonic):
         if not 0 < poll_seconds <= 30 or not 1 <= max_activity_seconds <= 600:
             raise ValueError("Invalid native activity bounds")
@@ -90,8 +90,8 @@ class NativeDuckRuntime:
 
     def _snapshot(self):
         actual = self.discover(self.hass, self.entry.options)
-        # Discovery already excludes satellite-owned speakers, dynamic groups,
-        # cross-area ambiguity and duplicate physical controls. Derive native
+        # Volume discovery permits verified native Sonos per-player controls,
+        # while excluding group-wide controls, cross-area ambiguity and aliases. Derive native
         # competing-speaker selection without writing options or actual pairing.
         options = dict(self.entry.options)
         options["assistant_speaker_overrides"] = {

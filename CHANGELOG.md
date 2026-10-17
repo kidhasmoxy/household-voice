@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.3.19
+
+Alarms on a paired Sonos speaker detach that speaker from its group before
+playing. Group membership is restored after ringing only while the observed
+group and playback remain unchanged. Durable intent and uncertain-outcome guards
+prevent replay after interrupted grouping or audio. Room ducking uses native
+Sonos per-speaker volume even when speakers are grouped across rooms, preserving
+other rooms and deliberate manual volume changes.
+
 ## 0.3.18
 
 Shared-assistant settings now show only the active native Assist controls.

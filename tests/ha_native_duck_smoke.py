@@ -66,9 +66,10 @@ async def main():
                 'volume_level':.8,'media_content_id':'synthetic-book','group_members':[]}
             for row in (output,alias,other):hass.states.async_set(row.entity_id,'playing',attributes)
             calls=[]
+            allowed_volume_targets={output.entity_id}
             async def volume(call):
                 target=call.data['entity_id'];value=call.data['volume_level']
-                assert target==output.entity_id,('Unexpected volume target',target)
+                assert target in allowed_volume_targets,('Unexpected volume target',target)
                 authority=hass.data['_household_voice_room_focus']['synthetic-native-duck']
                 durable=await authority.journal.load()
                 assert durable['players'][target]['status'] in ('pending','restoring')
@@ -125,13 +126,81 @@ async def main():
             await state(assistants[0],'unavailable');await settle(lambda:level()==.55,'unavailable restores')
             assert hass.states.get(alias.entity_id).attributes['volume_level']==.8
             assert hass.states.get(other.entity_id).attributes['volume_level']==.8
+            # Cross-room groups use only the native Sonos control in this room.
+            # Playback discovery must still refuse the grouped MA destination.
+            await state(assistants[0],'idle')
+            allowed_volume_targets={alias.entity_id}
+            ma.runtime_data.mass.players.get=lambda identifier:NS(player_id=identifier,
+                available=True,synced_to='RINCON_OTHER',active_group=None,
+                group_members=[native_id,'RINCON_OTHER'])
+            for row,members in ((output,[output.entity_id,other.entity_id]),(alias,[alias.entity_id,other.entity_id]),(other,[alias.entity_id,other.entity_id])):
+                old=hass.states.get(row.entity_id)
+                hass.states.async_set(row.entity_id,'playing',{**old.attributes,'group_members':members})
+            assert collector.collect_pairings(hass,entry.options)['assistants'][assistants[0]]['status']=='manual_speaker_unsafe_or_unsupported'
+            count=len(calls)
+            await state(assistants[0],'listening')
+            await settle(lambda:hass.states.get(alias.entity_id).attributes['volume_level']==.2,'grouped room duck')
+            assert hass.states.get(other.entity_id).attributes['volume_level']==.8
+            assert level()==.55
+            await state(assistants[0],'idle')
+            await settle(lambda:hass.states.get(alias.entity_id).attributes['volume_level']==.8,'grouped room restore')
+            assert all(target==alias.entity_id for target,_ in calls[count:])
             await runtime.async_close();runtime=None
             assert (await shared.journal.load())['players']=={}
+            # Actual registries + Store + native service schemas, synthetic
+            # topology sinks. No Sonos network requests or real audio.
+            groups=importlib.import_module(package.__name__+'.alarm_groups')
+            isolation=groups.AlarmGroupIsolation(hass,entry)
+            topology_calls=[]
+            def set_group(row,members):
+                old=hass.states.get(row.entity_id)
+                hass.states.async_set(row.entity_id,old.state,{**old.attributes,'group_members':members})
+            def ma_player(identifier):
+                grouped=bool(hass.states.get(output.entity_id).attributes['group_members'])
+                return NS(player_id=identifier,available=True,synced_to='RINCON_OTHER' if grouped else None,
+                    active_group=None,group_members=[native_id,'RINCON_OTHER'] if grouped else [])
+            ma.runtime_data.mass.players.get=ma_player
+            async def unjoin(call):
+                assert call.data=={'entity_id':alias.entity_id}
+                assert (await isolation.store.async_load())['records'][output.entity_id]['phase']=='detaching'
+                topology_calls.append(('unjoin',alias.entity_id))
+                for row in (alias,other,output):set_group(row,[])
+            async def join(call):
+                assert call.data=={'entity_id':other.entity_id,'group_members':[alias.entity_id]}
+                assert (await isolation.store.async_load())['records'][output.entity_id]['phase']=='restoring'
+                topology_calls.append(('join',other.entity_id,alias.entity_id))
+                for row in (alias,other):set_group(row,[other.entity_id,alias.entity_id])
+                set_group(output,[other.entity_id,output.entity_id])
+            hass.services.async_register('media_player','unjoin',unjoin)
+            hass.services.async_register('media_player','join',join)
+            assert groups.sonos_endpoint(hass,output.entity_id)==alias.entity_id
+            row=collector.collect_pairings(hass,entry.options)['assistants'][assistants[0]]
+            assert row['alarm_isolation_available'] and row['schedule_output']['entity_id']==output.entity_id
+            config=importlib.import_module(package.__name__+'.runtime_config')
+            before=config.configuration(entry.options,collector.collect_pairings(hass,entry.options))
+            import time
+            clip={'occurrence_id':'synthetic-ring','schedule_id':'synthetic-schedule','ring_until':time.time()+60}
+            async def current():return True
+            token=await isolation.prepare(output.entity_id,clip,current)
+            assert isolation.backend.isolated(output.entity_id,alias.entity_id)
+            assert config.configuration(entry.options,collector.collect_pairings(hass,entry.options))==before
+            await isolation.begin_play(token);await isolation.finish(token,'service_completed')
+            await isolation.reconcile([{'id':'synthetic-schedule','state':'ringing'}])
+            assert topology_calls==[('unjoin',alias.entity_id)]
+            # A new manager reads the durable record and restores after dismissal.
+            isolation=groups.AlarmGroupIsolation(hass,entry)
+            await isolation.reconcile([])
+            assert topology_calls==[('unjoin',alias.entity_id),('join',other.entity_id,alias.entity_id)]
+            assert not isolation.records
+            assert hass.states.get(alias.entity_id).attributes['volume_level']==.8
+            assert hass.states.get(other.entity_id).attributes['volume_level']==.8
             print(json.dumps({'result':'passed','home_assistant_version':__version__,
                 'actual_ha_registry_and_state_event_path':True,'actual_volume_service_with_synthetic_sink':True,
                 'sqlite_baseline_before_volume_change':True,'native_active_states_hold_through_exchange':True,
                 'same_room_assistant_overlap_no_double_duck':True,'announcement_shared_authority_overlap':True,
                 'manual_volume_preserved':True,'unavailable_restores':True,
+                'grouped_native_sonos_volume_stays_in_room':True,
+                'alarm_ungroup_store_before_service_and_guarded_regroup':True,
                 'pairings_options_unchanged':True,'native_alias_internal_and_other_room_untouched':True,
                 'forged_event_payload_ignored':True,'physical_audio':False,'household_contacts':False}))
         finally:

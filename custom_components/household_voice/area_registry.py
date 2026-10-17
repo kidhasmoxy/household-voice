@@ -23,7 +23,7 @@ def _physical_ids(device):
     return tuple('mac:'+value for value in macs if len(value)==12)
 
 
-def collect_pairings(hass,options, *, read_only=False):
+def collect_pairings(hass,options, *, read_only=False, volume_only=False):
     """Synchronous event-loop registry read; recompute for each routed operation.
 
     MA transport currently supports MA outputs only. Native Sonos entities remain
@@ -74,6 +74,11 @@ def collect_pairings(hass,options, *, read_only=False):
                     topology='dynamic'
             else:
                 available=False
+        # Sonos volume_set addresses self.soco (one physical player), not its
+        # coordinator. A grouped native Sonos control can therefore duck its
+        # own room without granting grouped playback/queue authority to MA.
+        if volume_only and integration=='sonos' and len(physical)==1 and physical[0].startswith('sonos:'):
+            topology='single'
         names[item.entity_id]=next((value for value in
             (getattr(item,'name',None),getattr(item,'original_name',None),attrs.get('friendly_name'),item.entity_id)
             if isinstance(value,str) and value.strip() and len(value)<=120),item.entity_id)
@@ -99,5 +104,16 @@ def collect_pairings(hass,options, *, read_only=False):
         row['aliases']=list(dict.fromkeys([*aliases[identifier],area_names.get(row['area_id'],'')]))
         row['aliases']=[value for value in row['aliases'] if value]
         row['speaker_name']=names.get(row['speaker_id'],row['speaker_id'])
+        if (not volume_only and not read_only and row['status']=='manual_speaker_unsafe_or_unsupported'
+                and result['excluded_speakers'].get(row['speaker_id'])=='group_scope_not_fixed'):
+            from .alarm_groups import sonos_endpoint
+            if sonos_endpoint(hass,row['speaker_id']) is not None:
+                row['schedule_output']={'kind':'ma','entity_id':row['speaker_id'],'device_id':row['device_id']}
+                row['alarm_isolation_available']=True
         for choice in row['choices']: choice['name']=names.get(choice['entity_id'],choice['entity_id'])
     return result
+
+
+def collect_room_volume_pairings(hass, options):
+    """Volume-only discovery; never use this view for playback or grouping."""
+    return collect_pairings(hass, options, volume_only=True)

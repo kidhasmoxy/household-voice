@@ -97,6 +97,12 @@ class RoomVolumeController:
         if type(volume) not in (float, int) or not math.isfinite(volume) or not 0 <= volume <= 1:
             return None
         identity = [state.attributes.get(k) for k in ('media_content_id', 'app_id', 'source', 'group_members')]
+        from homeassistant.helpers import entity_registry as er
+        registered=er.async_get(self.hass).async_get(player)
+        if registered is not None and registered.platform=='sonos':
+            # Native Sonos volume is physical-player-local across grouping and
+            # track changes. Manual volume edits are still checked separately.
+            identity=['sonos-volume',registered.unique_id,registered.device_id]
         generation = hashlib.sha256(json.dumps(identity, sort_keys=True, default=str).encode()).hexdigest()
         return PlayerObservation(volume, generation, self.state.focus.clock())
 
