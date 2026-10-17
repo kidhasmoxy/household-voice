@@ -536,6 +536,9 @@ async def real_ha_options_smoke():
             # Reopen and remove a mapping; persisted selections must survive.
             result = await manager.async_init(entry.entry_id)
             flow_id = result["flow_id"]
+            await step({'next_step_id':'shared_assistant'})
+            await step({'assist_tools_enabled':True})
+            await step({'next_step_id':'maintenance'})
             await step({"next_step_id": "remove"})
             assert (await step({"mapping": "phone:" + tracker.entity_id}))["type"] == "menu"
             await step({"next_step_id": "review"})
