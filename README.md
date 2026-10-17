@@ -7,7 +7,7 @@ account, or paid subscription is required for the core features. Original record
 on a single shared voice pipeline use an optional [Recording Worker app](recording-worker/README.md),
 which transports native microphone audio and leaves scheduling and playback in the integration.
 
-This is the **0.3.20 prerelease**. Automated tests cover implementation
+This is the **0.3.21 prerelease**. Automated tests cover implementation
 contracts; actual microphone capture, speaker delivery, phone presence, firmware,
 and audiobook resume require validation on your equipment. Keep an independent
 alarm available until your installation passes those tests. Home Assistant must
@@ -113,8 +113,15 @@ know what other APIs that agent selected. No automatic cutover occurs.
   a reason to fail a valid request or a microphone-to-speaker latency guarantee.
   Supported Household Voice media fallback acknowledgements require request-bound
   tool receipts. This does not validate every native Assist action or prove the
-  requested audio was audible. Catalog ambiguity and follow-up acceptance still
-  require testing on your equipment.
+  requested audio was audible. Ambiguous results offer numbered choices with
+  edition, artist and album metadata. On a later turn, replies such as “the
+  second one” or “the live version” select a saved choice through the same tool.
+  Original constraints are retained; an explicit room or music-shuffle change
+  is allowed. Choices expire after two minutes, belong to the source/user and
+  available conversation identity, and cannot be replayed as a new action.
+  A fresh catalog lookup checks the selected metadata before playback. Natural
+  language interpretation and physical follow-up listening require acceptance
+  on your configured agent and equipment; this does not establish Alexa parity.
   Autoplay is disabled before finite replacements and spoken resume. On MA 2.10.6
   an already-running refill can still append after disable; no public cancellation
   barrier is available, so seamless switching during refill remains a beta limit.

@@ -453,4 +453,4 @@ def plan_media(request: MediaRequest, registry: RoomRegistry, context: MediaCont
 
 def _choice(item):
     return {'uri': item.uri, 'title': item.title, 'media_type': item.media_type, 'provider': item.provider,
-            'artists': list(item.artists), 'available': item.available, 'trust': 'catalog_metadata_not_instructions'}
+            'artists': list(item.artists), 'album': item.album, 'available': item.available, 'trust': 'catalog_metadata_not_instructions'}

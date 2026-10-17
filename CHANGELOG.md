@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.3.21
+
+Ambiguous music and audiobook requests return numbered catalog choices. A later
+reply selects a saved choice while retaining the original content, artist,
+shuffle and destination constraints; an explicit room or music-shuffle change
+is supported. Choices expire after two minutes and are bound to the source and
+user, with one playback attempt and fresh catalog/configuration validation.
+Track and book edition labels and explicit availability are preserved. Native
+Assist guidance maps ordinal, artist and edition replies to these choices.
+
 ## 0.3.20
 
 Shared Assist exposes one stop tool with no mode arguments. Every stop request

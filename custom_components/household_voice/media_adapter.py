@@ -68,18 +68,21 @@ def _item(raw, expected=None, depth=0):
         raise MediaAdapterError('Catalog URI/type mismatch')
     version = _text(raw.get('version'), empty=True)
     name = _text(raw.get('name'), 512)
-    # HA returns album editions separately from their title. Keep the original
+    # HA returns editions separately from their title. Keep the original
     # name as an alias for exact requests, but preserve the edition as visible
     # catalog data for soundtrack matching and meaningful version choices.
-    title = f'{name} ({version})' if kind == 'album' and depth == 0 and version and version.casefold() not in name.casefold() else name
+    title = f'{name} ({version})' if depth == 0 and version and version.casefold() not in name.casefold() else name
     _text(title, 512)
     artists = raw.get('artists', [])
     if not isinstance(artists, list) or len(artists)>32:
         raise MediaAdapterError('Malformed artists')
     names = tuple(_item(a, 'artist', depth+1)['title'] for a in artists)
     album = _item(raw['album'], 'album', depth+1)['title'] if raw.get('album') is not None else None
+    available = raw.get('available', True)
+    if type(available) is not bool:
+        raise MediaAdapterError('Malformed availability')
     return dict(uri=uri, title=title, media_type=kind, provider=match[1], artists=names, album=album,
-                aliases=(name,) if title != name else ())
+                aliases=(name,) if title != name else (), available=available)
 
 
 def _provider_item(raw, kind, provider):
@@ -417,7 +420,7 @@ class MusicAssistantAdapter:
                         requested_genre=request.query, evidence_policy='profile_scoped_genre_metadata_and_provider_similar_tracks')
         return result
 
-    async def async_handle(self, request_data, caller):
+    async def async_handle(self, request_data, caller, *, expected_selection=None):
         """Construct, resolve and optionally execute a fresh plan under a player lock."""
         if not isinstance(request_data, dict):
             raise MediaAdapterError('Media request must be an object')
@@ -486,6 +489,14 @@ class MusicAssistantAdapter:
                         result.get('playback_kind') == 'continuous_station'
                         or result.get('reason') == 'no_relevant_music_collection'):
                     result = await self._genre_fallback(result, request, session, context)
+                if expected_selection is not None:
+                    selected = result.get('selected', {})
+                    fields = ('uri', 'title', 'media_type', 'provider', 'artists', 'album', 'available')
+                    if (result.get('status') != 'ready' or not selected.get('available')
+                            or any(selected.get(key) != expected_selection.get(key) for key in fields)):
+                        return self._record({'status':'clarify', 'reason':'media_choice_catalog_changed',
+                            'question':'That choice is no longer available as offered. What would you like instead?',
+                            'mode':'dry_run', 'executed':False, 'actions':[]})
                 if result.get('status') == 'ready' and result.get('playback_kind') == 'artist_top_tracks':
                     result = await self._artist_top_tracks(result, session)
                 if result.get('status')=='ready' and self.enable_execution:
@@ -567,6 +578,15 @@ class MusicAssistantAdapter:
                 raise
             except Exception as err:
                 raise MediaAdapterError('Music Assistant lookup failed') from err
+            if result.get('status') == 'clarify' and result.get('choices'):
+                # Queue-based book resume may have resolved an effective title
+                # internally. Preserve that exact request for a later choice.
+                result = dict(result, choice_request={key:getattr(request, key) for key in
+                    ('query', 'kind', 'media_type', 'target_room', 'provider', 'artist', 'album',
+                     'selected_uri', 'shuffle', 'selection_mode') if getattr(request, key) is not None})
+                if request.operation == 'resume':
+                    result['choice_request'].pop('shuffle', None)
+                    result['choice_request'].pop('selection_mode', None)
             return self._record(result)
 
     def _record(self, result):
