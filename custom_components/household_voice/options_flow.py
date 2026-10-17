@@ -55,7 +55,34 @@ class HouseholdVoiceOptionsFlow(config_entries.OptionsFlow):
 
     async def async_step_init(self, user_input=None):
         self._ensure_draft()
+        if self.draft['assist_tools_enabled']:
+            return self.async_show_menu(step_id='init', menu_options=[
+                'announcements', 'assistant_pairing', 'features', 'shared_assistant',
+                'knowledge_family', 'phone', 'media', 'alarm_defaults', 'maintenance', 'review'])
         return self.async_show_menu(step_id="init", menu_options=["announcements", "assistant_pairing", "features", "shared_assistant", "conversation_routing", "knowledge_family", "single_turn_announcements", "phone", "satellite", "media", "alarms", "capture", "test_pairing", "audio_recovery", "native_audio_recovery", "remove", "review"])
+
+    async def async_step_maintenance(self, user_input=None):
+        return self.async_show_menu(step_id='maintenance', menu_options=[
+            'audio_recovery', 'native_audio_recovery', 'remove', 'init'])
+
+    async def async_step_alarm_defaults(self, user_input=None):
+        self._ensure_draft()
+        errors = {}
+        if user_input is not None:
+            try:
+                level = user_input.get('ring_volume', self.draft['ring_volume'])
+                if type(level) not in (int, float) or not float(level).is_integer() or not 1 <= level <= 100:
+                    raise RoutingError('invalid_volume')
+                fallback = ma_speakers(user_input.get('ring_fallback_speakers', []), self._registry()[0])
+            except RoutingError as exc:
+                errors['base'] = str(exc)
+            else:
+                self.draft.update(ring_volume=int(level), ring_fallback_speakers=fallback)
+                return await self.async_step_init()
+        return self._form('alarm_defaults', {
+            vol.Required('ring_volume', default=self.draft['ring_volume']): NumberSelector(NumberSelectorConfig(min=1, max=100, step=1, mode='slider')),
+            vol.Optional('ring_fallback_speakers', default=self.draft['ring_fallback_speakers']): EntitySelector(EntitySelectorConfig(domain='media_player', integration='music_assistant', multiple=True)),
+        }, errors, user_input or self.draft)
 
     async def async_step_shared_assistant(self, user_input=None):
         """Expose capabilities to the ordinary agent; never change its assignments."""
@@ -255,15 +282,17 @@ class HouseholdVoiceOptionsFlow(config_entries.OptionsFlow):
 
     async def async_step_features(self, user_input=None):
         self._ensure_draft()
+        keys = tuple(key for key in FEATURES if not self.draft['assist_tools_enabled'] or key not in
+                     ('satellite_audio_enabled', 'echomuse_audio_enabled', 'stt_capture_enabled'))
         errors = {}
         if user_input is not None:
             try:
-                self.draft.update(feature_options(user_input))
+                self.draft.update(feature_options({**self.draft, **{key: user_input[key] for key in keys if key in user_input}}))
             except RoutingError as exc:
                 errors["base"] = str(exc)
             else:
                 return await self.async_step_init()
-        return self._form("features", {vol.Required(key, default=self.draft[key]): BooleanSelector() for key in FEATURES}, errors, user_input or self.draft)
+        return self._form("features", {vol.Required(key, default=self.draft[key]): BooleanSelector() for key in keys}, errors, user_input or self.draft)
 
     async def async_step_alarms(self, user_input=None):
         self._ensure_draft()
@@ -479,10 +508,12 @@ class HouseholdVoiceOptionsFlow(config_entries.OptionsFlow):
     async def async_step_remove(self, user_input=None):
         self._ensure_draft()
         choices = [{"value": "phone:" + item["device_tracker"], "label": "Phone: " + item["device_tracker"]} for item in self.draft["phones"]]
-        choices += [{"value": "satellite:" + item["satellite_device_id"], "label": "Satellite: " + (item["satellite_entity_id"] or item["satellite_device_id"])} for item in self.draft["satellites"]]
+        if not self.draft['assist_tools_enabled']:
+            choices += [{"value": "satellite:" + item["satellite_device_id"], "label": "Satellite: " + (item["satellite_entity_id"] or item["satellite_device_id"])} for item in self.draft["satellites"]]
         choices += [{'value':'media:'+item['room_id'],'label':'Music room: '+item['room_id']} for item in self.draft['media_rooms']]
         choices += [{"value":"alarm:"+item["room_id"], "label":"Alarm room: "+item["room_id"]} for item in self.draft["alarm_rooms"]]
-        choices += [{"value":"capture:"+item["profile_id"], "label":"Capture profile: "+item["profile_id"]} for item in self.draft["stt_capture_profiles"]]
+        if not self.draft['assist_tools_enabled']:
+            choices += [{"value":"capture:"+item["profile_id"], "label":"Capture profile: "+item["profile_id"]} for item in self.draft["stt_capture_profiles"]]
         errors = {}
         if user_input is not None:
             selection = user_input.get("mapping")

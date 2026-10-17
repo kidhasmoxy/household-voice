@@ -409,8 +409,10 @@ async def real_ha_options_smoke():
             assert (await step({'profile_id':'kitchen_capture','source_device_id':device.id,'provider_entity_id':stt_provider.entity_id}))['type']=='menu'
             await step({'next_step_id':'shared_assistant'})
             assert (await step({'assist_tools_enabled':True}))['type']=='menu'
-            await step({'next_step_id':'features'})
-            enabled={key:False for key in options.FEATURES}
+            shared_features=await step({'next_step_id':'features'})
+            shared_keys={str(key) for key in shared_features['data_schema'].schema}
+            assert shared_keys==set(options.FEATURES)-{'satellite_audio_enabled','echomuse_audio_enabled','stt_capture_enabled'}
+            enabled={key:False for key in shared_keys}
             enabled.update(live_actions_enabled=True,media_enabled=True)
             assert (await step(enabled))['type']=='menu'
             await step({"next_step_id": "review"})
@@ -437,11 +439,40 @@ async def real_ha_options_smoke():
             reopened=await manager.async_init(entry.entry_id)
             flow_id=reopened['flow_id']
             assert reopened['menu_options'][0]=='announcements'
+            assert not set(reopened['menu_options']) & {'conversation_routing','capture','single_turn_announcements','satellite','test_pairing','alarms'}
+            assert {'alarm_defaults','maintenance'} <= set(reopened['menu_options'])
             announcement_form=await step({'next_step_id':'announcements'})
             speaker_key=next(key for key in announcement_form['data_schema'].schema
                              if str(key)=='default_announcement_speakers')
             assert speaker_key.default()==[music.entity_id]
             manager.async_abort(flow_id)
+            # Alarm defaults are editable without inventing a room mapping.
+            hass.config_entries.async_update_entry(entry, options={**entry.options,'stt_capture_enabled':True})
+            result=await manager.async_init(entry.entry_id);flow_id=result['flow_id']
+            await step({'next_step_id':'features'});await step(enabled)
+            await step({'next_step_id':'review'});assert (await step({}))['type']=='create_entry'
+            assert entry.options['stt_capture_enabled'] is True
+            result=await manager.async_init(entry.entry_id);flow_id=result['flow_id']
+            await step({'next_step_id':'alarm_defaults'})
+            from homeassistant.data_entry_flow import InvalidData
+            try:
+                await step({'ring_volume':0,'ring_fallback_speakers':[]})
+            except InvalidData:
+                pass  # Core's numeric selector rejects out-of-range input first.
+            else:
+                raise AssertionError('Core accepted an invalid alarm volume')
+            await step({'ring_volume':40,'ring_fallback_speakers':[music.entity_id]})
+            await step({'next_step_id':'review'});assert (await step({}))['type']=='create_entry'
+            assert entry.options['ring_volume']==40 and entry.options['alarm_rooms'][0]['speakers']==[music.entity_id]
+            result=await manager.async_init(entry.entry_id);flow_id=result['flow_id']
+            maintenance=await step({'next_step_id':'maintenance'})
+            assert set(maintenance['menu_options'])=={'audio_recovery','native_audio_recovery','remove','init'}
+            assert (await step({'next_step_id':'init'}))['step_id']=='init'
+            manager.async_abort(flow_id)
+            # Compatibility settings remain functional for legacy installations.
+            hass.config_entries.async_update_entry(entry, options={**entry.options,'assist_tools_enabled':False})
+            enabled={key:False for key in options.FEATURES}
+            enabled.update(live_actions_enabled=True,media_enabled=True)
             # Only the explicit pairing confirmation calls a fixture service.
             pairing=[]
             async def fixture_pairing(call):
@@ -505,6 +536,9 @@ async def real_ha_options_smoke():
             # Reopen and remove a mapping; persisted selections must survive.
             result = await manager.async_init(entry.entry_id)
             flow_id = result["flow_id"]
+            await step({'next_step_id':'shared_assistant'})
+            await step({'assist_tools_enabled':True})
+            await step({'next_step_id':'maintenance'})
             await step({"next_step_id": "remove"})
             assert (await step({"mapping": "phone:" + tracker.entity_id}))["type"] == "menu"
             await step({"next_step_id": "review"})
