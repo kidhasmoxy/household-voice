@@ -17,7 +17,7 @@ const context = {HTMLElement:class {}, customElements:{define:(name,value)=>{cla
 vm.runInNewContext(fs.readFileSync(path.join(__dirname,"../custom_components/household_voice/www/household-voice-panel.js"),"utf8"),context);
 (async () => {
   const card = new Card();
-  const nodes = Object.fromEntries(["#rows","#mode","#status","#events","form button","#pairing-rows","#pairing-configure","#pairing-guidance","#speaker-preview","#timer-history-count"].map(key=>[key,new Node()]));
+  const nodes = Object.fromEntries(["#rows","#mode","#status","#events","form button","#pairing-rows","#pairing-configure","#pairing-guidance","#speaker-preview","#timer-history-count","#announcement-speakers","#announcement-configure","#announcement-guidance"].map(key=>[key,new Node()]));
   nodes.form={elements:Object.fromEntries(['source_room','target_room','kind','target_assistant_id'].map(key=>[key,new Node()]))};
   nodes.form.elements.kind.value='timer';
   card.shadowRoot={querySelector:key=>nodes[key]};
@@ -29,6 +29,13 @@ vm.runInNewContext(fs.readFileSync(path.join(__dirname,"../custom_components/hou
   card.renderRows();
   assert.equal(nodes["#mode"].textContent,"Alarm audio is disabled. Schedules are saved.");
   const attrs=card._hass.states["sensor.test"].attributes;
+  assert(nodes['#announcement-speakers'].textContent.includes('No default speakers'));
+  assert.equal(nodes['#announcement-configure'].hidden,true);
+  attrs.announcement_speakers=['media_player.kitchen','media_player.bedroom'];
+  card._hass.states['media_player.kitchen']={attributes:{friendly_name:'Kitchen <speaker>'}};
+  card._hass.user={is_admin:true}; card.renderRows();
+  assert.equal(nodes['#announcement-speakers'].textContent,'Kitchen <speaker>, media_player.bedroom');
+  assert.equal(nodes['#announcement-configure'].hidden,false);
   attrs.ring_execution_enabled=true; card.renderRows();
   assert(nodes["#mode"].textContent.includes("this Home Assistant worker is disabled"));
   attrs.ring_worker_enabled=true; card.renderRows();

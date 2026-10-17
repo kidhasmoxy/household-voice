@@ -28,7 +28,8 @@ class SchedulesSensor(CoordinatorEntity, SensorEntity):
         recording=getattr(self.coordinator,'native_recording',None)
         from .native_recording_journal import SHARED_KEY
         journal=getattr(getattr(self,'hass',None),'data',{}).get(SHARED_KEY)
-        return {"native_recording":{'enabled':recording is not None,'worker_connected':bool(recording and recording.backend.connection is not None),
+        return {"announcement_speakers":list(self.coordinator.entry.options.get('default_announcement_speakers', [])),
+                "native_recording":{'enabled':recording is not None,'worker_connected':bool(recording and recording.backend.connection is not None),
                     'paused':bool(recording and recording.backend.paused),'recovery_required_count':len(journal.holds) if journal else 0,
                     'journal_unavailable':bool(journal and journal.failed)},
                 "config_entry_id": self._entry_id, "mode": self.coordinator.data.get("mode", "unknown"),

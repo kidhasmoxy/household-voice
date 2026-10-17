@@ -191,6 +191,8 @@ async def async_setup_entry(hass, entry):
         entry.async_on_unload(async_register_llm(hass, entry, coordinator))
         entry.async_on_unload(async_register_media_llm(hass, entry))
         entry.async_on_unload(async_register_broadcast_llm(hass, entry, coordinator))
+        from .broadcast_trigger import async_register as async_register_broadcast_trigger
+        entry.async_on_unload(async_register_broadcast_trigger(hass, entry, coordinator))
         entry.async_on_unload(async_register_research_llm(hass, entry, client))
         entry.async_on_unload(entry.add_update_listener(async_reload_entry))
         if 'frontend' in getattr(getattr(hass, 'config', None), 'components', set()):

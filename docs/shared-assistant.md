@@ -1,6 +1,6 @@
 # Shared assistant preview
 
-This is the 0.3.16 development preview. It contributes tools to an ordinary
+This is the 0.3.17 development preview. It contributes tools to an ordinary
 Home Assistant agent; it does not add or assign a conversation agent. Automated
 contract checks are not microphone or acoustic acceptance. The optional recording
 app supports the staged native two-turn capture backend; both default disabled.
@@ -209,7 +209,7 @@ For “move the school alarm to seven thirty”, use household_voice__change_sch
 
 For bare “stop”, use household_voice__stop with no arguments. For “stop the alarm” or “stop the timer” when ringing, call it with ringing_only=true so media cannot be stopped when ringing ends. It prioritizes dismissal of all currently ringing household alarms/timers from any assistant; only bare stop with no ringing may stop media in the listening room. Do not cancel future alarms or active countdowns to silence ringing. An already accepted finite sound may finish; do not claim confirmed silence.
 
-Use household_voice__broadcast to request an original-voice announcement. It asks “What’s the announcement?” after this turn and records one answer; do not ask for the text yourself, send text to the tool, or create TTS. Use configured broadcast speakers, chime, volume and home-phone policy by default. Phone text is the exact transcript. Report pending delivery truthfully. The backend owns interruption and safe audiobook resume. Inline body-only original audio requires a supported recording boundary; never replay the command prefix.
+For "broadcast", "announcement", or "make an announcement", immediately call household_voice__broadcast with no spoken preamble. On queued success end with empty speech; do not acknowledge or explain the process. The recording system asks "What's the announcement?" and captures one answer. Use configured speakers, chime, volume and home-phone policy by default. Do not ask for the text yourself or synthesize it. Report failures briefly and never claim confirmed delivery from queuing. Native sentence shortcuts handle the short commands before the shared agent in the ordinary Assist pipeline.
 
 For announcement cancellation or status use the corresponding available tool: household_voice__cancel_broadcast, household_voice__broadcast_status. Already accepted audio or notifications cannot be retracted.
 

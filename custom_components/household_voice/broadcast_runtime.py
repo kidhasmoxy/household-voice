@@ -75,6 +75,7 @@ class BroadcastRuntime:
         self.completed = OrderedDict()
         self.latest = {}
         self._workers = []
+        self._delivery_wakeups = []
         self._closed = False
         self._alignment_slots = asyncio.Semaphore(1)
 
@@ -321,6 +322,7 @@ class BroadcastRuntime:
                         raise BroadcastError('Broadcast enqueue outcome unknown') from None
                     await asyncio.sleep(.25 * (attempt + 1))
             session.broadcast_id = queued['broadcast_id']
+            self._wake_delivery_workers()
             result = _result('queued', 'recording_queued_for_delivery', broadcast_id=session.broadcast_id)
         except asyncio.CancelledError:
             result = _result('cancelled', 'announcement_cancelled_delivery_may_have_been_accepted')
@@ -435,10 +437,16 @@ class BroadcastRuntime:
         await self.client.ack_broadcast(identifier, lease, outcome)
         return True
 
+    def _wake_delivery_workers(self):
+        # Each idle worker owns its event, so one cannot consume another's
+        # wakeup. A newly recorded message need not wait for polling timers.
+        for wakeup in self._delivery_wakeups:
+            wakeup.set()
+
     async def async_start_worker(self):
         if self._workers or self._closed or not self.enabled:
             return
-        async def loop():
+        async def loop(wakeup):
             while not self._closed:
                 try:
                     more = await self.async_worker_once()
@@ -447,8 +455,23 @@ class BroadcastRuntime:
                 except Exception:
                     more = False  # no credentials, URLs or transcript in logs
                 if not more:
-                    await asyncio.sleep(2)
-        self._workers = [self._spawn(loop(), 'household voice broadcast delivery') for _ in range(4)]
+                    try:
+                        await asyncio.wait_for(wakeup.wait(), timeout=2)
+                    except TimeoutError:
+                        pass
+                    wakeup.clear()
+        # One slot per configured destination prevents long announcements from
+        # serializing the fifth and later speakers behind completed playback.
+        # Include explicit room outputs and phones; the durable outbox still
+        # leases/validates/acknowledges every destination independently.
+        speakers = set(self.options.get('default_announcement_speakers', []))
+        speakers.update(row['music_player'] for row in self.options.get('media_rooms', []))
+        speakers.update(row['tts_media_player'] for row in self.options.get('satellites', []))
+        phones = {row['notify_service'] for row in self.options.get('phones', []) if row.get('enabled') is True}
+        worker_count = min(100, max(4, len(speakers) + len(phones)))
+        self._delivery_wakeups = [asyncio.Event() for _ in range(worker_count)]
+        self._workers = [self._spawn(loop(wakeup), 'household voice broadcast delivery')
+                         for wakeup in self._delivery_wakeups]
 
     async def async_close(self):
         self._closed = True

@@ -180,6 +180,7 @@ def composed_runtime_type(base):
                     preflight(targets)
                 session.phase='recording_and_queuing'
                 queued=await self.handoff.execute(session.request_id,session.source,preflight_targets=current_targets)
+                self._wake_delivery_workers()
                 result={'status':'cancelled' if queued.get('cancelled') else 'queued',
                     'reason':'announcement_cancelled' if queued.get('cancelled') else 'recording_queued_for_delivery',
                     'broadcast_id':queued.get('broadcast_id')}

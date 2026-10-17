@@ -33,6 +33,11 @@ class HouseholdVoiceManagerCard extends HTMLElement {
     <button type="submit">Create</button></form><div id="status" role="status" aria-live="polite"></div>
     <label class="check"><input id="show-timer-history" type="checkbox">Show finished timer history <span id="timer-history-count" class="muted"></span></label>
     <div id="rows"></div><div id="events" class="muted"></div>
+    <section class="row"><h3>Announcement speakers</h3>
+    <p class="muted">Say “broadcast” or “announcement”. Your assistant asks “What's the announcement?”, records your answer, and sends your voice to all selected speakers.</p>
+    <p id="announcement-speakers"></p>
+    <a id="announcement-configure" href="/config/integrations/integration/household_voice" hidden>Choose default announcement speakers</a>
+    <p id="announcement-guidance" class="muted" hidden>Configure → Announcement speakers → select speakers → Review and save. These defaults apply whenever you do not name a room.</p></section>
     <section class="row"><h3>Assistant speakers</h3><p class="muted">Speakers are discovered from each assistant’s Home Assistant room. Choose an optional default when a room has several speakers. Conversation stays on the assistant; music, books, announcements, alarms and timers use its paired speaker.</p>
     <div id="pairing-rows"></div><a id="pairing-configure" href="/config/integrations/integration/household_voice" hidden>Change assistant speakers in Settings</a>
     <p id="pairing-guidance" class="muted" hidden>Choose Configure → Assistant speakers → select the assistant and speaker → Review and save. Automatic uses its room; No paired speaker keeps built-in alarm and timer audio.</p></section></ha-card>`;
@@ -143,6 +148,15 @@ class HouseholdVoiceManagerCard extends HTMLElement {
     this.shadowRoot.querySelector('#pairing-configure').hidden=!admin;
     this.shadowRoot.querySelector('#pairing-guidance').hidden=!admin;
   }
+  renderAnnouncementSpeakers() {
+    const speakers=this.state()?.attributes.announcement_speakers || [];
+    this.shadowRoot.querySelector('#announcement-speakers').textContent=speakers.length
+      ? speakers.map(id=>this._hass.states[id]?.attributes?.friendly_name || id).join(', ')
+      : 'No default speakers selected. Choose speakers in Settings before making an announcement.';
+    const admin=this._hass?.user?.is_admin===true;
+    this.shadowRoot.querySelector('#announcement-configure').hidden=!admin;
+    this.shadowRoot.querySelector('#announcement-guidance').hidden=!admin;
+  }
   updateSpeakerPreview() {
     const selected=this.shadowRoot.querySelector("form").elements.target_assistant_id.value;
     const row=(this.state()?.attributes.assistants || []).find(item=>item.id===selected);
@@ -193,6 +207,7 @@ class HouseholdVoiceManagerCard extends HTMLElement {
     this.updateRoomChoices(state.attributes.rooms || []);
     this.updateAssistantChoices(state.attributes.assistants || []);
     this.renderPairings(state.attributes.assistants || []);
+    this.renderAnnouncementSpeakers();
     const schedules=state.attributes.schedules || [];
     const historyCount=schedules.filter(row=>row.kind==='timer' && ['completed','cancelled','dismissed'].includes(row.state)).length;
     this.shadowRoot.querySelector('#timer-history-count').textContent=historyCount ? `(${historyCount})` : '';

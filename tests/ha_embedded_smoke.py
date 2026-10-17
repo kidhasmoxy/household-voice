@@ -43,6 +43,9 @@ async def main():
         try:
             assert await async_load_base_functionality(hass)
             hass.auth = await auth_manager_from_config(hass, [], [])
+            # Conversation loads Core intents; initialize the real exposure
+            # registry they consult, as an ordinary HA boot does.
+            assert await async_setup_component(hass, 'homeassistant', {})
             assert await async_setup_component(hass, 'network', {})
             assert await async_setup_component(hass, 'household_voice', {})
             form = await hass.config_entries.flow.async_init('household_voice', context={'source': SOURCE_USER})

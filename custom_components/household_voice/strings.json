@@ -57,7 +57,7 @@
         "title": "Household voice settings",
         "description": "Choose rooms, exact speakers and phones, then review and save. Live features start disabled. Settings changes do not play audio; the separate pairing test requires confirmation and saved enabled settings.",
         "menu_options": {
-          "announcements": "Announcements, chime and volume",
+          "announcements": "Announcement speakers",
           "phone": "Add or edit a home phone",
           "satellite": "Add or edit a satellite",
           "remove": "Remove a mapping",
@@ -77,10 +77,10 @@
         }
       },
       "announcements": {
-        "title": "Default announcement speakers",
-        "description": "Choose one Music Assistant endpoint per speaker and an optional chime. Audiobooks and podcasts resume after announcements if playback remains unchanged. Phones receive the transcript when home. Choose whether to trust the current home state or require a report within five minutes or one hour. Away, unknown and unavailable phones are skipped.",
+        "title": "Announcement speakers",
+        "description": "Say broadcast or announcement. Your assistant asks \"What's the announcement?\", records your answer, and sends your original voice to all selected speakers. Choose the default speakers below; you can select more than one. Music Assistant manages playback timing. Home phones receive only the transcript under your chosen presence policy.",
         "data": {
-          "default_announcement_speakers": "Announcement speakers",
+          "default_announcement_speakers": "Default announcement speakers",
           "announcement_volume": "Announcement volume (0Ã¢â‚¬â€œ1)",
           "announcement_chime": "Announcement chime",
           "spoken_media_policy": "Audiobook and podcast interruptions",
