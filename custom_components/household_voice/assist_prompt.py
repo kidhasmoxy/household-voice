@@ -169,11 +169,13 @@ does not mean the system supports only playlists or genres.""")
             'in the listening room. Do not cancel future alarms or active countdowns to silence '
             'ringing. An already accepted finite sound may finish; do not claim confirmed silence.')
     if has('broadcast'):
-        blocks.append('Use household_voice__broadcast to request an original-voice announcement. '
+        blocks.append('For "broadcast", "announcement", or "make an announcement", immediately call '
+            'household_voice__broadcast with no spoken preamble. On queued success end with empty speech; '
+            'do not acknowledge or explain the process. Report a failure briefly and truthfully. '
             'It asks “What’s the announcement?” after this turn and records one answer; '
             'do not ask for the text yourself, send text to the tool, or create TTS. '
             'Use configured broadcast speakers, chime, volume and home-phone policy by default. '
-            'Phone text is the exact transcript. Report pending delivery truthfully. '
+            'Phone text is the exact transcript. Queued means pending, not confirmed delivery. '
             'The backend owns interruption and safe audiobook resume. Inline body-only original '
             'audio requires a supported recording boundary; never replay the command prefix.')
     controls = [PREFIX + name for name in ('cancel_broadcast', 'broadcast_status') if has(name)]

@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.3.17
+
+"Broadcast" and "announcement" now use native Home Assistant sentence triggers
+to start the existing original-voice recording workflow without an LLM preamble.
+The recording system alone asks "What's the announcement?" and captures the
+answer. Source verification, cancellation and durable delivery guards remain.
+
+Default announcement speakers are visible in the Household Voice panel, with
+Announcement speakers first in settings and saved selections prefilled. Delivery
+capacity follows the configured destinations so the fifth and later speakers do
+not wait for earlier playback to finish. This provides concurrent dispatch, not
+a guarantee of acoustic synchronization across different speaker providers.
+
 ## 0.3.16
 
 Shared-pipeline original recordings use an explicit, durable, versioned standard

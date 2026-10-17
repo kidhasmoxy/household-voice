@@ -433,6 +433,15 @@ async def real_ha_options_smoke():
             assert entry.options['media_rooms'][0]['username']=='fixture_listener'
             assert entry.options['stt_capture_profiles'][0]['source_device_id']==device.id
             assert entry.options['alarm_rooms'][0]['speakers']==[music.entity_id]
+            assert entry.options['default_announcement_speakers']==[music.entity_id]
+            reopened=await manager.async_init(entry.entry_id)
+            flow_id=reopened['flow_id']
+            assert reopened['menu_options'][0]=='announcements'
+            announcement_form=await step({'next_step_id':'announcements'})
+            speaker_key=next(key for key in announcement_form['data_schema'].schema
+                             if str(key)=='default_announcement_speakers')
+            assert speaker_key.default()==[music.entity_id]
+            manager.async_abort(flow_id)
             # Only the explicit pairing confirmation calls a fixture service.
             pairing=[]
             async def fixture_pairing(call):

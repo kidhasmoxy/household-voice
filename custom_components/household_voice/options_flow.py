@@ -55,7 +55,7 @@ class HouseholdVoiceOptionsFlow(config_entries.OptionsFlow):
 
     async def async_step_init(self, user_input=None):
         self._ensure_draft()
-        return self.async_show_menu(step_id="init", menu_options=["features", "shared_assistant", "assistant_pairing", "conversation_routing", "knowledge_family", "announcements", "single_turn_announcements", "phone", "satellite", "media", "alarms", "capture", "test_pairing", "audio_recovery", "native_audio_recovery", "remove", "review"])
+        return self.async_show_menu(step_id="init", menu_options=["announcements", "assistant_pairing", "features", "shared_assistant", "conversation_routing", "knowledge_family", "single_turn_announcements", "phone", "satellite", "media", "alarms", "capture", "test_pairing", "audio_recovery", "native_audio_recovery", "remove", "review"])
 
     async def async_step_shared_assistant(self, user_input=None):
         """Expose capabilities to the ordinary agent; never change its assignments."""
@@ -388,7 +388,7 @@ class HouseholdVoiceOptionsFlow(config_entries.OptionsFlow):
                 self.draft.update(default_announcement_speakers=selected, announcement_volume=level, announcement_chime=chime, spoken_media_policy=policy, phone_presence_policy=presence)
                 return await self.async_step_init()
         return self._form("announcements", {
-            vol.Optional("default_announcement_speakers", default=[]): EntitySelector(EntitySelectorConfig(domain="media_player", integration="music_assistant", multiple=True)),
+            vol.Optional("default_announcement_speakers", default=self.draft["default_announcement_speakers"]): EntitySelector(EntitySelectorConfig(domain="media_player", integration="music_assistant", multiple=True)),
             vol.Optional("announcement_volume", default=self.draft["announcement_volume"]): self._volume(),
             vol.Optional('phone_presence_policy', default=self.draft['phone_presence_policy']): SelectSelector(SelectSelectorConfig(options=[{'value':'recent_five_minutes','label':'Home; reported within five minutes (existing behavior)'}, {'value':'recent_hour','label':'Home; reported within one hour'}, {'value':'current_state','label':'Home according to current Home Assistant state'}],mode='dropdown')),
             vol.Optional("announcement_chime", default=self.draft["announcement_chime"]): SelectSelector(SelectSelectorConfig(options=[{"value":"none", "label":"No chime"}, {"value":"default", "label":"Music Assistant announcement chime"}], mode="dropdown")),

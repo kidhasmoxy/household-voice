@@ -7,13 +7,25 @@ account, or paid subscription is required for the core features. Original record
 on a single shared voice pipeline use an optional [Recording Worker app](recording-worker/README.md),
 which transports native microphone audio and leaves scheduling and playback in the integration.
 
-This is the **0.3.16 prerelease**. Automated tests cover implementation
+This is the **0.3.17 prerelease**. Automated tests cover implementation
 contracts; actual microphone capture, speaker delivery, phone presence, firmware,
 and audiobook resume require validation on your equipment. Keep an independent
 alarm available until your installation passes those tests. Home Assistant must
 be running for alarms and announcements to play.
 
 ## Install and update
+
+For announcements, say **"broadcast"** or **"announcement"**. The assistant asks
+**"What's the announcement?"**, then records your answer and plays your original
+voice on your selected speakers. The two short commands use Home Assistant's
+native sentence handling and do not wait for an LLM acknowledgement. Use the
+normal Assist pipeline; agent-only API calls bypass Core sentence handling.
+
+The Household Voice panel shows the current defaults. Choose **Configure →
+Announcement speakers**, select one or more Music Assistant speakers, then
+**Review and save**. These defaults apply when no room is named. Selected
+destinations dispatch concurrently; exact audible alignment depends on the
+speaker provider and Music Assistant grouping. Saving settings plays no audio.
 
 Requires Home Assistant 2026.9.4 or newer. CI validates 2026.9.4 and 2026.10.1;
 other versions need compatibility validation. Music Assistant and a compatible voice satellite are required for
