@@ -1,6 +1,6 @@
 # Shared assistant preview
 
-This is the 0.3.18 development preview. It contributes tools to an ordinary
+This is the 0.3.19 development preview. It contributes tools to an ordinary
 Home Assistant agent; it does not add or assign a conversation agent. Automated
 contract checks are not microphone or acoustic acceptance. The optional recording
 app supports the staged native two-turn capture backend; both default disabled.

@@ -7,7 +7,7 @@ account, or paid subscription is required for the core features. Original record
 on a single shared voice pipeline use an optional [Recording Worker app](recording-worker/README.md),
 which transports native microphone audio and leaves scheduling and playback in the integration.
 
-This is the **0.3.18 prerelease**. Automated tests cover implementation
+This is the **0.3.19 prerelease**. Automated tests cover implementation
 contracts; actual microphone capture, speaker delivery, phone presence, firmware,
 and audiobook resume require validation on your equipment. Keep an independent
 alarm available until your installation passes those tests. Home Assistant must
@@ -160,6 +160,16 @@ it through processing and responding. It restores owned volume changes after
 the assistant finishes; deliberate manual volume changes are preserved. The HA
 event arrives after the physical wake detection, so ducking is not instantaneous.
 Native wake interruption remains dependent on the device and its settings.
+
+Grouped Sonos speakers use native per-speaker volume for room ducking, so only
+speakers in the assistant's room are lowered. Alarms detach their paired Sonos
+speaker before ringing and restore its old group afterward only if the remaining
+group and the target's playback are unchanged. Later user changes take priority.
+An uncertain grouping or audio outcome leaves the speaker isolated and reports
+recovery required in the schedules sensor; it does not blindly replay a mutation.
+This requires the native Sonos integration and an exact registered physical
+identity matching the Music Assistant player. Unknown grouped providers are
+refused. Home Assistant Core is unchanged.
 
 External conversation replies require the separate advanced routing adapters and
 compatible, authenticated satellite events. Stock Voice Preview Edition firmware

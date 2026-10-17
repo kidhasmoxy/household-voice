@@ -21,6 +21,10 @@ def configuration(options, discovered=None):
                 if binding.get('device_id') and binding['device_id'] not in assigned:
                     item['satellites'].append(binding['device_id']); assigned.add(binding['device_id'])
             assistants[identifier]={key:binding.get(key) for key in ('device_id','area_id','speaker_id','status','name','schedule_output')}
+            if binding.get('alarm_isolation_available'):
+                # Alarm-only isolation readiness is stable across our own detach;
+                # ordinary playback discovery retains its stricter grouped status.
+                assistants[identifier]['status']='ready'
             assistants[identifier]['aliases']=list(binding.get('aliases',[]))
     alarm_rooms={}
     for row in options.get('alarm_rooms',[]):

@@ -210,7 +210,7 @@ class RuntimeAuthority:
                 db.execute('''UPDATE ring_clips SET room=?,lease=?,lease_until=?,available=?,sequence=?,
                     config_revision=?,schedule_revision=?,actual_target=?,outcome='claimed' WHERE occurrence=? AND target=?''',
                     (event['target_room'],lease,now+30,now+30,sequence,config['revision'],event['schedule_revision'],row['target'],row['occurrence'],row['target']))
-                return {'mode':'execution_enabled','clip':{'occurrence_id':row['occurrence'],'target':row['target'],
+                return {'mode':'execution_enabled','clip':{'occurrence_id':row['occurrence'],'target':row['target'],'schedule_id':event['schedule_id'],
                     'lease':lease,'sequence':sequence,'lease_until':now+30,'ring_until':event['ring_until'],
                     'duration':2,'audio_path':'/audio/alarm.wav','room':event['target_room'],'label':event['label'],
                     'target_assistant_id':event.get('target_assistant_id'),
