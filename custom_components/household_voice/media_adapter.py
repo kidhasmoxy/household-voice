@@ -45,6 +45,10 @@ class MediaAdapterError(ValueError):
     """Invalid or insufficient authoritative MA response; never fall back."""
 
 
+class MusicContentError(MediaAdapterError):
+    """The requested playback cannot satisfy the administrator content policy."""
+
+
 def _text(value, maximum=2048, empty=False):
     if not isinstance(value, str) or len(value)>maximum or (not empty and not value.strip()) or any(ord(c)<32 for c in value):
         raise MediaAdapterError('Malformed Music Assistant text')
@@ -53,6 +57,18 @@ def _text(value, maximum=2048, empty=False):
 
 def _kind(value):
     return value.value if hasattr(value, 'value') else value
+
+
+def explicit_rating(raw):
+    """Only authoritative boolean metadata is a rating; never infer from titles."""
+    metadata = raw.get('metadata') if isinstance(raw, dict) else None
+    value = metadata.get('explicit') if isinstance(metadata, dict) else None
+    return value if type(value) is bool else None
+
+
+def content_allowed(raw, block_unrated=True):
+    rating = explicit_rating(raw)
+    return rating is False or (rating is None and not block_unrated)
 
 
 def _item(raw, expected=None, depth=0):
@@ -68,18 +84,21 @@ def _item(raw, expected=None, depth=0):
         raise MediaAdapterError('Catalog URI/type mismatch')
     version = _text(raw.get('version'), empty=True)
     name = _text(raw.get('name'), 512)
-    # HA returns album editions separately from their title. Keep the original
+    # HA returns editions separately from their title. Keep the original
     # name as an alias for exact requests, but preserve the edition as visible
     # catalog data for soundtrack matching and meaningful version choices.
-    title = f'{name} ({version})' if kind == 'album' and depth == 0 and version and version.casefold() not in name.casefold() else name
+    title = f'{name} ({version})' if depth == 0 and version and version.casefold() not in name.casefold() else name
     _text(title, 512)
     artists = raw.get('artists', [])
     if not isinstance(artists, list) or len(artists)>32:
         raise MediaAdapterError('Malformed artists')
     names = tuple(_item(a, 'artist', depth+1)['title'] for a in artists)
     album = _item(raw['album'], 'album', depth+1)['title'] if raw.get('album') is not None else None
+    available = raw.get('available', True)
+    if type(available) is not bool:
+        raise MediaAdapterError('Malformed availability')
     return dict(uri=uri, title=title, media_type=kind, provider=match[1], artists=names, album=album,
-                aliases=(name,) if title != name else ())
+                aliases=(name,) if title != name else (), available=available, explicit=explicit_rating(raw))
 
 
 def _provider_item(raw, kind, provider):
@@ -253,7 +272,7 @@ class MusicAssistantAdapter:
         _text(value.get('queue_id'), 512)
         return value
 
-    async def _artist_top_tracks(self, result, session):
+    async def _artist_top_tracks(self, result, session, context):
         """Expand only a profile-authorized provider artist, never a library union.
 
         MA 2.10.6 artist playback follows a global preference. Its explicit
@@ -322,6 +341,8 @@ class MusicAssistantAdapter:
         for row in rows:
             if not isinstance(row, dict):
                 raise MediaAdapterError('Malformed top track')
+            if context.block_explicit_tracks and not content_allowed(row, context.block_unrated_tracks):
+                continue
             parsed = _provider_item(row, 'track', match[1])
             if parsed is None:
                 continue
@@ -369,6 +390,8 @@ class MusicAssistantAdapter:
         for raw in response['tracks']:
             if not isinstance(raw, dict):
                 raise MediaAdapterError('Malformed genre track')
+            if context.block_explicit_tracks and not content_allowed(raw, context.block_unrated_tracks):
+                continue
             metadata, mappings = raw.get('metadata'), raw.get('provider_mappings')
             if not isinstance(metadata, dict) or not isinstance(mappings, list) or len(mappings) > 32:
                 continue
@@ -412,12 +435,43 @@ class MusicAssistantAdapter:
             planned = self.bindings.plan(seed_request, self.registry, context, now=self.clock(), catalog=catalog)
             if planned.get('status') != 'ready':
                 return planned
-            return dict(planned, reason='verified_genre_seed_selected', playback_kind='genre_seed_autoplay',
-                        autoplay_enabled=True,
+            return dict(planned, reason='verified_genre_seed_selected',
+                        playback_kind='filtered_genre_track' if context.block_explicit_tracks else 'genre_seed_autoplay',
+                        autoplay_enabled=not context.block_explicit_tracks,
                         requested_genre=request.query, evidence_policy='profile_scoped_genre_metadata_and_provider_similar_tracks')
         return result
 
-    async def async_handle(self, request_data, caller):
+    async def _filter_collection(self, result, context):
+        """Dispatch a finite list of allowed tracks, never an opaque collection."""
+        reader = getattr(self.hass.services, 'async_read_collection_tracks', None)
+        verifier = getattr(self.hass.services, 'async_authorize_provider_uri', None)
+        if reader is None or verifier is None:
+            raise MediaAdapterError('Content-filtered collection lookup unavailable')
+        rows = await reader(result['selected']['uri'], result['selected']['media_type'])
+        if not isinstance(rows, list) or len(rows) > 500:
+            raise MediaAdapterError('Collection exceeds content verification limit')
+        tracks = []
+        for raw in rows:
+            if not isinstance(raw, dict):
+                raise MediaAdapterError('Malformed collection track')
+            if raw.get('media_type') != 'track' or not content_allowed(raw, context.block_unrated_tracks):
+                continue
+            parsed = _item(raw, 'track')
+            if parsed['available'] and parsed['uri'] not in tracks and await verifier(parsed['uri']) is True:
+                tracks.append(parsed['uri'])
+        if not tracks:
+            return dict(result, status='unavailable', reason='music_content_filter_no_allowed_tracks', actions=[])
+        result = deepcopy(result)
+        result.update(filtered_track_uris=tracks, track_count=len(tracks), autoplay_enabled=False)
+        action = result['actions'][-1]
+        shuffle = action['data'].pop('shuffle', False)
+        action['data'].update(media_id=tracks, media_type='track', radio_mode=False)
+        if shuffle:
+            result['actions'].insert(0, {'action':'media_player.shuffle_set',
+                'target':deepcopy(action['target']), 'data':{'shuffle':True}})
+        return result
+
+    async def async_handle(self, request_data, caller, *, expected_selection=None):
         """Construct, resolve and optionally execute a fresh plan under a player lock."""
         if not isinstance(request_data, dict):
             raise MediaAdapterError('Media request must be an object')
@@ -484,16 +538,39 @@ class MusicAssistantAdapter:
                                                  'mode': 'dry_run', 'executed': False, 'actions': []})
                 if request.selection_mode == 'broad_music' and (
                         result.get('playback_kind') == 'continuous_station'
-                        or result.get('reason') == 'no_relevant_music_collection'):
+                        or result.get('reason') in ('no_relevant_music_collection', 'music_content_filter_no_allowed_results')):
                     result = await self._genre_fallback(result, request, session, context)
+                if expected_selection is not None:
+                    selected = result.get('selected', {})
+                    fields = ('uri', 'title', 'media_type', 'provider', 'artists', 'album', 'available')
+                    if (result.get('status') != 'ready' or not selected.get('available')
+                            or any(selected.get(key) != expected_selection.get(key) for key in fields)):
+                        return self._record({'status':'clarify', 'reason':'media_choice_catalog_changed',
+                            'question':'That choice is no longer available as offered. What would you like instead?',
+                            'mode':'dry_run', 'executed':False, 'actions':[]})
                 if result.get('status') == 'ready' and result.get('playback_kind') == 'artist_top_tracks':
-                    result = await self._artist_top_tracks(result, session)
+                    result = await self._artist_top_tracks(result, session, context)
+                if (context.block_explicit_tracks and result.get('status') == 'ready'
+                        and result.get('selected', {}).get('media_type') in ('album', 'playlist')):
+                    result = await self._filter_collection(result, context)
                 if result.get('status')=='ready' and self.enable_execution:
                     actions = self._validated_actions(result, session, player)
+                    if context.block_explicit_tracks:
+                        check = getattr(self.hass.services, 'async_verify_content_playback', None)
+                        if check is None:
+                            raise MusicContentError('Content verification unavailable')
+                        for domain, service, data in actions:
+                            if (domain, service) == ('music_assistant', 'play_media'):
+                                await check(data)
                     dynamic_queue = None
                     replacements = [action for action in actions if action[0:2] == ('music_assistant', 'play_media')]
                     if replacements:
                         mode = await self._queue_mode(player)
+                        if context.block_explicit_tracks and result.get('selected', {}).get('media_type') != 'audiobook' and (not mode or mode['is_dynamic']
+                                or mode.get('autoplay_enabled') is not False):
+                            return self._record({'status':'unavailable', 'reason':'music_content_filter_unverified_queue',
+                                'question':'Start a finite queue with autoplay off before using the music content filter.',
+                                'executed':False, 'actions':[]})
                         if mode and mode['is_dynamic']:
                             if result.get('spoken_content') and mode['repeat_mode'] != 'off':
                                 return self._record({'status':'unavailable', 'reason':'dynamic_spoken_queue_requires_repeat_off',
@@ -556,17 +633,30 @@ class MusicAssistantAdapter:
                             changed = await autoplay_setter(player, latest_mode, True,
                                 expected_source_uri=result['selected']['uri'])
                             issued += int(changed is True)
-                    except Exception:
+                    except Exception as exc:
                         # No rollback/replay can safely restore progress after a partial playback action.
-                        return self._record({'status': 'error', 'reason': 'media_action_failed',
+                        return self._record({'status': 'error', 'reason': 'music_content_filter_blocked' if isinstance(exc, MusicContentError) else 'media_action_failed',
                             'mode': 'execution_enabled', 'executed': False, 'actions_issued': issued,
                             'playback_confirmed': False, 'retry_automatically': False, 'actions': []})
                     result = dict(result, mode='execution_enabled', executed=True,
                                   actions_issued=issued, playback_confirmed=False)
+            except MusicContentError:
+                return self._record({'status':'unavailable', 'reason':'music_content_filter_blocked',
+                    'question':'This request could not be verified against the household music content filter.',
+                    'executed':False, 'actions':[]})
             except MediaAdapterError:
                 raise
             except Exception as err:
                 raise MediaAdapterError('Music Assistant lookup failed') from err
+            if result.get('status') == 'clarify' and result.get('choices'):
+                # Queue-based book resume may have resolved an effective title
+                # internally. Preserve that exact request for a later choice.
+                result = dict(result, choice_request={key:getattr(request, key) for key in
+                    ('query', 'kind', 'media_type', 'target_room', 'provider', 'artist', 'album',
+                     'selected_uri', 'shuffle', 'selection_mode') if getattr(request, key) is not None})
+                if request.operation == 'resume':
+                    result['choice_request'].pop('shuffle', None)
+                    result['choice_request'].pop('selection_mode', None)
             return self._record(result)
 
     def _record(self, result):
@@ -594,8 +684,13 @@ class MusicAssistantAdapter:
                         raise MediaAdapterError('Explicit shuffle is only supported for non-spoken albums')
                     required.add('shuffle')
                 top_tracks = result.get('top_track_uris')
-                expected_id = top_tracks if top_tracks is not None else selected.get('uri')
-                expected_type = 'track' if top_tracks is not None else selected.get('media_type')
+                filtered = result.get('filtered_track_uris')
+                if filtered is not None and (top_tracks is not None or selected.get('media_type') not in ('album', 'playlist')
+                        or not isinstance(filtered, list) or not 1 <= len(filtered) <= 500 or data.get('radio_mode') is not False):
+                    raise MediaAdapterError('Invalid content-filtered collection plan')
+                track_list = filtered if filtered is not None else top_tracks
+                expected_id = track_list if track_list is not None else selected.get('uri')
+                expected_type = 'track' if track_list is not None else selected.get('media_type')
                 if top_tracks is not None and (result.get('playback_kind') != 'artist_top_tracks'
                         or selected.get('media_type') != 'artist' or not isinstance(top_tracks, list)
                         or not 1 <= len(top_tracks) <= 25 or data.get('radio_mode') is not False):
@@ -603,7 +698,7 @@ class MusicAssistantAdapter:
                 if (set(data)!=required or data['media_id']!=expected_id or data['media_type']!=expected_type
                         or data['username']!=session.username or data['enqueue']!='replace' or type(data['radio_mode']) is not bool):
                     raise MediaAdapterError('Unsafe playback plan')
-                for uri in (top_tracks if top_tracks is not None else [data['media_id']]):
+                for uri in (track_list if track_list is not None else [data['media_id']]):
                     match = URI.fullmatch(uri) if isinstance(uri, str) else None
                     if not match or match[2]!=data['media_type'] or match[1].lower() in ('http', 'https', 'file', 'ftp', 'data', 'javascript'):
                         raise MediaAdapterError('Playback requires a catalog URI')

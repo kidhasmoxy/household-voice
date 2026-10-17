@@ -147,6 +147,159 @@ class MediaLLMTests(unittest.IsolatedAsyncioTestCase):
         tool = module.MediaTool("household_media_" + operation, self.api)
         return await tool.async_call(self.hass, types.SimpleNamespace(tool_args=args or {}, id=call_id or f"call-{self.sequence}"), context or self.context)
 
+    def content_client(self, tracks, *, collections=None):
+        """Native MA contract fixtures; no provider or household is contacted."""
+        self.entry.options.update(block_explicit_tracks=True, live_actions_enabled=True, media_enabled=True)
+        self.content_reads = []
+        self.content_tracks = {track['uri']: track for track in tracks}
+        self.content_queue = [{'media_item':track} for track in tracks[:1]]
+        self.content_search = {group:[] for group in module.GROUPS}
+        self.content_search['tracks'] = tracks
+        async def send(command, **args):
+            self.content_reads.append((command, deepcopy(args)))
+            if command in ('music/search', 'music/verify_item_uri'):
+                self.assertEqual(args['user'], 'configured-user')
+                self.assertEqual(args['require_schema'], 35)
+            else:
+                self.assertNotIn('user', args)  # These MA endpoints do not allow impersonation.
+            if command == 'music/search': return deepcopy(self.content_search)
+            if command == 'music/verify_item_uri': return True
+            if command == 'music/item_by_uri': return deepcopy(self.content_tracks[args['uri']])
+            if command in ('music/albums/album_tracks', 'music/playlists/playlist_tracks'):
+                return deepcopy(collections or tracks)
+            if command == 'player_queues/items': return deepcopy(self.content_queue)
+            raise AssertionError(command)
+        helper = types.ModuleType('homeassistant.components.music_assistant.helpers')
+        helper.get_music_assistant_client = lambda hass, entry_id: types.SimpleNamespace(send_command=send)
+        patcher = patch.dict(sys.modules, {'homeassistant.components.music_assistant.helpers':helper})
+        patcher.start(); self.addCleanup(patcher.stop)
+
+    @staticmethod
+    def rated_track(name='Song', rating=False, uri='fixture://track/1'):
+        return dict(item(name, 'track', uri), metadata={'explicit':rating})
+
+    async def test_content_filter_excludes_explicit_suggestions_and_direct_selection(self):
+        clean = self.rated_track('Song', False)
+        dirty = self.rated_track('Song', True, 'fixture://track/2')
+        self.content_client([clean, dirty])
+        result = await self.call(args={'query':'Song', 'media_type':'track'})
+        self.assertEqual(result.data['status'], 'action_accepted')
+        self.assertEqual(result.data['selected']['uri'], clean['uri'])
+        self.assertNotIn(dirty['uri'], str(result.data))
+        self.services.calls.clear()
+        result = await self.call(args={'query':'Song', 'media_type':'track', 'selected_uri':dirty['uri']})
+        self.assertFalse(result.data['executed'])
+        self.assertNotIn(dirty['uri'], str(result.data))
+        self.assertEqual(self.services.calls, [])
+
+    async def test_content_filter_unknown_defaults_strict_and_is_configurable(self):
+        self.content_client([self.rated_track(rating=None)])
+        blocked = await self.call(args={'query':'Song', 'media_type':'track'})
+        self.assertEqual(blocked.data['reason'], 'music_content_filter_no_allowed_results')
+        self.assertEqual(self.services.calls, [])
+        self.entry.options['block_unrated_tracks'] = False
+        allowed = await self.call(args={'query':'Song', 'media_type':'track'})
+        self.assertEqual(allowed.data['status'], 'action_accepted')
+
+    async def test_content_filter_changed_rating_blocks_before_any_action(self):
+        track = self.rated_track()
+        self.content_client([track])
+        self.content_tracks[track['uri']] = self.rated_track(rating=True)
+        result = await self.call(args={'query':'Song', 'media_type':'track'})
+        self.assertEqual(result.data['reason'], 'music_content_filter_blocked')
+        self.assertFalse(result.data['executed'])
+        self.assertEqual(self.services.calls, [])
+
+    async def test_content_filter_collections_dispatch_only_finite_allowed_tracks(self):
+        for kind in ('album', 'playlist'):
+            for shuffled in (False, True):
+                with self.subTest(kind=kind, shuffle=shuffled):
+                    self.content_client([self.rated_track(), self.rated_track('Explicit', True, 'fixture://track/2'),
+                        self.rated_track('Unknown', None, 'fixture://track/3')])
+                    self.content_search = {group:[] for group in module.GROUPS}
+                    self.content_search[kind+'s'] = [item('Collection', kind, f'fixture://{kind}/1')]
+                    self.services.calls.clear()
+                    result = await self.call(args={'query':'Collection', 'media_type':kind, 'shuffle':shuffled})
+                    self.assertEqual(result.data['status'], 'action_accepted', result.data)
+                    played = [call[2] for call in self.services.calls if call[1]=='play_media']
+                    self.assertEqual(len(played), 1)
+                    self.assertEqual(played[0]['media_id'], ['fixture://track/1'])
+                    self.assertEqual(played[0]['media_type'], 'track')
+                    self.assertFalse(played[0]['radio_mode'])
+                    self.assertNotIn('shuffle', played[0])
+                    self.assertIn(shuffled, [call[2]['shuffle'] for call in self.services.calls if call[1]=='shuffle_set'])
+
+    async def test_content_filter_radio_and_dynamic_queue_cannot_bypass(self):
+        self.content_client([self.rated_track()])
+        self.content_search['radio'] = [item('Station', 'radio', 'fixture://radio/1')]
+        result = await self.call(args={'query':'Station', 'media_type':'radio'})
+        self.assertFalse(result.data['executed'])
+        for mode in ('is_dynamic', 'autoplay_enabled'):
+            async def dynamic(guard, player):
+                return dict(await fixture_queue_mode(guard, player), **{mode:True})
+            with patch.object(module._GuardedServices, 'async_read_queue_mode', dynamic):
+                result = await self.call(args={'query':'Song', 'media_type':'track'})
+                self.assertFalse(result.data['executed'])
+        self.assertEqual(self.services.calls, [])
+
+    async def test_content_filter_queue_audits_every_item_and_keeps_books(self):
+        self.content_client([self.rated_track()])
+        signature = module._resolve(self.hass, self.entry, self.context, 'kitchen')[2]
+        guard = module._GuardedServices(self.api, self.context, 'kitchen', signature)
+        await guard.async_check_content_queue(PLAYER)
+        self.content_tracks['fixture://track/1']['metadata']['explicit'] = True
+        with self.assertRaises(module.MusicContentError):
+            await guard.async_check_content_queue(PLAYER)
+        self.content_queue = [{'media_item':item()}]
+        await guard.async_check_content_queue(PLAYER)
+        self.content_queue = [{'media_item':self.rated_track()}, {'media_item':self.rated_track('Explicit', True, 'fixture://track/2')}]
+        self.content_tracks['fixture://track/1'] = self.rated_track()
+        self.content_tracks['fixture://track/2'] = self.rated_track('Explicit', True, 'fixture://track/2')
+        async def two(guard, player): return dict(await fixture_queue_mode(guard, player), items=2)
+        with patch.object(module._GuardedServices, 'async_read_queue_mode', two):
+            with self.assertRaises(module.MusicContentError):
+                await guard.async_call('media_player', 'media_play', {'entity_id':PLAYER})
+        self.assertEqual(self.services.calls, [])
+
+    async def test_content_filter_toggle_invalidates_guard_and_saved_choice(self):
+        self.content_client([self.rated_track('Song', False, 'fixture://track/1'),
+                             self.rated_track('Song', False, 'fixture://track/2')])
+        result = await self.call(args={'query':'Song', 'media_type':'track'})
+        token = result.data['choice_token']
+        signature = module._resolve(self.hass, self.entry, self.context, 'kitchen')[2]
+        guard = module._GuardedServices(self.api, self.context, 'kitchen', signature)
+        self.entry.options['block_unrated_tracks'] = False
+        with self.assertRaises(module.MediaConfigurationError):
+            await guard.async_call('media_player', 'media_play', {'entity_id':PLAYER})
+        result = await self.call(args={'choice_token':token, 'choice':1})
+        self.assertEqual(result.data['reason'], 'media_choice_expired_or_changed')
+        self.assertEqual(self.services.calls, [])
+
+    async def test_content_filter_rejects_later_queue_edit_with_same_count(self):
+        self.content_client([self.rated_track()])
+        signature = module._resolve(self.hass, self.entry, self.context, 'kitchen')[2]
+        guard = module._GuardedServices(self.api, self.context, 'kitchen', signature)
+        original = guard._content_read
+        reads = 0
+        async def changed(command, **args):
+            nonlocal reads
+            if command == 'player_queues/items':
+                reads += 1
+                if reads == 2:
+                    return [{'media_item':self.rated_track('Changed', True, 'fixture://track/9')}]
+            return await original(command, **args)
+        guard._content_read = changed
+        with self.assertRaises(module.MusicContentError):
+            await guard.async_check_content_queue(PLAYER)
+        self.assertEqual(self.services.calls, [])
+
+    async def test_content_filter_audiobook_play_does_not_seek_or_filter_book_rating(self):
+        self.content_client([])
+        self.content_search['audiobooks'] = [dict(item(), metadata={'explicit':True})]
+        result = await self.call(args={'query':'Fixture Book', 'kind':'book'})
+        self.assertEqual(result.data['status'], 'action_accepted')
+        self.assertFalse(any(call[1]=='media_seek' for call in self.services.calls))
+
     async def test_registered_target_trusted_profile_and_dry_run(self):
         result = await self.call(args={"query": "Fixture Book", "kind": "book"})
         self.assertEqual(result.data["status"], "dry_run")
@@ -1043,6 +1196,213 @@ class MediaLLMTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result.data["reason"], "selection_not_in_catalog")
         self.assertEqual([c[1] for c in self.services.calls], ["search"])
 
+    async def offer_media_choices(self, *, book=False, operation='play', extra=None):
+        self.entry.options.update(live_actions_enabled=True, media_enabled=True)
+        kind, group = ('audiobook', 'audiobooks') if book else ('track', 'tracks')
+        rows = [dict(item('Fixture Title', kind, f'library://{kind}/{n}'),
+                     version=version, artists=[item('Fixture Artist', 'artist', 'library://artist/3')])
+                for n, version in ((1, 'Live'), (2, 'Original'))]
+        self.services.search_result = search(rows[0], group)
+        self.services.search_result[group] = rows
+        args = dict(query='Fixture Title', kind='book' if book else 'music', media_type=kind)
+        args.update(extra or {})
+        response = (await self.call(operation, args)).data
+        self.assertEqual(response['status'], 'clarify', response)
+        self.assertIn('choice_token', response)
+        self.assertEqual([c['choice'] for c in response['choices']], [1, 2])
+        self.assertIn('1, Fixture Title (Live)', response['question'])
+        self.assertIn('2, Fixture Title (Original)', response['question'])
+        self.assertEqual([c[1] for c in self.services.calls], ['search'])
+        return response
+
+    def later_media_context(self, **overrides):
+        result = types.SimpleNamespace(**vars(self.context))
+        result.context = types.SimpleNamespace(id='later-request', user_id=self.context.context.user_id)
+        for key, value in overrides.items():
+            setattr(result, key, value)
+        return result
+
+    async def test_media_followup_second_choice_preserves_constraints_and_dispatches_once(self):
+        offered = await self.offer_media_choices(extra={'artist':'Fixture Artist', 'shuffle':True})
+        args = {'choice_token':offered['choice_token'], 'choice':2}
+        context = self.later_media_context()
+        first, duplicate = await asyncio.gather(
+            self.call(args=args, context=context, call_id='selection'),
+            self.call(args=args, context=context, call_id='selection'))
+        self.assertEqual(first.data, duplicate.data)
+        self.assertEqual(first.data['status'], 'action_accepted')
+        self.assertFalse(first.data['playback_confirmed'])
+        plays = [c[2] for c in self.services.calls if c[1] == 'play_media']
+        self.assertEqual(len(plays), 1)
+        self.assertEqual(plays[0]['media_id'], 'library://track/2')
+        self.assertEqual(plays[0]['username'], 'configured-user')
+        lookup = [c[2] for c in self.services.calls if c[1] == 'search'][-1]
+        self.assertEqual(lookup['name'], 'Fixture Title')
+        self.assertEqual(lookup['artist'], 'Fixture Artist')
+        self.assertTrue(next(c[2]['shuffle'] for c in self.services.calls if c[1] == 'shuffle_set'))
+        replay = await self.call(args=args, context=context, call_id='different-call')
+        self.assertEqual(replay.data['reason'], 'media_choice_expired_or_changed')
+        self.assertEqual(len([c for c in self.services.calls if c[1] == 'play_media']), 1)
+
+    async def test_media_followup_rejects_same_turn_other_source_user_and_conversation(self):
+        self.context.conversation_id = 'conversation-one'
+        offered = await self.offer_media_choices()
+        args = {'choice_token':offered['choice_token'], 'choice':1}
+        wrong_user = self.later_media_context()
+        wrong_user.context.user_id = 'another-user'
+        for context in (self.context, self.later_media_context(device_id='other-device'),
+                        wrong_user, self.later_media_context(conversation_id='other-conversation')):
+            with self.subTest(context=vars(context)):
+                result = await self.call(args=args, context=context)
+                self.assertEqual(result.data['reason'], 'media_choice_expired_or_changed')
+        self.assertEqual(len(self.services.calls), 1)
+
+    async def test_media_followup_rejects_invented_indices_or_changed_content(self):
+        offered = await self.offer_media_choices()
+        args = {'choice_token':offered['choice_token'], 'choice':1}
+        for override in ({'choice':0}, {'choice':3}, {'choice':True}, {'choice':1.0},
+                         {'query':'Different'}, {'kind':'book'}, {'artist':'Different'},
+                         {'selected_uri':'library://track/99'}, {'provider':'different'},
+                         {'choice_token':'invented'}, {'choice_token':''}):
+            with self.subTest(override=override):
+                result = await self.call(args=dict(args, **override), context=self.later_media_context())
+                self.assertIn(result.data['reason'], ('media_choice_expired_or_changed', 'invalid_media_arguments'))
+        self.assertEqual(len(self.services.calls), 1)
+
+    async def test_media_followup_cannot_bypass_pending_choice_with_raw_uri(self):
+        await self.offer_media_choices()
+        for context in (self.context, self.later_media_context()):
+            result = await self.call(args={'query':'Fixture Title','media_type':'track',
+                'selected_uri':'library://track/2'}, context=context)
+            self.assertEqual(result.data['reason'], 'media_choice_expired_or_changed')
+        self.assertEqual(len(self.services.calls), 1)
+
+    async def test_media_followup_expires_and_restart_drops_tokens(self):
+        now = [100.0]
+        self.api.choices.clock = lambda: now[0]
+        offered = await self.offer_media_choices()
+        now[0] += 120
+        args = {'choice_token':offered['choice_token'], 'choice':1}
+        result = await self.call(args=args, context=self.later_media_context())
+        self.assertEqual(result.data['reason'], 'media_choice_expired_or_changed')
+        self.api = module.HouseholdMediaAPI(self.hass, self.entry)
+        result = await self.call(args=args, context=self.later_media_context())
+        self.assertEqual(result.data['reason'], 'media_choice_expired_or_changed')
+        self.assertEqual(len(self.services.calls), 1)
+
+    async def test_media_followup_cancel_discards_selection_without_stopping_playback(self):
+        offered = await self.offer_media_choices()
+        token = offered['choice_token']
+        result = await self.call(args={'choice_token':token, 'cancel_choice':True}, context=self.later_media_context())
+        self.assertEqual(result.data['status'], 'cancelled')
+        self.assertEqual(len(self.services.calls), 1)
+        result = await self.call(args={'choice_token':token, 'choice':1}, context=self.later_media_context())
+        self.assertEqual(result.data['reason'], 'media_choice_expired_or_changed')
+        self.assertEqual(len(self.services.calls), 1)
+
+    async def test_media_followup_config_change_rejected_before_lookup(self):
+        offered = await self.offer_media_choices()
+        self.entry.options['media_rooms'][0]['username'] = 'changed-profile'
+        result = await self.call(args={'choice_token':offered['choice_token'], 'choice':1},
+            context=self.later_media_context())
+        self.assertEqual(result.data['reason'], 'media_choice_expired_or_changed')
+        self.assertEqual(len(self.services.calls), 1)
+
+    async def test_media_followup_fresh_catalog_metadata_change_never_dispatches(self):
+        for mutation in ('remove', 'title', 'version', 'artist', 'unavailable'):
+            self.setUp()
+            with self.subTest(mutation=mutation):
+                offered = await self.offer_media_choices()
+                row = self.services.search_result['tracks'][0]
+                if mutation == 'remove': self.services.search_result['tracks'].pop(0)
+                elif mutation == 'title': row['name'] = 'Different title'
+                elif mutation == 'version': row['version'] = 'Remastered'
+                elif mutation == 'artist': row['artists'] = [item('Different Artist', 'artist', 'library://artist/4')]
+                else: row['available'] = False
+                result = await self.call(args={'choice_token':offered['choice_token'], 'choice':1},
+                    context=self.later_media_context())
+                self.assertEqual(result.data['reason'], 'media_choice_catalog_changed')
+                self.assertEqual([c[1] for c in self.services.calls], ['search', 'search'])
+
+    async def test_media_followup_new_search_supersedes_old_choices(self):
+        offered = await self.offer_media_choices()
+        new = await self.call(args={'query':'Different title', 'media_type':'track'}, context=self.later_media_context())
+        self.assertNotEqual(new.data.get('choice_token'), offered['choice_token'])
+        count = len(self.services.calls)
+        result = await self.call(args={'choice_token':offered['choice_token'], 'choice':1}, context=self.later_media_context())
+        self.assertEqual(result.data['reason'], 'media_choice_expired_or_changed')
+        self.assertEqual(len(self.services.calls), count)
+
+    async def test_media_followup_book_resume_preserves_progress_and_kind(self):
+        offered = await self.offer_media_choices(book=True, operation='resume')
+        args = {'choice_token':offered['choice_token'], 'choice':2}
+        wrong = await self.call('play', args, context=self.later_media_context())
+        self.assertEqual(wrong.data['reason'], 'media_choice_expired_or_changed')
+        result = await self.call('resume', args, context=self.later_media_context())
+        self.assertEqual(result.data['status'], 'action_accepted')
+        self.assertEqual(result.data['progress_policy'], 'provider_managed_resume_no_seek_or_reset')
+        play = next(c[2] for c in self.services.calls if c[1] == 'play_media')
+        self.assertEqual(play['media_type'], 'audiobook')
+        self.assertFalse(play['radio_mode'])
+        self.assertFalse(next(c[2]['shuffle'] for c in self.services.calls if c[1] == 'shuffle_set'))
+        self.assertFalse(any(c[1] == 'media_seek' for c in self.services.calls))
+
+    async def test_media_followup_explicit_shuffle_change_and_book_rejection(self):
+        offered = await self.offer_media_choices(extra={'shuffle':True})
+        result = await self.call(args={'choice_token':offered['choice_token'], 'choice':1, 'shuffle':False},
+            context=self.later_media_context())
+        self.assertEqual(result.data['status'], 'action_accepted')
+        self.assertFalse(next(c[2]['shuffle'] for c in self.services.calls if c[1] == 'shuffle_set'))
+        self.services.calls.clear()
+        offered = await self.offer_media_choices(book=True)
+        result = await self.call(args={'choice_token':offered['choice_token'], 'choice':1, 'shuffle':True},
+            context=self.later_media_context())
+        self.assertEqual(result.data['reason'], 'media_choice_expired_or_changed')
+        self.assertEqual(len(self.services.calls), 1)
+
+    async def test_media_followup_cancellation_consumes_choice_and_never_retries(self):
+        offered = await self.offer_media_choices()
+        self.services.fail = 'search'
+        args = {'choice_token':offered['choice_token'], 'choice':1}
+        result = await self.call(args=args, context=self.later_media_context())
+        self.assertEqual(result.data['status'], 'error')
+        self.services.fail = None
+        result = await self.call(args=args, context=self.later_media_context())
+        self.assertEqual(result.data['reason'], 'media_choice_expired_or_changed')
+        self.assertFalse(any(c[1] == 'play_media' for c in self.services.calls))
+
+    async def test_media_followup_explicit_room_change_uses_registered_destination(self):
+        destination = 'media_player.fixture_bedroom'
+        self.hass.entities.values[destination] = types.SimpleNamespace(
+            disabled_by=None, platform='music_assistant', config_entry_id='ma-entry')
+        self.entry.options['media_rooms'].append(dict(self.entry.options['media_rooms'][0],
+            room_id='bedroom', music_player=destination))
+        self.hass.devices.values['bedroom-device'] = types.SimpleNamespace(disabled_by=None)
+        self.entry.options['satellites'].append(dict(satellite_device_id='bedroom-device',
+            room_id='bedroom', tts_media_player=TTS))
+        offered = await self.offer_media_choices(extra={'target_room':'kitchen'})
+        result = await self.call(args={'choice_token':offered['choice_token'], 'choice':2,
+            'target_room':'bedroom'}, context=self.later_media_context())
+        self.assertEqual(result.data['status'], 'action_accepted')
+        play = next(c[2] for c in self.services.calls if c[1] == 'play_media')
+        self.assertEqual(play['entity_id'], destination)
+        self.assertEqual(play['media_id'], 'library://track/2')
+
+    async def test_media_followup_rejects_room_with_different_profile(self):
+        destination = 'media_player.fixture_bedroom'
+        self.hass.entities.values[destination] = types.SimpleNamespace(
+            disabled_by=None, platform='music_assistant', config_entry_id='ma-entry')
+        self.entry.options['media_rooms'].append(dict(self.entry.options['media_rooms'][0],
+            room_id='bedroom', music_player=destination, username='different-user'))
+        self.hass.devices.values['bedroom-device'] = types.SimpleNamespace(disabled_by=None)
+        self.entry.options['satellites'].append(dict(satellite_device_id='bedroom-device',
+            room_id='bedroom', tts_media_player=TTS))
+        offered = await self.offer_media_choices()
+        result = await self.call(args={'choice_token':offered['choice_token'], 'choice':2,
+            'target_room':'bedroom'}, context=self.later_media_context())
+        self.assertEqual(result.data['reason'], 'media_choice_profile_changed')
+        self.assertEqual(len(self.services.calls), 1)
+
     async def test_unknown_music_queue_owner_never_invented(self):
         self.services.queue_result = queue("track")
         result = await self.call("resume")
@@ -1357,6 +1717,77 @@ async def real_ha_smoke():
             hass.config_entries.async_update_entry(voice,options=config)
             _, auto_row, _, _ = module._resolve(hass,voice,context)
             assert auto_row['music_player'] == other_player.entity_id and auto_row['username'] == 'configured-user'
+            # Real HA tool schemas and later request contexts around synthetic
+            # catalog/services: no household audio or provider is contacted.
+            async def choices_search(call):
+                rows = [dict(item('Fixture Choice', 'track', f'library://track/{n}'), version=version)
+                        for n, version in ((41, 'Live'), (42, 'Original'))]
+                response = search(rows[0], 'tracks')
+                response['tracks'] = rows
+                return response
+            hass.services.async_register('music_assistant','search',choices_search,supports_response=SupportsResponse.ONLY)
+            offered = await instance.async_call_tool(llm.ToolInput(tool_name=module.NAMES[0],
+                tool_args={'query':'Fixture Choice','media_type':'track'},id='native-offer-choices'))
+            assert offered.data['status'] == 'clarify' and offered.data['choice_token']
+            assert '2, Fixture Choice (Original)' in offered.data['question']
+            selected_input = llm.ToolInput(tool_name=module.NAMES[0],
+                tool_args={'choice_token':offered.data['choice_token'],'choice':2},id='native-select-choice')
+            same_turn = await instance.async_call_tool(selected_input)
+            assert same_turn.data['reason'] == 'media_choice_expired_or_changed' and len(actions) == count
+            later_context = llm.LLMContext(platform='fixture', context=Context(), language='en',
+                assistant='conversation', device_id=device.id)
+            later_instance = await llm.async_get_api(hass, api_id, later_context)
+            chosen = await later_instance.async_call_tool(selected_input)
+            chosen_data = chosen.data if hasattr(chosen, 'data') else chosen
+            assert chosen_data['status'] == 'action_accepted' and not chosen_data['playback_confirmed']
+            assert actions[-1][2]['media_id'] == 'library://track/42'
+            assert actions[-1][2]['entity_id'] == other_player.entity_id
+            count = len(actions)
+            repeated = await later_instance.async_call_tool(selected_input)
+            assert (repeated.data if hasattr(repeated, 'data') else repeated) == chosen_data
+            assert len(actions) == count
+            # Real HA tool serialization and saved policy around a native MA
+            # fixture, including mixed collections and a changed rating.
+            clean = dict(item('Filtered Song', 'track', 'fixture://track/51'), metadata={'explicit':False})
+            dirty = dict(item('Filtered Song', 'track', 'fixture://track/52'), metadata={'explicit':True})
+            unrated = dict(item('Unrated Song', 'track', 'fixture://track/53'), metadata={})
+            fresh_tracks = {row['uri']:row for row in (clean,dirty,unrated)}
+            async def content_command(command, **args):
+                if command == 'music/search':
+                    assert args['user'] == 'configured-user'
+                    if args['media_types'] == ['album']:
+                        return {'albums':[item('Filtered Album','album','fixture://album/1')]}
+                    return {'tracks':[clean,dirty,unrated]}
+                if command == 'music/verify_item_uri':
+                    assert args['user'] == 'configured-user'
+                    return True
+                assert 'user' not in args
+                if command == 'music/item_by_uri': return fresh_tracks[args['uri']]
+                if command == 'music/albums/album_tracks': return [clean,dirty,unrated]
+                raise AssertionError(command)
+            content_helper = types.ModuleType('homeassistant.components.music_assistant.helpers')
+            content_helper.get_music_assistant_client = lambda *args: types.SimpleNamespace(send_command=content_command)
+            config.update(block_explicit_tracks=True, block_unrated_tracks=True)
+            hass.config_entries.async_update_entry(voice, options=config)
+            with patch.dict(sys.modules, {'homeassistant.components.music_assistant.helpers':content_helper}):
+                filtered = await instance.async_call_tool(llm.ToolInput(tool_name=module.NAMES[0],
+                    tool_args={'query':'Filtered Song','media_type':'track'},id='native-content-clean'))
+                assert filtered.data['status'] == 'action_accepted', filtered.data
+                assert actions[-1][2]['media_id'] == clean['uri']
+                album_filtered = await instance.async_call_tool(llm.ToolInput(tool_name=module.NAMES[0],
+                    tool_args={'query':'Filtered Album','media_type':'album','shuffle':True},id='native-content-album'))
+                assert album_filtered.data['status'] == 'action_accepted', album_filtered.data
+                assert actions[-1][2]['media_id'] == [clean['uri']]
+                count = len(actions)
+                unknown = await instance.async_call_tool(llm.ToolInput(tool_name=module.NAMES[0],
+                    tool_args={'query':'Unrated Song','media_type':'track','selected_uri':unrated['uri']},id='native-content-unrated'))
+                assert unknown.data['executed'] is False and len(actions) == count
+                fresh_tracks[clean['uri']] = dict(clean, metadata={'explicit':True})
+                blocked = await instance.async_call_tool(llm.ToolInput(tool_name=module.NAMES[0],
+                    tool_args={'query':'Filtered Song','media_type':'track'},id='native-content-changed'))
+                assert blocked.data['reason'] == 'music_content_filter_blocked' and len(actions) == count
+            config.update(block_explicit_tracks=False)
+            hass.config_entries.async_update_entry(voice, options=config)
             # Moving the requesting device while catalog lookup is awaited must
             # invalidate the route before any queue control or media action.
             moved = ar.async_get(hass).async_create('Moved Room')
@@ -1383,6 +1814,8 @@ async def real_ha_smoke():
                 "native_area_without_manual_source_row_and_unique_profile": True,
                 "actual_pairing_collector_alias_collapse_and_dropdown_override": True,
                 "source_area_change_blocks_dispatch": True,
+                "native_later_turn_catalog_choice_and_deduplication": True,
+                "native_content_filter_clean_mixed_album_unrated_and_changed_rating": True,
                 "physical_actions": False, "live_ha_contacted": False, "real_ma_contacted": False}, sort_keys=True), flush=True)
         finally:
             queue_patch.stop()

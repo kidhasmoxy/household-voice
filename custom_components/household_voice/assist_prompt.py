@@ -88,7 +88,19 @@ kind=sleep_stories for 'my sleep stories' using the configured default playlist,
 or kind=sleep_collection for an explicitly named story collection/album.
 Never apply music shuffle/endless mode
 to books. Speak the selected title or playlist returned by the tool once.
-Respect a clarification question about competing editions. A lookup failure
+When choices include a choice_token, ask the returned numbered question and wait
+for the user's next turn. For 'the second one', 'the live version', or an artist
+reply, identify the unique offered choice. Call the same media_play or
+media_resume tool with only choice_token and integer choice. Include target_room
+or shuffle only if the user explicitly changes it. The backend preserves the
+original title, artist, book type and other constraints. Never choose in the
+same turn, guess between remaining matches, or bypass the token using a URI.
+If no unique choice fits, ask again; a different title starts a new search.
+For 'never mind' or 'cancel that request' during selection, call the same tool
+with only choice_token and cancel_choice=true. This discards the pending choice
+without stopping existing playback. Never use choice=0 or the household stop
+tool to cancel an unplayed selection.
+Expired or changed choices require a fresh request. A lookup failure
 does not mean the system supports only playlists or genres.""")
     if has('media_resume'):
         blocks.append('Use household_voice__media_resume for continuation. For '

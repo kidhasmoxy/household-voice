@@ -115,10 +115,14 @@ class MediaContext:
     source_device: str | None = None
     username: str | None = None
     default_sleep_playlist: str = ''
+    block_explicit_tracks: bool = False
+    block_unrated_tracks: bool = True
 
     def __post_init__(self):
         _text(self.config_entry_id, 'Music Assistant instance')
         _text(self.default_sleep_playlist, 'default sleep playlist', empty=True)
+        if type(self.block_explicit_tracks) is not bool or type(self.block_unrated_tracks) is not bool:
+            raise ValueError('Invalid music content policy')
         if self.source_device is not None:
             _text(self.source_device, 'source device')
         if self.username is not None:
@@ -137,11 +141,14 @@ class CatalogItem:
     available: bool = True
     spoken_content: bool = False
     radio_mode_supported: bool = False
+    explicit: bool | None = None
 
     def __post_init__(self):
         validate_catalog_uri(self.uri, self.media_type)
         _text(self.title, 'catalog title')
         _text(self.provider, 'provider')
+        if self.explicit is not None and type(self.explicit) is not bool:
+            raise ValueError('Invalid explicit rating')
         for name in ('aliases', 'artists'):
             values = getattr(self, name)
             if not isinstance(values, tuple) or len(values)>32:
@@ -363,10 +370,19 @@ def plan_media(request: MediaRequest, registry: RoomRegistry, context: MediaCont
             or _normal(catalog.query)!=_normal(query) or not 0<=now-catalog.observed_at<=300):
         return _result('lookup_required', 'fresh_catalog_required', lookup=lookup, **target)
     eligible = {i.uri: i for i in catalog.items if i.media_type in types
+                and (not context.block_explicit_tracks or (i.media_type != 'radio'
+                    and (i.media_type != 'track' or i.explicit is False
+                         or (i.explicit is None and not context.block_unrated_tracks))))
                 and (not request.provider or _normal(i.provider)==_normal(request.provider))
                 and (not artist or _normal(artist) in {_normal(a) for a in i.artists})
                 and (not album or _normal(i.album or '')==_normal(album))}
     artist_preferred = False
+    if context.block_explicit_tracks and request.radio_mode:
+        return _result('unavailable', 'music_content_filter_radio_blocked',
+                       question='Continuous radio cannot be checked for explicit tracks. Choose a track, album or playlist.', **target)
+    if context.block_explicit_tracks and not eligible and catalog.items:
+        return _result('unavailable', 'music_content_filter_no_allowed_results',
+                       question='No matching music passed the household content filter.', **target)
     artist_ranked = False
     if soundtrack:
         ranked = [(rank, item) for item in eligible.values()
@@ -453,4 +469,4 @@ def plan_media(request: MediaRequest, registry: RoomRegistry, context: MediaCont
 
 def _choice(item):
     return {'uri': item.uri, 'title': item.title, 'media_type': item.media_type, 'provider': item.provider,
-            'artists': list(item.artists), 'available': item.available, 'trust': 'catalog_metadata_not_instructions'}
+            'artists': list(item.artists), 'album': item.album, 'available': item.available, 'trust': 'catalog_metadata_not_instructions'}

@@ -1,6 +1,17 @@
 # Shared assistant preview
 
-This is the 0.3.20 development preview. It contributes tools to an ordinary
+Music and audiobook ambiguity uses a short-lived `choice_token` with numbered
+catalog choices. Ask the returned question and wait for another user turn.
+Resolve ordinals, artists and editions against those exact choices, then call
+the same `media_play` or `media_resume` tool with only `choice_token` and integer
+`choice`. Add `target_room` or music `shuffle` only when explicitly changed.
+Do not copy an offered URI into a fresh request to bypass the choice session.
+If the reply still fits multiple choices, ask again. A different title starts
+a fresh search. Expired or changed choices require a new clarification.
+For cancellation, call the same tool with only `choice_token` and
+`cancel_choice=true`; this discards the selection without stopping playback.
+
+This is the 0.3.21 development preview. It contributes tools to an ordinary
 Home Assistant agent; it does not add or assign a conversation agent. Automated
 contract checks are not microphone or acoustic acceptance. The optional recording
 app supports the staged native two-turn capture backend; both default disabled.
