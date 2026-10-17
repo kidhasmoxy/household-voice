@@ -454,8 +454,13 @@ async def real_ha_options_smoke():
             assert entry.options['stt_capture_enabled'] is True
             result=await manager.async_init(entry.entry_id);flow_id=result['flow_id']
             await step({'next_step_id':'alarm_defaults'})
-            invalid=await step({'ring_volume':0,'ring_fallback_speakers':[]})
-            assert invalid['errors']['base']=='invalid_volume'
+            from homeassistant.data_entry_flow import InvalidData
+            try:
+                await step({'ring_volume':0,'ring_fallback_speakers':[]})
+            except InvalidData:
+                pass  # Core's numeric selector rejects out-of-range input first.
+            else:
+                raise AssertionError('Core accepted an invalid alarm volume')
             await step({'ring_volume':40,'ring_fallback_speakers':[music.entity_id]})
             await step({'next_step_id':'review'});assert (await step({}))['type']=='create_entry'
             assert entry.options['ring_volume']==40 and entry.options['alarm_rooms'][0]['speakers']==[music.entity_id]
