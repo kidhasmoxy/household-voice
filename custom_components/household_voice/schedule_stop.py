@@ -14,10 +14,10 @@ class HouseholdStopTool(llm.Tool):
     name='household_voice__stop'
     description=('Stop: first dismiss all currently ringing household alarms and timers. '
         'Only if none are ringing, stop media on this requesting assistant’s paired output. '
-        'Set ringing_only=true for an explicit alarm/timer stop, so no media is stopped if none ring. '
-        'For bare stop omit it. Never use generic speaker stop as an alarm substitute. '
+        'Use this one tool for all stop requests, with no arguments. '
+        'Do not cancel future alarms or timers still counting down. '
         'Accepted finite alarm clips may finish; do not claim acoustic silence.')
-    parameters=probatio.Schema({probatio.Optional('ringing_only'):bool})
+    parameters=probatio.Schema({})
 
     def __init__(self, api):
         self.api=api
@@ -26,8 +26,7 @@ class HouseholdStopTool(llm.Tool):
         from .api import CoordinatorConflict
         from .request_area import resolve_source_area, RequestAreaError
         from homeassistant.helpers import device_registry as dr, entity_registry as er
-        if (not isinstance(tool_input.tool_args,dict) or set(tool_input.tool_args)-{'ringing_only'}
-                or type(tool_input.tool_args.get('ringing_only',False)) is not bool
+        if (not isinstance(tool_input.tool_args,dict) or tool_input.tool_args
                 or not isinstance(tool_input.id,str) or not 1<=len(tool_input.id)<=512):
             return tool_result(llm,data={'status':'error','reason':'invalid_stop_arguments'},error=True)
         if self.api.entry.options.get('assist_tools_enabled') is not True or getattr(self.api.entry,'disabled_by',None) is not None:
@@ -40,8 +39,7 @@ class HouseholdStopTool(llm.Tool):
                            and getattr(row,'disabled_by',None) is None
                            for row in er.async_get(hass).entities.values())):
             return tool_result(llm,data={'status':'clarify','reason':'trusted_source_assistant_required'})
-        ringing_only=tool_input.tool_args.get('ringing_only',False)
-        signature=('stop',ringing_only)
+        signature=('stop',)
         request_id='ha-stop-'+hashlib.sha256(json.dumps([self.api.entry.entry_id,
             getattr(context.context,'id',None),getattr(context.context,'user_id',None),
             context.device_id,tool_input.id]).encode()).hexdigest()
@@ -65,8 +63,6 @@ class HouseholdStopTool(llm.Tool):
                     output={'status':'stored','reason':'ringing_schedules_dismissed',**decision,
                         'schedule_database_changed':True,'media_stop_dispatched':False,
                         'speech':'The ringing alarms and timers are dismissed. A sound already playing may finish.'}
-                elif decision['no_ringing_at_decision'] is True and ringing_only:
-                    output={'status':'noop','reason':'nothing_ringing','media_stop_dispatched':False}
                 elif decision['no_ringing_at_decision'] is True:
                     try:
                         resolve_source_area(hass,self.api.entry.options,context)

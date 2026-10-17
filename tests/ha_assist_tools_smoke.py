@@ -125,7 +125,7 @@ async def verify_assist_tools(hass, entry):
             media_names = {tool.name for tool in media_instance.tools
                            if tool.name.startswith('household_voice__media_')}
             assert media_names == {'household_voice__media_play','household_voice__media_resume',
-                                   'household_voice__media_pause','household_voice__media_stop',
+                                   'household_voice__media_pause',
                                    'household_voice__media_status','household_voice__media_queue_options',
                                    'household_voice__media_control'}
             assert 'media_type=album' in media_instance.api_prompt

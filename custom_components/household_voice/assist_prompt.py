@@ -97,9 +97,6 @@ does not mean the system supports only playlists or genres.""")
     if has('media_pause'):
         blocks.append('Use household_voice__media_pause to pause music or spoken content '
                       'in the listening room, or the explicitly requested destination.')
-    if has('media_stop'):
-        blocks.append('Use household_voice__media_stop for an explicit media stop. '
-                      'It preserves spoken-content progress and does not dismiss alarms.')
     if has('media_status'):
         blocks.append('Use household_voice__media_status for what is playing, its artist/album, '
             'position or current shuffle/repeat settings. Report returned metadata only; '
@@ -162,12 +159,13 @@ does not mean the system supports only playlists or genres.""")
             'Ask before replacing a recurring alarm with a one-day exception; never '
             'discard recurrence or convert an alarm into a timer.')
     if has('stop'):
-        blocks.append('For bare “stop”, use household_voice__stop with no arguments. For '
-            '“stop the alarm” or “stop the timer” when ringing, call it with ringing_only=true '
-            'so media cannot be stopped when ringing ends. It prioritizes dismissal of all currently ringing household '
-            'alarms/timers from any assistant; only bare stop with no ringing may stop media '
-            'in the listening room. Do not cancel future alarms or active countdowns to silence '
-            'ringing. An already accepted finite sound may finish; do not claim confirmed silence.')
+        blocks.append('For every stop request, including “stop the music”, “stop the alarm” and '
+            '“stop the timer”, use household_voice__stop with no arguments. '
+            'This single tool first dismisses all currently ringing household alarms and timers. '
+            'Only if none are ringing does it stop media in the listening room. '
+            'Do not choose a separate media-stop executor or list schedules first. '
+            'Do not cancel future alarms or active countdowns to silence ringing. '
+            'An already accepted finite sound may finish; do not claim confirmed silence.')
     if has('broadcast'):
         blocks.append('For "broadcast", "announcement", or "make an announcement", immediately call '
             'household_voice__broadcast with no spoken preamble. On queued success end with empty speech; '
