@@ -75,7 +75,8 @@
           "native_audio_recovery": "Recover built-in speaker after uncertain audio",
           "shared_assistant": "Shared assistant and recording",
           "alarm_defaults": "Alarm volume and fallback speakers",
-          "maintenance": "Maintenance"
+          "maintenance": "Maintenance",
+          "music_content": "Music content"
         }
       },
       "announcements": {
@@ -133,7 +134,7 @@
       },
       "review": {
         "title": "Review and save household voice settings",
-        "description": "Default speakers: {speakers}. Phones: {phones}. Satellites: {satellites}. Master live actions: {live}. Saving validates the current registries, preserves your feature switches, and requests integration reload. Enabled features can act on subsequent voice requests or scheduled events."
+        "description": "Default speakers: {speakers}. Phones: {phones}. Satellites: {satellites}. Master live actions: {live}. Saving validates the current registries, preserves your feature switches, and requests integration reload. Enabled features can act on subsequent voice requests or scheduled events. Explicit music filter: {music_filter}. Unrated tracks when filtering: {unrated_tracks}."
       },
       "media": {
         "title": "Music Assistant room and profile",
@@ -279,6 +280,14 @@
           "native_audio_recovery": "Recover an assistant’s built-in speaker",
           "remove": "Remove a saved mapping",
           "init": "Back to settings"
+        }
+      },
+      "music_content": {
+        "title": "Music content",
+        "description": "Apply to Household Voice music suggestions and playback. Explicit tracks are removed from albums, playlists and artist selections. Blocking unrated tracks is recommended because some providers omit ratings. Radio streams and automatic endless playback cannot be checked and are unavailable while filtering. Existing dynamic or autoplay queues must be cleared or replaced with a finite queue with autoplay off in Music Assistant. This does not change music already playing or control playback started by other apps. Audiobooks retain their existing playback and resume behavior. Finish with Review and save.",
+        "data": {
+          "block_explicit_tracks": "Block explicit tracks",
+          "block_unrated_tracks": "Also block tracks without a content rating (when filtering is on)"
         }
       }
     },

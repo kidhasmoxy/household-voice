@@ -64,6 +64,7 @@ class PairedControl(CurrentMedia):
         service='media_next_track' if operation=='next' else 'media_previous_track'
         if not self.api.hass.services.has_service('media_player',service):
             raise ControlError('media_control_not_supported')
+        await guard.async_check_content_queue(entity)
         # HA services do not offer atomic queue-generation compare-and-swap.
         # Validate immediately before dispatch and never replay an unknown result.
         self.dispatched=True

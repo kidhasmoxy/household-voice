@@ -58,8 +58,8 @@ class HouseholdVoiceOptionsFlow(config_entries.OptionsFlow):
         if self.draft['assist_tools_enabled']:
             return self.async_show_menu(step_id='init', menu_options=[
                 'announcements', 'assistant_pairing', 'features', 'shared_assistant',
-                'knowledge_family', 'phone', 'media', 'alarm_defaults', 'maintenance', 'review'])
-        return self.async_show_menu(step_id="init", menu_options=["announcements", "assistant_pairing", "features", "shared_assistant", "conversation_routing", "knowledge_family", "single_turn_announcements", "phone", "satellite", "media", "alarms", "capture", "test_pairing", "audio_recovery", "native_audio_recovery", "remove", "review"])
+                'knowledge_family', 'phone', 'media', 'music_content', 'alarm_defaults', 'maintenance', 'review'])
+        return self.async_show_menu(step_id="init", menu_options=["announcements", "assistant_pairing", "features", "shared_assistant", "conversation_routing", "knowledge_family", "single_turn_announcements", "phone", "satellite", "media", "music_content", "alarms", "capture", "test_pairing", "audio_recovery", "native_audio_recovery", "remove", "review"])
 
     async def async_step_maintenance(self, user_input=None):
         return self.async_show_menu(step_id='maintenance', menu_options=[
@@ -374,6 +374,21 @@ class HouseholdVoiceOptionsFlow(config_entries.OptionsFlow):
             return await self.async_step_init()
         return self._form("pairing_result", {}, placeholders={"result": self.pairing_status})
 
+    async def async_step_music_content(self, user_input=None):
+        self._ensure_draft()
+        keys = ('block_explicit_tracks', 'block_unrated_tracks')
+        errors = {}
+        if user_input is not None:
+            values = {key: user_input.get(key, self.draft[key]) for key in keys}
+            if any(type(value) is not bool for value in values.values()):
+                errors['base'] = 'invalid_enabled'
+            else:
+                self.draft.update(values)
+                return await self.async_step_init()
+        return self._form('music_content', {
+            vol.Required(key, default=self.draft[key]): BooleanSelector() for key in keys
+        }, errors, user_input or self.draft)
+
     async def async_step_media(self, user_input=None):
         self._ensure_draft()
         errors = {}
@@ -548,4 +563,6 @@ class HouseholdVoiceOptionsFlow(config_entries.OptionsFlow):
             "speakers": str(len(self.draft["default_announcement_speakers"])),
             "phones": str(len(self.draft["phones"])), "satellites": str(len(self.draft["satellites"])),
             "live": "enabled" if self.draft["live_actions_enabled"] else "disabled",
+            "music_filter": "enabled" if self.draft['block_explicit_tracks'] else "disabled",
+            "unrated_tracks": "blocked" if self.draft['block_unrated_tracks'] else "allowed",
         })

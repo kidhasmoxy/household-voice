@@ -15,6 +15,19 @@ be running for alarms and announcements to play.
 
 ## Install and update
 
+Choose **Configure → Music content → Block explicit tracks**, then **Review and
+save**, to filter Household Voice music suggestions and playback. Filtering is
+off by default. **Also block tracks without a content rating** defaults to on
+when filtering is enabled; turn that option off to allow unrated tracks.
+Ratings come from Music Assistant provider metadata, not a title or lyrics scan.
+Albums, playlists and artist selections become finite lists of allowed tracks.
+Radio streams and automatic endless playback are unavailable with filtering on.
+Clear or replace an existing dynamic/autoplay queue with a finite queue with
+autoplay off in Music Assistant before starting filtered playback. Collections
+and existing queues exceeding 500 items cannot be verified by this filter.
+Audiobooks keep their existing playback and resume behavior. Saving this setting
+does not stop music already playing or control playback started by other apps.
+
 For announcements, say **"broadcast"** or **"announcement"**. The assistant asks
 **"What's the announcement?"**, then records your answer and plays your original
 voice on your selected speakers. The two short commands use Home Assistant's

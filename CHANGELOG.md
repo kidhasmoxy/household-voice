@@ -2,6 +2,13 @@
 
 ## 0.3.21
 
+Optional **Music content** settings exclude explicit tracks from Household Voice
+suggestions and playback, with separate control over unrated tracks. Album,
+playlist and artist requests dispatch only allowed tracks, and playback checks
+fresh metadata before starting. Resume/skip/queue changes check the full finite
+queue. Radio and unfiltered autoplay are blocked while filtering. Settings changes
+invalidate saved choices; audiobook progress behavior is unchanged.
+
 Ambiguous music and audiobook requests return numbered catalog choices. A later
 reply selects a saved choice while retaining the original content, artist,
 shuffle and destination constraints; an explicit room or music-shuffle change

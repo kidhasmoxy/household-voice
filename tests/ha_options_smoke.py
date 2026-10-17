@@ -39,6 +39,20 @@ def route():
 
 
 class OptionsTests(unittest.TestCase):
+    def test_music_content_defaults_validation_and_persistence(self):
+        values = options.validate_options({}, ENTITIES, DEVICES, SERVICES)
+        self.assertFalse(values['block_explicit_tracks'])
+        self.assertTrue(values['block_unrated_tracks'])
+        for strict in (False, True):
+            values = options.validate_options({'block_explicit_tracks':True, 'block_unrated_tracks':strict}, ENTITIES, DEVICES, SERVICES)
+            self.assertEqual(options.initial_options(values), values)
+            self.assertTrue(values['block_explicit_tracks'])
+            self.assertIs(values['block_unrated_tracks'], strict)
+        for key in ('block_explicit_tracks', 'block_unrated_tracks'):
+            for bad in ('true', 1, None, []):
+                with self.subTest(key=key, bad=bad), self.assertRaises(options.RoutingError):
+                    options.validate_options({key:bad}, ENTITIES, DEVICES, SERVICES)
+
     def test_native_recording_defaults_off_and_requires_explicit_live_shared_announcements(self):
         self.assertFalse(options.validate_options({},ENTITIES,DEVICES,SERVICES)['native_recording_enabled'])
         for value in (1,'true',None,[]):
@@ -446,6 +460,19 @@ async def real_ha_options_smoke():
                              if str(key)=='default_announcement_speakers')
             assert speaker_key.default()==[music.entity_id]
             manager.async_abort(flow_id)
+            # Actual HA selectors persist music policy through Review and save.
+            result=await manager.async_init(entry.entry_id);flow_id=result['flow_id']
+            assert 'music_content' in result['menu_options']
+            await step({'next_step_id':'music_content'})
+            await step({'block_explicit_tracks':True, 'block_unrated_tracks':False})
+            await step({'next_step_id':'review'});assert (await step({}))['type']=='create_entry'
+            assert entry.options['block_explicit_tracks'] is True
+            assert entry.options['block_unrated_tracks'] is False
+            result=await manager.async_init(entry.entry_id);flow_id=result['flow_id']
+            form=await step({'next_step_id':'music_content'})
+            defaults={str(key):key.default() for key in form['data_schema'].schema}
+            assert defaults == {'block_explicit_tracks':True, 'block_unrated_tracks':False}
+            manager.async_abort(flow_id)
             # Alarm defaults are editable without inventing a room mapping.
             hass.config_entries.async_update_entry(entry, options={**entry.options,'stt_capture_enabled':True})
             result=await manager.async_init(entry.entry_id);flow_id=result['flow_id']
@@ -550,6 +577,7 @@ async def real_ha_options_smoke():
             print(json.dumps({"home_assistant_version": __version__, "real_ha_options_flow": True,
                 "registry_validated": True, "persist_reopen_remove": True, "admin_feature_switches_preserved": True,
                 "capture_alarm_chime_options":True,
+                "music_content_form_save_reopen_and_defaults":True,
                 "knowledge_family_form_save_reset_and_local_openai_selection":True,
                 "knowledge_secret_never_suggested_and_blank_preserves":True,
                 "explicit_pairing_test_mock_action":True,

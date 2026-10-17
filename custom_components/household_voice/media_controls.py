@@ -151,6 +151,7 @@ class CurrentMedia:
         guard = _GuardedServices(self.api, self.context, self.target, self.signature)
         if await guard.async_authorize_provider_uri(uri) is not True:
             raise ControlError('current_media_not_available_to_configured_profile')
+        await guard.async_check_content_queue(self.binding()[0]['music_player'])
 
     async def options(self, args):
         if self.read_only:
