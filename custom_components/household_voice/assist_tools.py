@@ -146,7 +146,8 @@ def build_assist_tools(hass, context, apis):
         if api_type is BroadcastAPI and ((entry.options.get('stt_capture_enabled') is not True
                 and entry.options.get('native_recording_enabled') is not True) or getattr(matches[0].coordinator, 'broadcast_runtime', None) is None):
             continue
-        tools.extend(AssistCapabilityTool(tool_type(name, matches[0]), legacy_names) for name in names)
+        tools.extend(AssistCapabilityTool(tool_type(name, matches[0]), legacy_names) for name in names
+                     if name != 'household_media_stop')
         if api_type is HouseholdMediaAPI:
             from .media_controls import MediaControlTool, NAMES as control_names
             from .media_actions import PairedMediaControlTool

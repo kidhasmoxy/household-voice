@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.3.20
+
+Shared Assist exposes one stop tool with no mode arguments. Every stop request
+first dismisses currently ringing household alarms and timers; only when none
+are ringing does it stop media on the requesting assistant's paired output.
+The separate media-stop tool is no longer exposed in shared mode. Future alarms
+and counting-down timers remain untouched; uncertain or changing ringing state
+never falls through to media. Internal media execution remains for compatibility.
+
 ## 0.3.19
 
 Alarms on a paired Sonos speaker detach that speaker from its group before

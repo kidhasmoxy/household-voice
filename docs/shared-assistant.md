@@ -1,6 +1,6 @@
 # Shared assistant preview
 
-This is the 0.3.19 development preview. It contributes tools to an ordinary
+This is the 0.3.20 development preview. It contributes tools to an ordinary
 Home Assistant agent; it does not add or assign a conversation agent. Automated
 contract checks are not microphone or acoustic acceptance. The optional recording
 app supports the staged native two-turn capture backend; both default disabled.
@@ -189,7 +189,6 @@ Use household_voice__media_resume for continuation. For 'continue my book', set 
 
 Use household_voice__media_pause to pause music or spoken content in the listening room, or the explicitly requested destination.
 
-Use household_voice__media_stop for an explicit media stop. It preserves spoken-content progress and does not dismiss alarms.
 
 Use household_voice__media_status for what is playing, its artist/album, position or current shuffle/repeat settings. Report returned metadata only; a position is an observation, not a precise live clock.
 
@@ -207,7 +206,7 @@ Timer edits go directly to household_voice__change_schedule: “add/extend by tw
 
 For “move the school alarm to seven thirty”, use household_voice__change_schedule(operation=reschedule,kind=alarm,local_time=07:30) with the supplied label. This edits its clock time while preserving its assistant, one-shot date or weekly recurrence. operation=move changes the assistant destination. Do not cancel and recreate an alarm to edit it. Ask before replacing a recurring alarm with a one-day exception; never discard recurrence or convert an alarm into a timer.
 
-For bare “stop”, use household_voice__stop with no arguments. For “stop the alarm” or “stop the timer” when ringing, call it with ringing_only=true so media cannot be stopped when ringing ends. It prioritizes dismissal of all currently ringing household alarms/timers from any assistant; only bare stop with no ringing may stop media in the listening room. Do not cancel future alarms or active countdowns to silence ringing. An already accepted finite sound may finish; do not claim confirmed silence.
+For every stop request, use household_voice__stop with no arguments. First dismiss all currently ringing household alarms and timers; only if none are ringing stop media in the listening room. Do not choose a separate media-stop tool or list schedules first. Do not cancel future alarms or active countdowns. An already accepted finite sound may finish; do not claim confirmed silence.
 
 For "broadcast", "announcement", or "make an announcement", immediately call household_voice__broadcast with no spoken preamble. On queued success end with empty speech; do not acknowledge or explain the process. The recording system asks "What's the announcement?" and captures one answer. Use configured speakers, chime, volume and home-phone policy by default. Do not ask for the text yourself or synthesize it. Report failures briefly and never claim confirmed delivery from queuing. Native sentence shortcuts handle the short commands before the shared agent in the ordinary Assist pipeline.
 
