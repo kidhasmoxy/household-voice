@@ -91,5 +91,12 @@ class AlarmGroupTests(unittest.IsolatedAsyncioTestCase):
         await self.isolate()
         with self.assertRaises(m.AudioTransportError):await self.manager.prepare('target',{**self.clip,'occurrence_id':'other'},self.current)
         assert len(self.backend.calls)==1
+    async def test_topology_wait_tolerates_staggered_state_updates(self):
+        observations=iter(('inconsistent',False,True))
+        def converging():
+            value=next(observations)
+            if value=='inconsistent':raise m.AudioTransportError('state updates in progress')
+            return value
+        await m.SonosGroups(None).wait(converging)
 
 if __name__=='__main__':unittest.main()

@@ -100,7 +100,14 @@ class SonosGroups:
 
     async def wait(self,predicate):
         async with asyncio.timeout(8):
-            while not predicate():await asyncio.sleep(.1)
+            while True:
+                try:
+                    if predicate():return
+                except AudioTransportError:
+                    # HA and MA report the members separately; inconsistent
+                    # intermediate observations are expected during convergence.
+                    pass
+                await asyncio.sleep(.1)
 
 
 class AlarmGroupIsolation:
