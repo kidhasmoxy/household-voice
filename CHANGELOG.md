@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.3.18
+
+Shared-assistant settings now show only the active native Assist controls.
+Legacy conversation routing, external replies, dedicated STT recording and
+alignment setup remain available for legacy installations, without cluttering
+the shared-assistant menu. Hidden compatibility values are preserved on save.
+Alarm volume and fallback speakers can be edited without creating a legacy room
+mapping. Recovery and mapping removal are grouped under Maintenance.
+
 ## 0.3.17
 
 "Broadcast" and "announcement" now use native Home Assistant sentence triggers

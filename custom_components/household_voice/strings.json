@@ -55,7 +55,7 @@
     "step": {
       "init": {
         "title": "Household voice settings",
-        "description": "Choose rooms, exact speakers and phones, then review and save. Live features start disabled. Settings changes do not play audio; the separate pairing test requires confirmation and saved enabled settings.",
+        "description": "Choose a setting, then Review and save. Shared-assistant mode shows the controls used by native Assist. Older routing settings remain available when shared Assist tools are disabled.",
         "menu_options": {
           "announcements": "Announcement speakers",
           "phone": "Add or edit a home phone",
@@ -73,7 +73,9 @@
           "assistant_pairing": "Assistant speakers",
           "knowledge_family": "Knowledge and family settings",
           "native_audio_recovery": "Recover built-in speaker after uncertain audio",
-          "shared_assistant": "Shared Assist tools (preview)"
+          "shared_assistant": "Shared assistant and recording",
+          "alarm_defaults": "Alarm volume and fallback speakers",
+          "maintenance": "Maintenance"
         }
       },
       "announcements": {
@@ -81,7 +83,7 @@
         "description": "Say broadcast or announcement. Your assistant asks \"What's the announcement?\", records your answer, and sends your original voice to all selected speakers. Choose the default speakers below; you can select more than one. Music Assistant manages playback timing. Home phones receive only the transcript under your chosen presence policy.",
         "data": {
           "default_announcement_speakers": "Default announcement speakers",
-          "announcement_volume": "Announcement volume (0Ã¢â‚¬â€œ1)",
+          "announcement_volume": "Announcement volume (0ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Å“1)",
           "announcement_chime": "Announcement chime",
           "spoken_media_policy": "Audiobook and podcast interruptions",
           "phone_presence_policy": "Phone home presence policy"
@@ -89,7 +91,7 @@
       },
       "phone": {
         "title": "Select a home phone",
-        "description": "Choose the phoneÃ¢â‚¬â„¢s registered presence tracker. Selecting an existing tracker edits its mapping.",
+        "description": "Choose the phoneÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢s registered presence tracker. Selecting an existing tracker edits its mapping.",
         "data": {
           "device_tracker": "Phone presence tracker"
         }
@@ -112,14 +114,14 @@
       },
       "satellite_details": {
         "title": "Satellite room and speakers",
-        "description": "Satellite: {satellite}. Choose its room ID and one Music Assistant reply speaker, plus any room players to lower while listening. Duck factor is a fraction of each playerÃ¢â‚¬â„¢s current volume. The completion action must belong to this voice device; the runtime verifies authenticated ownership before calling it.",
+        "description": "Satellite: {satellite}. Choose its room ID and one Music Assistant reply speaker, plus any room players to lower while listening. Duck factor is a fraction of each playerÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢s current volume. The completion action must belong to this voice device; the runtime verifies authenticated ownership before calling it.",
         "data": {
           "room_id": "Coordinator room ID",
           "tts_media_player": "Music Assistant reply speaker",
           "duck_media_players": "Room speakers to lower",
           "completion_service": "External reply completion action (optional)",
-          "reply_volume": "Reply volume (0Ã¢â‚¬â€œ1)",
-          "duck_factor": "Listening volume fraction (0.05Ã¢â‚¬â€œ1)"
+          "reply_volume": "Reply volume (0ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Å“1)",
+          "duck_factor": "Listening volume fraction (0.05ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Å“1)"
         }
       },
       "remove": {
@@ -254,11 +256,29 @@
         }
       },
       "shared_assistant": {
-        "title": "Shared Assist tools (preview)",
-        "description": "Provide Household Voice tools to one shared Home Assistant voice agent. This switch does not change its prompt or assigned pipelines. Shared-pipeline recordings use the optional Recording Worker app and each assistant’s existing Home Assistant room, without individual recording profiles. Keep this preview disabled until the app and recording test are ready. Live announcements and native capability tools must be enabled before saving shared-pipeline recordings. Conversation replies remain on the assistant. Review and save to apply.",
+        "title": "Shared assistant and recording",
+        "description": "Expose household tools to your shared Home Assistant Assist agent. Native recording asks “What’s the announcement?” and records the answer using the existing shared pipeline. No dedicated recording STT profile or alignment server is needed. Pipeline and agent selection are managed in Home Assistant Voice assistants.",
         "data": {
           "assist_tools_enabled": "Provide native household capability tools",
           "native_recording_enabled": "Record announcements on a shared voice pipeline (preview)"
+        }
+      },
+      "alarm_defaults": {
+        "title": "Alarm volume and fallback speakers",
+        "description": "New assistant-owned alarms use the listening assistant’s paired speaker, or its built-in speaker when unpaired. These defaults control volume and explicitly configured fallback speakers. Existing alarm room mappings are preserved.",
+        "data": {
+          "ring_volume": "Alarm volume (%)",
+          "ring_fallback_speakers": "Fallback Music Assistant speakers"
+        }
+      },
+      "maintenance": {
+        "title": "Maintenance",
+        "description": "Recovery tools clear a blocked output only after you confirm its audio has stopped. Remove a mapping only when it is no longer needed.",
+        "menu_options": {
+          "audio_recovery": "Recover a Music Assistant speaker",
+          "native_audio_recovery": "Recover an assistant’s built-in speaker",
+          "remove": "Remove a saved mapping",
+          "init": "Back to settings"
         }
       }
     },
@@ -269,7 +289,7 @@
       "invalid_enabled": "Choose enabled or disabled.",
       "select_one_satellite": "Choose exactly one Assist entity or ESPHome device.",
       "invalid_device": "Select an existing enabled ESPHome device, or a registered Assist entity with its device.",
-      "invalid_room": "Use an exact room ID, 1Ã¢â‚¬â€œ64 letters, numbers, underscores, or hyphens; start with a letter or number.",
+      "invalid_room": "Use an exact room ID, 1ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Å“64 letters, numbers, underscores, or hyphens; start with a letter or number.",
       "invalid_completion_service": "Select a registered ESPHome external_reply_complete action, or None.",
       "invalid_mapping": "Select a valid saved mapping.",
       "invalid_music_player": "Choose an enabled Music Assistant player with a registered Music Assistant instance.",
