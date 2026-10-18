@@ -1852,6 +1852,7 @@ async def real_ha_smoke():
             assert module._resolve(hass, voice, context)[2] != grouped_signature
             ma_players['second-fixture'].synced_to = None
             ma_players['fixture-ma'].group_members = []
+            count = len(actions)
             # Real HA tool schemas and later request contexts around synthetic
             # catalog/services: no household audio or provider is contacted.
             async def choices_search(call):
