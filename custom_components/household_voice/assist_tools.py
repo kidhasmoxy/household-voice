@@ -108,8 +108,17 @@ class HouseholdContextTool(llm.Tool):
                 # Collector fallback names can be entity IDs; never expose them.
                 if name in (row.get('speaker_id'), row.get('assistant_id')):
                     name = None
+                music_available = row.get('status') == 'ready'
+                if not music_available:
+                    from .media_llm import _resolve
+                    try:
+                        _resolve(hass, self.entry, llm_context, read_only=True)
+                    except ValueError:
+                        pass
+                    else:
+                        music_available = True
                 result['preferred_output'] = {'name':_display_name(name),
-                    'music_available':row.get('status') == 'ready',
+                    'music_available':music_available,
                     'ringing_available':output.get('kind') in ('ma','native'),
                     'uses_builtin_speaker':output.get('kind') == 'native'}
             elif len(rows) > 1:

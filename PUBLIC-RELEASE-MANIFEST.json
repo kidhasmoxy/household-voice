@@ -33,7 +33,7 @@
     "custom_components/household_voice/area_registry.py": "e05bc430c43e64a830d0df83f1c69f7c6c60c8d87da2b581fa6323cb1d732743",
     "custom_components/household_voice/assist_inventory.py": "947bfc28a22fc968fc71b846354ea48c1946b3e0ef053ca95e3e45e365663fab",
     "custom_components/household_voice/assist_prompt.py": "ef5fa205c7081331985fa71e3d713ef4aff4349fb9962a091b46352dafd2fd63",
-    "custom_components/household_voice/assist_tools.py": "025d2f047de44943d47a8fec0d60c2849902163c474aca849ff75e06b0b06707",
+    "custom_components/household_voice/assist_tools.py": "e3e783b3829a33f13dacccf93cf036db8178be1e90a28d63acd718b41d062c51",
     "custom_components/household_voice/backup.py": "f05845045932edaec38848c98db13c900f6ecbe9eb81c1b21be56fb3e4cde1fd",
     "custom_components/household_voice/brand/icon.png": "c080caebafafba87a7e2091b8c42e6b8afa2be2546db86731ff169e1b1f21505",
     "custom_components/household_voice/broadcast_llm.py": "0da30d224b243029eccc0008aec6a56032f220367f1ea72340fb24f96c37b125",
