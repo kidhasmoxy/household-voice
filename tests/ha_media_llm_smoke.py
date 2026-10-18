@@ -170,6 +170,49 @@ class MediaLLMTests(unittest.IsolatedAsyncioTestCase):
             mass=types.SimpleNamespace(players=types.SimpleNamespace(get=players.get)))
         return leader, players
 
+    async def test_authenticated_app_explicit_speaker_name_without_satellite(self):
+        pairings, collector = self.auto_area_fixture()
+        self.entry.options.update(live_actions_enabled=True, media_enabled=True)
+        self.context.device_id = None
+        self.context.context.user_id = 'app-user'
+        self.hass.entities.values[PLAYER].name = 'Office'
+        pairings['assistants'] = {}
+        self.services.search_result = search(item('Song','track','fixture://track/1'),'tracks')
+        with patch.object(collector, 'collect_pairings', return_value=pairings):
+            result = await self.call(args={'query':'Song','media_type':'track','target_room':'Office'})
+            self.assertTrue(result.data['executed'], result.data)
+            self.assertEqual(self.services.calls[-1][2]['entity_id'], PLAYER)
+            self.assertEqual(self.services.calls[-1][2]['username'], 'configured-user')
+            self.services.calls.clear()
+            result = await self.call(args={'query':'Song','media_type':'track'})
+            self.assertEqual(result.data['reason'], 'music_destination_required')
+            self.assertIn('Which room', result.data['question'])
+            self.assertFalse(self.services.calls)
+            self.context.context.user_id = None
+            result = await self.call(args={'query':'Song','media_type':'track','target_room':'Office'})
+            self.assertFalse(result.data['executed'])
+            self.assertFalse(self.services.calls)
+
+    async def test_device_room_default_needs_no_voice_assistant_pairing(self):
+        pairings, collector = self.auto_area_fixture()
+        pairings['assistants'] = {}
+        self.entry.options.update(live_actions_enabled=True, media_enabled=True)
+        self.services.search_result = search(item('Song','track','fixture://track/1'),'tracks')
+        with patch.object(collector, 'collect_pairings', return_value=pairings):
+            result = await self.call(args={'query':'Song','media_type':'track'})
+        self.assertTrue(result.data['executed'], result.data)
+        self.assertEqual(self.services.calls[-1][2]['entity_id'], PLAYER)
+
+    def test_explicit_named_speaker_wins_over_same_room_pairing(self):
+        pairings, collector = self.auto_area_fixture()
+        other = 'media_player.other'
+        self.hass.entities.values[other] = types.SimpleNamespace(platform='music_assistant',
+            config_entry_id='ma-entry', disabled_by=None, name='Office Desk')
+        pairings['outputs'][other] = {'area_id':'current-area','available':True,'physical_aliases':[other]}
+        with patch.object(collector, 'collect_pairings', return_value=pairings):
+            self.assertEqual(module._resolve(self.hass,self.entry,self.context,'Office Desk')[1]['music_player'],other)
+            self.assertEqual(module._resolve(self.hass,self.entry,self.context)[1]['music_player'],PLAYER)
+
     async def test_group_member_routes_play_and_pause_to_current_leader(self):
         leader, players = self.grouped_fixture()
         self.entry.options.update(live_actions_enabled=True, media_enabled=True)
@@ -1953,6 +1996,20 @@ async def real_ha_smoke():
             count = len(actions)
             config.update(block_explicit_tracks=False, apple_web_search_enabled=False)
             hass.config_entries.async_update_entry(voice, options=config)
+            # App requests have an authenticated HA user but no satellite.
+            registry.async_update_entity(other_player.entity_id, name='Office')
+            app_context = llm.LLMContext(platform='fixture', context=Context(user_id='fixture-app-user'),
+                language='en', assistant='conversation', device_id=None)
+            app_instance = await llm.async_get_api(hass, api_id, app_context)
+            hass.services.async_register('music_assistant','search',fixture_search,supports_response=SupportsResponse.ONLY)
+            app_result = await app_instance.async_call_tool(llm.ToolInput(tool_name=module.NAMES[0],
+                tool_args={'query':'jazz','selection_mode':'broad_music','target_room':'Office'},id='app-explicit-speaker'))
+            assert app_result.data['status']=='action_accepted', app_result.data
+            assert actions[-1][2]['entity_id']==other_player.entity_id
+            count = len(actions)
+            missing_room = await app_instance.async_call_tool(llm.ToolInput(tool_name=module.NAMES[0],
+                tool_args={'query':'jazz','selection_mode':'broad_music'},id='app-missing-room'))
+            assert missing_room.data['reason']=='music_destination_required' and len(actions)==count
             # Moving the requesting device while catalog lookup is awaited must
             # invalidate the route before any queue control or media action.
             moved = ar.async_get(hass).async_create('Moved Room')

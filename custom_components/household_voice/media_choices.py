@@ -25,7 +25,9 @@ class MediaChoices:
         # Some providers expose a conversation ID; HA's native LLMContext may
         # omit it. The opaque token must also be present in the agent's history.
         conversation = getattr(context, 'conversation_id', None)
-        if not isinstance(device, str) or not device or not isinstance(request, str) or not request:
+        if (not isinstance(request, str) or not request
+                or not ((isinstance(device, str) and device)
+                        or (device is None and isinstance(user, str) and user))):
             return None
         return device, user, conversation, request
 

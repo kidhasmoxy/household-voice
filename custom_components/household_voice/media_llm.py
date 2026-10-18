@@ -48,6 +48,10 @@ class MediaConfigurationError(ValueError):
     """Errors are translated to fixed public reasons, never forwarded verbatim."""
 
 
+class MediaDestinationRequired(MediaConfigurationError):
+    """Authenticated app requests need an explicit destination."""
+
+
 def _text(value, maximum=120):
     return isinstance(value, str) and 0 < len(value) <= maximum and value.strip() == value and not any(ord(c) < 32 for c in value)
 
@@ -188,6 +192,17 @@ def _resolve(hass, entry, context, target=None, *, read_only=False):
     _content_settings(options)
     if options.get('assist_tools_enabled') is True:
         from .request_area import resolve_source_area
+        device_id = getattr(context, 'device_id', None)
+        user_id = getattr(getattr(context, 'context', None), 'user_id', None)
+        device = dr.async_get(hass).async_get(device_id) if device_id else None
+        trusted = (getattr(context, 'context', None) is not None and
+                   (_text(user_id, 512) or (device is not None and getattr(device, 'disabled_by', None) is None)))
+        if target and trusted:
+            return _resolve_area(hass, options, context, {'device_id':None,
+                'area_id':None, 'area_name':None, 'legacy':False,
+                'explicit_destination':True, 'request_device':device_id, 'request_user':user_id}, target, read_only=read_only)
+        if not device_id and _text(user_id, 512):
+            raise MediaDestinationRequired()
         source_area = resolve_source_area(hass, options, context)
         if not source_area['legacy']:
             return _resolve_area(hass, options, context, source_area, target, read_only=read_only)
@@ -287,6 +302,21 @@ def _resolve_area(hass, options, context, source_area, target, *, read_only=Fals
         for name in (area.id, area.name, *(getattr(area, 'aliases', ()) or ())):
             if _text(name):
                 aliases.setdefault(name.casefold().strip(), set()).add(area.id)
+    # A named, eligible speaker is also a destination alias for its registered
+    # area (for example Office in an area named Attic). Ambiguity stays explicit.
+    speaker_aliases = {}
+    for entity_id, output in pairings['outputs'].items():
+        registered = entities.async_get(entity_id)
+        state = hass.states.get(entity_id)
+        if registered is None or registered.platform != 'music_assistant' or not output.get('area_id'):
+            continue
+        names = [getattr(registered, 'name', None), getattr(registered, 'original_name', None),
+                 (getattr(state, 'attributes', {}) or {}).get('friendly_name'),
+                 *(getattr(registered, 'aliases', ()) or ())]
+        for name in names:
+            if _text(name):
+                aliases.setdefault(name.casefold().strip(), set()).add(output['area_id'])
+                speaker_aliases.setdefault(name.casefold().strip(), set()).add(entity_id)
     configured = options.get('media_rooms', [])
     if not isinstance(configured, list) or len(configured) > 100:
         raise MediaConfigurationError()
@@ -315,18 +345,23 @@ def _resolve_area(hass, options, context, source_area, target, *, read_only=Fals
         target_area = next(iter(matches))
     source_bindings = [row for row in pairings['assistants'].values()
                        if row.get('device_id') == context.device_id]
-    if (len(source_bindings) != 1 or source_bindings[0].get('area_id') != source_area['area_id']
+    if not source_area.get('explicit_destination') and source_bindings and (len(source_bindings) != 1 or source_bindings[0].get('area_id') != source_area['area_id']
             or source_bindings[0].get('status') in ('assistant_disabled', 'assistant_unavailable',
                 'assistant_device_unknown', 'assistant_area_unknown')):
         raise MediaConfigurationError()
-    if target_area == source_area['area_id']:
+    named_speakers = speaker_aliases.get(target.casefold().strip(), set()) if target else set()
+    if named_speakers:
+        if len(named_speakers) != 1:
+            raise MediaConfigurationError()
+        selected = next(iter(named_speakers))
+    elif target_area == source_area['area_id'] and source_bindings:
         binding = source_bindings[0]
         if binding.get('status') != 'ready':
             raise MediaConfigurationError()
         selected = binding.get('speaker_id')
     else:
         bindings = [row for row in pairings['assistants'].values() if row.get('area_id') == target_area]
-        if bindings:
+        if bindings and all(row.get('status') == 'ready' for row in bindings):
             # Different per-assistant overrides make a room-only request ambiguous.
             choices = {row.get('speaker_id') for row in bindings if row.get('status') == 'ready'}
             if len(choices) != 1 or any(row.get('status') != 'ready' for row in bindings):
@@ -357,7 +392,7 @@ def _resolve_area(hass, options, context, source_area, target, *, read_only=Fals
            'username':next(iter(usernames)), 'default_sleep_playlist':sleep_playlist}
     # A minimal policy registry carries the same trusted source plus the selected
     # destination. Other areas are deliberately not inferred by the pure planner.
-    rooms = {source_area['area_id']:{'satellites':[context.device_id]}}
+    rooms = {} if source_area.get('explicit_destination') else {source_area['area_id']:{'satellites':[context.device_id]}}
     target_aliases = [name for name, owners in aliases.items() if owners == {target_area} and name != target_area]
     rooms[target_area] = {'satellites':[context.device_id] if target_area == source_area['area_id'] else [],
                          'music_player':leader, 'announcement_player':selected, 'aliases':target_aliases}
@@ -887,8 +922,14 @@ class MediaTool(llm.Tool):
             if choice_row is not None and any(row[key] != original[1][key] for key in ('username', 'config_entry_id')):
                 return tool_result(llm, data=_result('clarify', 'media_choice_profile_changed',
                     question='Please request the title again for that room.'))
+        except MediaDestinationRequired:
+            return tool_result(llm, data=_result('clarify', 'music_destination_required',
+                question='Which room or speaker should I play it on?',
+                message='This app request has no listening room. Use target_room from the user request or ask which room. No music search has been attempted.'))
         except Exception:
-            return tool_result(llm, data=_result("clarify", "verified_source_and_media_configuration_required"))
+            return tool_result(llm, data=_result("clarify", "verified_source_and_media_configuration_required",
+                question='Which room or speaker should I use?',
+                message='The request could not be bound to a configured room and speaker. No music search or provider connection was attempted. Do not claim a song was found or that Apple Music needs sign-in.'))
         signature = (argument_signature, config_signature)
         music_request = (OPERATIONS[self.name] == "play" and args.get("kind", "music") == "music"
                       and args.get("media_type") != "audiobook")
@@ -926,6 +967,7 @@ class MediaTool(llm.Tool):
                 key = (config_signature, row["room_id"], context.device_id)
                 adapter = self.api.adapters.get(key)
                 if adapter is None:
+                    resolver_target = args.get('target_room')
                     def context_factory(**values):
                         filtered, unrated = _content_settings(self.api.entry.options)
                         return media.MediaContext(**values, default_sleep_playlist=row["default_sleep_playlist"],
@@ -933,7 +975,7 @@ class MediaTool(llm.Tool):
                     bindings = PlannerBindings(media.plan_media, media.MediaRequest, context_factory,
                         media.CatalogItem, media.CatalogSnapshot, media.QueueSnapshot)
                     async def resolve_session(caller):
-                        _, current, current_signature, _ = _resolve(self.api.hass, self.api.entry, caller, row["room_id"])
+                        _, current, current_signature, _ = _resolve(self.api.hass, self.api.entry, caller, resolver_target)
                         if current_signature != config_signature:
                             raise MediaConfigurationError()
                         return TrustedMediaSession(caller.device_id, current["username"], current["config_entry_id"],
@@ -948,7 +990,7 @@ class MediaTool(llm.Tool):
                 # A slow provider is not a failed request. Await native HA/MA
                 # completion, disconnect/error, or caller cancellation; performance
                 # targets must not cancel legitimate catalog/stream preparation.
-                services = _GuardedServices(self.api, context, row["room_id"], config_signature)
+                services = _GuardedServices(self.api, context, args.get('target_room'), config_signature)
                 services.web_music_request = music_request and not args.get('provider')
                 adapter.hass.services = services
                 if selected_choice is not None:

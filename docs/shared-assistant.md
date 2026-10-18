@@ -11,7 +11,7 @@ a fresh search. Expired or changed choices require a new clarification.
 For cancellation, call the same tool with only `choice_token` and
 `cancel_choice=true`; this discards the selection without stopping playback.
 
-This is the 0.3.23 development preview. It contributes tools to an ordinary
+This is the 0.3.24 development preview. It contributes tools to an ordinary
 Home Assistant agent; it does not add or assign a conversation agent. Automated
 contract checks are not microphone or acoustic acceptance. The optional recording
 app supports the staged native two-turn capture backend; both default disabled.

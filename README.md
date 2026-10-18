@@ -7,13 +7,18 @@ account, or paid subscription is required for the core features. Original record
 on a single shared voice pipeline use an optional [Recording Worker app](recording-worker/README.md),
 which transports native microphone audio and leaves scheduling and playback in the integration.
 
-This is the **0.3.23 prerelease**. Automated tests cover implementation
+This is the **0.3.24 prerelease**. Automated tests cover implementation
 contracts; actual microphone capture, speaker delivery, phone presence, firmware,
 and audiobook resume require validation on your equipment. Keep an independent
 alarm available until your installation passes those tests. Home Assistant must
 be running for alarms and announcements to play.
 
 ## Install and update
+
+For music, an explicitly named room or speaker is the destination, including from
+the authenticated HA app. Otherwise the requesting device's room supplies the
+default. If location is unavailable or the destination is ambiguous, the assistant
+asks which room or speaker. A voice satellite is not required for explicit targets.
 
 Music addressed to a speaker that belongs to a group plays on that current group.
 Follow-up media controls use its current group leader. This does not change group
