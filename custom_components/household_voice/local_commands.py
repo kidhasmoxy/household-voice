@@ -5,15 +5,16 @@ from .schedule_language import duration, normalize
 
 # HA's intent_filter returns True to EXCLUDE a match. Keep this an allowlist:
 # timer, media, shopping and future upstream intents must never slip through.
-DEVICE_INTENTS = frozenset({
+LOCAL_INTENTS = frozenset({
     'HassTurnOn', 'HassTurnOff', 'HassLightSet', 'HassGetState',
     'HassClimateSetTemperature', 'HassClimateGetTemperature',
     'HassSetPosition',
+    'HassGetCurrentTime',
 })
 
 
 def exclude_intent(result):
-    return result.intent.name not in DEVICE_INTENTS
+    return result.intent.name not in LOCAL_INTENTS
 
 
 def timer_request(text, language='en'):
