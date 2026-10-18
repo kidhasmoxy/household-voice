@@ -209,7 +209,7 @@ def _resolve(hass, entry, context, target=None, *, read_only=False):
     resolved = registry.resolve(source_device=context.device_id, target=target)
     row = room_options[resolved["area"]]
     enabled = not read_only and options.get("live_actions_enabled") is True and options.get("media_enabled") is True
-    signature = hashlib.sha256(json.dumps([configured, satellites, ownership, rooms, enabled, read_only, _content_settings(options)],
+    signature = hashlib.sha256(json.dumps([configured, satellites, ownership, rooms, enabled, read_only, _content_settings(options), options.get('apple_web_search_enabled', False), options.get('apple_web_native_enabled', False)],
         sort_keys=True, allow_nan=False).encode()).hexdigest()
     return registry, row, signature, enabled
 
@@ -309,7 +309,7 @@ def _resolve_area(hass, options, context, source_area, target, *, read_only=Fals
                for key,value in pairings['outputs'].items()}
     signature = hashlib.sha256(json.dumps([source_area, row, configured,
         options.get('satellites', []), options.get('assistant_speaker_overrides', {}),
-        routing, outputs, rooms, enabled, read_only, _content_settings(options)], sort_keys=True, allow_nan=False).encode()).hexdigest()
+        routing, outputs, rooms, enabled, read_only, _content_settings(options), options.get('apple_web_search_enabled', False), options.get('apple_web_native_enabled', False)], sort_keys=True, allow_nan=False).encode()).hexdigest()
     return registry, row, signature, enabled
 
 
@@ -351,6 +351,17 @@ class _GuardedServices:
         self.mutation_dispatch_started = False
         self.phase = 'catalog_lookup'
         self.native_timeout_phase = None
+        self.apple_links = {}
+        self.web_music_request = False
+    async def async_try_native_web(self, plan, request):
+        from .apple_web import try_native
+        return await try_native(self, plan, request, resolve=_resolve, entity_registry=er,
+                                configuration_error=MediaConfigurationError)
+    async def async_catalog_fallback(self, data, session):
+        self.web_music_request = False
+        self.apple_links = {}
+        return await self.async_call('music_assistant', 'search', data,
+            blocking=True, return_response=True, context=session.ha_context)
     async def _native_response(self, operation):
         try:
             result = await operation
@@ -366,6 +377,22 @@ class _GuardedServices:
         if _resolve(self.api.hass, self.api.entry, self.context, self.target)[2] != self.signature:
             raise MediaConfigurationError()
         filtered, _ = _content_settings(self.api.entry.options)
+        if ((domain, service) == ('music_assistant', 'search') and self.web_music_request
+                and self.api.entry.options.get('apple_web_search_enabled') is True):
+            from .apple_web import discover, search_web
+            async def search(query):
+                return await search_web(self.api.hass, self.api.entry, query)
+            async def lookup(uri):
+                return await self._content_read('music/item_by_uri', uri=uri)
+            try:
+                response, self.apple_links = await discover(data, search=search,
+                    authorize=self.async_authorize_provider_uri, lookup=lookup)
+            except (ValueError, TimeoutError):
+                response, self.apple_links = None, {}
+            if _resolve(self.api.hass, self.api.entry, self.context, self.target)[2] != self.signature:
+                raise MediaConfigurationError()
+            if response is not None:
+                return response
         if filtered:
             if (domain, service) == ('music_assistant', 'search'):
                 # HA's simplified search response omits the provider rating.
@@ -859,6 +886,7 @@ class MediaTool(llm.Tool):
                 # completion, disconnect/error, or caller cancellation; performance
                 # targets must not cancel legitimate catalog/stream preparation.
                 services = _GuardedServices(self.api, context, row["room_id"], config_signature)
+                services.web_music_request = music_request and not args.get('provider')
                 adapter.hass.services = services
                 if selected_choice is not None:
                     plan = await adapter.async_handle({"operation": OPERATIONS[self.name], **args}, context,

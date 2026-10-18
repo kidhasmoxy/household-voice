@@ -7,13 +7,22 @@ account, or paid subscription is required for the core features. Original record
 on a single shared voice pipeline use an optional [Recording Worker app](recording-worker/README.md),
 which transports native microphone audio and leaves scheduling and playback in the integration.
 
-This is the **0.3.21 prerelease**. Automated tests cover implementation
+This is the **0.3.22 prerelease**. Automated tests cover implementation
 contracts; actual microphone capture, speaker delivery, phone presence, firmware,
 and audiobook resume require validation on your equipment. Keep an independent
 alarm available until your installation passes those tests. Home Assistant must
 be running for alarms and announcements to play.
 
 ## Install and update
+
+To try web-assisted music discovery, enable **Configure → Music content → Find
+music using Apple Music web results**, then **Review and save**. It reuses the
+configured Brave credentials and search budget. Music terms leave home for search;
+only Apple Music links with verified catalog metadata become playback candidates.
+Playback continues through Music Assistant, including content filters and controls.
+Books and sleep stories are unaffected. Both new switches default off. Leave the
+separate direct Sonos experiment off for normal use: its native queue follow-up
+controls have not yet been integrated.
 
 Choose **Configure → Music content → Block explicit tracks**, then **Review and
 save**, to filter Household Voice music suggestions and playback. Filtering is
