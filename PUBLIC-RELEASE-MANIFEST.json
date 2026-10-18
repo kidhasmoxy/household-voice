@@ -152,7 +152,7 @@
     "tests/ha_conversation_router_smoke.py": "17738d151e14b0e0187ef4992dc234489e2f898e67fb5d194de344140c1f177d",
     "tests/ha_dated_alarm_smoke.py": "1f5e4135d3d2abbf2ff097cb2ff6c7b2d6fcb09dcd20aa32ef08547cab2155cf",
     "tests/ha_embedded_smoke.py": "ef4a7c426bc7309e98b7ddc16a3faf9b2e5cc5412e31e0b7121b20d3371d47ee",
-    "tests/ha_media_controls_smoke.py": "8f832629b7ed343594dd01a843d910537b7d865b31bbec71e918775c41f2cc57",
+    "tests/ha_media_controls_smoke.py": "519155187df29e71275ad3ad9e4a37c6b623bee6830a58dade868e666cd0a6c7",
     "tests/ha_media_llm_smoke.py": "3052cd59e307351e8d823a4a74c17273b2f8f80bfaa51ff4140a738eaf304c51",
     "tests/ha_native_alarm_smoke.py": "ded99df14b4e4dcea48fd92ef3f6bf401010b147decae226596a01b667fe880c",
     "tests/ha_native_duck_smoke.py": "b5c18920e8d3b38c9bf95c23cddf7eae6add549b8428f60299a6ae3a12299ab0",
