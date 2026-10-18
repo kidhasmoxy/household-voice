@@ -160,9 +160,9 @@ know what other APIs that agent selected. No automatic cutover occurs.
   the original recording with a chime on configured speakers, and send its exact
   transcript to configured phones whose presence satisfies the selected home policy.
 - Room mappings for external replies, music, wake ducking, and alarm speakers.
-- Automatic assistant/speaker pairing from Home Assistant areas, with optional
-  per-assistant overrides. Multiple eligible speakers require a choice. New alarms
-  belong to an assistant and follow its current paired speaker or, when unpaired,
+- Room-based default speakers from Home Assistant areas, configured with room
+  and speaker dropdowns. Multiple eligible speakers require a choice. New alarms
+  belong to an assistant and follow its current room default or, without one,
   its built-in speaker if HA announcements are supported. New voice timers can
   also follow their listening assistant. Existing room-only schedules remain intact.
 - Ambiguous recognized timer edits ask which timer you mean. Follow-up choices

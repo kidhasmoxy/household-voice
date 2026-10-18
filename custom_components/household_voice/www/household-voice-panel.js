@@ -38,9 +38,9 @@ class HouseholdVoiceManagerCard extends HTMLElement {
     <p id="announcement-speakers"></p>
     <a id="announcement-configure" href="/config/integrations/integration/household_voice" hidden>Choose default announcement speakers</a>
     <p id="announcement-guidance" class="muted" hidden>Configure → Announcement speakers → select speakers → Review and save. These defaults apply whenever you do not name a room.</p></section>
-    <section class="row"><h3>Assistant speakers</h3><p class="muted">Speakers are discovered from each assistant’s Home Assistant room. Choose an optional default when a room has several speakers. Conversation stays on the assistant; music, books, announcements, alarms and timers use its paired speaker.</p>
-    <div id="pairing-rows"></div><a id="pairing-configure" href="/config/integrations/integration/household_voice" hidden>Change assistant speakers in Settings</a>
-    <p id="pairing-guidance" class="muted" hidden>Choose Configure → Assistant speakers → select the assistant and speaker → Review and save. Automatic uses its room; No paired speaker keeps built-in alarm and timer audio.</p></section></ha-card>`;
+    <section class="row"><h3>Room speakers</h3><p class="muted">Choose a default speaker for each Home Assistant room. Assistants inherit their room’s default for music, alarms and timers. Conversation stays on the assistant.</p>
+    <div id="pairing-rows"></div><a id="pairing-configure" href="/config/integrations/integration/household_voice" hidden>Change room speakers in Settings</a>
+    <p id="pairing-guidance" class="muted" hidden>Choose Configure → Room speakers → select a room and speaker → Review and save. Every assistant in the room inherits that default.</p></section></ha-card>`;
     const form = this.shadowRoot.querySelector("form");
     form.elements.timezone.value = Intl.DateTimeFormat().resolvedOptions().timeZone;
     form.elements.source_room.value = this.config.default_source_room || "";
@@ -278,7 +278,7 @@ class HouseholdVoiceEchoMuseManager extends HTMLElement {
       input,select,button{font:inherit;padding:9px;border:1px solid var(--divider-color);border-radius:8px;background:var(--card-background-color);color:var(--primary-text-color)}
       p{line-height:1.5;color:var(--secondary-text-color)}pre{white-space:pre-wrap;overflow-wrap:anywhere;user-select:text}.row{border-top:1px solid var(--divider-color);padding:12px 0}[hidden]{display:none!important}
     </style><section><details><summary>Advanced: EchoMuse external reply transport</summary><h2>EchoMuse voice devices</h2>
-      <p>The native-conversation beta does not require these controls. For normal speaker pairing, use Assistant speakers in the integration’s Configure menu. This advanced connection is only for experimental conversation replies on an external speaker.</p>
+      <p>The native-conversation beta does not require these controls. For room defaults, use Room speakers in the integration’s Configure menu. This advanced connection is only for experimental conversation replies on an external speaker.</p>
       <p>Set a trusted HTTPS external URL in Home Assistant’s network settings first. Enter the exact device ID shown by your EchoMuse controller. Creating a source leaves it disabled and does not install anything on the controller.</p>
       <form><label>Assistant<select name="assistant" aria-label="Assistant" required></select></label>
       <label>EchoMuse controller device ID<input name="controller" required maxlength="128" pattern="[A-Za-z0-9_.:\\-]{1,128}" autocomplete="off" spellcheck="false"></label>
@@ -467,8 +467,8 @@ class HouseholdVoicePanel extends HTMLElement {
       @media(max-width:600px){main{padding:12px}.settings{align-items:flex-start;flex-direction:column}}
     </style><header><ha-menu-button></ha-menu-button><h1>Household Voice</h1></header><main>
       <div class="settings"><label id="selector-label" hidden>Household<select aria-label="Household schedules"></select></label>
-      <a id="configure" href="/config/integrations/integration/household_voice" hidden>Assistant speakers &amp; settings</a></div>
-      <p id="guidance" hidden>Choose Configure → Assistant speakers to pair an assistant with a room speaker using dropdowns, then Review and save. Broadcast volume, default rooms and phone notifications are also in Configure.</p>
+      <a id="configure" href="/config/integrations/integration/household_voice" hidden>Room speakers &amp; settings</a></div>
+      <p id="guidance" hidden>Choose Configure → Room speakers to select a default speaker for each room, then Review and save. Broadcast volume, default rooms and phone notifications are also in Configure.</p>
       <p id="status" role="status" aria-live="polite">Loading household schedules…</p>
       <button id="retry" hidden>Retry loading schedules</button><div id="card"></div><div id="echomuse"></div><div id="recording"></div>
     </main>`;
