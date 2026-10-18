@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.3.27
+
+- Preserve streamed AI responses through the fast-command front end. Local replies retain the normal final-speech path.
+
 ## 0.3.26
 
 - Add opt-in fast commands with strict native device intents, shared durable timers and ringing-first Stop.

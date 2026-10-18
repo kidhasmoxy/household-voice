@@ -21,6 +21,10 @@ _ACTIVE = ContextVar('household_voice_local_active', default=False)
 class HouseholdLocalConversation(conversation.ConversationEntity):
     _attr_name = 'Household Voice fast commands'
     _attr_supported_features = conversation.ConversationEntityFeature.CONTROL
+    # Fallback uses the pipeline's active chat-log delta listener. Advertising
+    # streaming keeps Core's existing TTS stream available to the shared agent;
+    # local replies with no deltas still use Core's normal final-speech path.
+    _attr_supports_streaming = True
     supported_languages = '*'
 
     def __init__(self, entry, coordinator):
