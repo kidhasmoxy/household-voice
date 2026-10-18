@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.3.24
+
+Music routing now honors an explicit room or registered speaker name from an
+authenticated app request without requiring a voice satellite. With no explicit
+destination, the requesting device's room supplies the default speaker. Missing
+room context asks which room; it does not imply a music-provider failure. Named
+speakers take precedence over room defaults. Group routing and content filters
+continue to apply.
+
 ## 0.3.23
 
 Music requests addressed to a grouped speaker now use its current Music Assistant
