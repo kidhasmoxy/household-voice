@@ -124,6 +124,64 @@ def _content_settings(options):
     return values
 
 
+def _music_group(hass, selected):
+    """Resolve a current MA group to its registered leader without regrouping.
+
+    Identity and topology are part of the dispatch signature. A changed group
+    during a request invalidates that request; the next request resolves afresh.
+    The selected room's profile remains authoritative, even across room groups.
+    """
+    entities = er.async_get(hass)
+    entity = entities.async_get(selected)
+    owner = hass.config_entries.async_get_entry(entity.config_entry_id)
+    mass = getattr(getattr(owner, 'runtime_data', None), 'mass', None)
+    state = hass.states.get(selected)
+    advertised = (getattr(state, 'attributes', {}) or {}).get('group_members', [])
+    if mass is None:
+        if any(member != selected for member in advertised):
+            raise MediaConfigurationError()
+        return selected, []
+    origin = getattr(entity, 'unique_id', None)
+    current, seen, topology = origin, set(), []
+    while current not in seen and len(seen) < 8:
+        seen.add(current)
+        player = mass.players.get(current)
+        if player is None or getattr(player, 'available', False) is not True:
+            raise MediaConfigurationError()
+        members = getattr(player, 'group_members', ()) or ()
+        if not isinstance(members, (list, tuple, set)) or any(not _text(m, 512) for m in members):
+            raise MediaConfigurationError()
+        synced = getattr(player, 'synced_to', None)
+        active = getattr(player, 'active_group', None)
+        parents = {value for value in (synced, active) if value and value != current}
+        topology.append([current, synced, active, sorted(members)])
+        if len(parents) > 1:
+            raise MediaConfigurationError()
+        if parents:
+            parent = next(iter(parents))
+            if not _text(parent, 512):
+                raise MediaConfigurationError()
+            current = parent
+            continue
+        if current != origin and origin not in members:
+            raise MediaConfigurationError()
+        if current == origin:
+            return selected, topology
+        registry = entities.entities
+        rows = registry.values() if hasattr(registry, 'values') else registry
+        matches = [row for row in rows if row.platform == 'music_assistant'
+                   and row.config_entry_id == entity.config_entry_id and row.unique_id == current
+                   and getattr(row, 'disabled_by', None) is None]
+        if len(matches) != 1:
+            raise MediaConfigurationError()
+        leader = matches[0].entity_id
+        leader_state = hass.states.get(leader)
+        if leader_state is None or leader_state.state in ('unknown', 'unavailable'):
+            raise MediaConfigurationError()
+        return leader, topology
+    raise MediaConfigurationError()
+
+
 def _resolve(hass, entry, context, target=None, *, read_only=False):
     """Read current config and HA registries on every call and dispatch."""
     options = deepcopy(dict(entry.options))
@@ -207,9 +265,13 @@ def _resolve(hass, entry, context, target=None, *, read_only=False):
     if context.device_id not in registry.satellites:
         raise MediaConfigurationError()
     resolved = registry.resolve(source_device=context.device_id, target=target)
-    row = room_options[resolved["area"]]
+    row = dict(room_options[resolved["area"]])
+    leader, topology = _music_group(hass, row['music_player'])
+    row['music_player'] = leader
+    rooms[resolved['area']]['music_player'] = leader
+    registry = RoomRegistry(rooms)
     enabled = not read_only and options.get("live_actions_enabled") is True and options.get("media_enabled") is True
-    signature = hashlib.sha256(json.dumps([configured, satellites, ownership, rooms, enabled, read_only, _content_settings(options), options.get('apple_web_search_enabled', False), options.get('apple_web_native_enabled', False)],
+    signature = hashlib.sha256(json.dumps([configured, satellites, ownership, rooms, topology, enabled, read_only, _content_settings(options), options.get('apple_web_search_enabled', False), options.get('apple_web_native_enabled', False)],
         sort_keys=True, allow_nan=False).encode()).hexdigest()
     return registry, row, signature, enabled
 
@@ -217,7 +279,7 @@ def _resolve(hass, entry, context, target=None, *, read_only=False):
 def _resolve_area(hass, options, context, source_area, target, *, read_only=False):
     """Bind a native request to current HA areas and existing audio preferences."""
     from .area_registry import collect_pairings
-    pairings = collect_pairings(hass, options, read_only=True) if read_only else collect_pairings(hass, options)
+    pairings = collect_pairings(hass, options, read_only=read_only, music=True)
     devices, entities, areas = dr.async_get(hass), er.async_get(hass), ar.async_get(hass)
     area_rows = list(areas.areas.values())
     aliases = {}
@@ -290,14 +352,15 @@ def _resolve_area(hass, options, context, source_area, target, *, read_only=Fals
     sleep_playlist = next(iter(defaults)) if len(defaults) == 1 else ''
     if not isinstance(sleep_playlist, str) or len(sleep_playlist) > 512:
         raise MediaConfigurationError()
-    row = {'room_id':target_area, 'music_player':selected, 'config_entry_id':player.config_entry_id,
+    leader, topology = _music_group(hass, selected)
+    row = {'room_id':target_area, 'music_player':leader, 'config_entry_id':player.config_entry_id,
            'username':next(iter(usernames)), 'default_sleep_playlist':sleep_playlist}
     # A minimal policy registry carries the same trusted source plus the selected
     # destination. Other areas are deliberately not inferred by the pure planner.
     rooms = {source_area['area_id']:{'satellites':[context.device_id]}}
     target_aliases = [name for name, owners in aliases.items() if owners == {target_area} and name != target_area]
     rooms[target_area] = {'satellites':[context.device_id] if target_area == source_area['area_id'] else [],
-                         'music_player':selected, 'announcement_player':selected, 'aliases':target_aliases}
+                         'music_player':leader, 'announcement_player':selected, 'aliases':target_aliases}
     registry = RoomRegistry(rooms)
     registry.resolve(source_device=context.device_id, target=target)
     enabled = not read_only and options.get('live_actions_enabled') is True and options.get('media_enabled') is True
@@ -309,7 +372,7 @@ def _resolve_area(hass, options, context, source_area, target, *, read_only=Fals
                for key,value in pairings['outputs'].items()}
     signature = hashlib.sha256(json.dumps([source_area, row, configured,
         options.get('satellites', []), options.get('assistant_speaker_overrides', {}),
-        routing, outputs, rooms, enabled, read_only, _content_settings(options), options.get('apple_web_search_enabled', False), options.get('apple_web_native_enabled', False)], sort_keys=True, allow_nan=False).encode()).hexdigest()
+        routing, outputs, rooms, topology, enabled, read_only, _content_settings(options), options.get('apple_web_search_enabled', False), options.get('apple_web_native_enabled', False)], sort_keys=True, allow_nan=False).encode()).hexdigest()
     return registry, row, signature, enabled
 
 

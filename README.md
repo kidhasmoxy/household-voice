@@ -7,13 +7,17 @@ account, or paid subscription is required for the core features. Original record
 on a single shared voice pipeline use an optional [Recording Worker app](recording-worker/README.md),
 which transports native microphone audio and leaves scheduling and playback in the integration.
 
-This is the **0.3.22 prerelease**. Automated tests cover implementation
+This is the **0.3.23 prerelease**. Automated tests cover implementation
 contracts; actual microphone capture, speaker delivery, phone presence, firmware,
 and audiobook resume require validation on your equipment. Keep an independent
 alarm available until your installation passes those tests. Home Assistant must
 be running for alarms and announcements to play.
 
 ## Install and update
+
+Music addressed to a speaker that belongs to a group plays on that current group.
+Follow-up media controls use its current group leader. This does not change group
+membership or the separate room-isolation rules for alarms and announcements.
 
 To try web-assisted music discovery, enable **Configure → Music content → Find
 music using Apple Music web results**, then **Review and save**. It reuses the

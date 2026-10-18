@@ -164,40 +164,38 @@ async def verify_media_controls(hass, entry, context, satellite):
             denied=data(await instance.async_call_tool(llm.ToolInput(tool_name='household_voice__media_queue_options',
                 tool_args={'shuffle':False,'target_room':'Not a registered area'},id='controls-invalid-area')))
             assert denied['status']!='action_accepted' and len(mutations())==2
-            # A preferred grouped output remains observable, but the same
-            # topology is still ineligible for every mutating media tool.
+            # A stable current group supports queue controls on its leader.
             native.group_members=['inert-controls','other-player']
             player['group_members']=['inert-controls','other-player']
             grouped=data(await instance.async_call_tool(llm.ToolInput(tool_name='household_voice__media_status',
                 tool_args={},id='controls-grouped-status')))
             assert grouped['status']=='ready' and grouped['title']=='Fixture song' and len(mutations())==2
-            denied=data(await instance.async_call_tool(llm.ToolInput(tool_name='household_voice__media_queue_options',
+            changed=data(await instance.async_call_tool(llm.ToolInput(tool_name='household_voice__media_queue_options',
                 tool_args={'shuffle':False},id='controls-grouped-options')))
-            assert denied['status']!='action_accepted' and len(mutations())==2
+            assert changed['status']=='action_accepted' and len(mutations())==3
             from custom_components.household_voice.media_llm import _resolve
-            try:
-                _resolve(hass,entry,context)
-            except Exception:
-                pass
-            else:
-                raise AssertionError('Read-only group routing leaked into playback scope')
+            assert _resolve(hass,entry,context)[1]['music_player']==player_entity.entity_id
+            player['group_members'].append('unexpected-member')
+            denied=data(await instance.async_call_tool(llm.ToolInput(tool_name='household_voice__media_queue_options',
+                tool_args={'shuffle':True},id='controls-group-changed')))
+            assert denied['status']!='action_accepted' and len(mutations())==3
             native.group_members=[];player['group_members']=[]
             for change_protection,reason in (('spoken','spoken_or_unknown_content_queue_options_blocked'),
                     ('dynamic','dynamic_or_unknown_queue_mode')):
                 denied=data(await instance.async_call_tool(llm.ToolInput(tool_name='household_voice__media_queue_options',
                     tool_args={'shuffle':False},id='controls-late-'+change_protection)))
-                assert denied['reason']==reason and len(mutations())==2
+                assert denied['reason']==reason and len(mutations())==3
                 queue['is_dynamic']=False;queue['current_item']['media_item'].pop('metadata',None)
             change_protection=None
             queue['current_item']['media_item'].update(media_type='audiobook',uri='fixture://audiobook/1')
             denied=data(await instance.async_call_tool(llm.ToolInput(tool_name='household_voice__media_queue_options',
                 tool_args={'shuffle':False},id='controls-book')))
-            assert denied['reason']=='spoken_or_unknown_content_queue_options_blocked' and len(mutations())==2
+            assert denied['reason']=='spoken_or_unknown_content_queue_options_blocked' and len(mutations())==3
             queue['current_item']['media_item'].update(media_type='track',uri='fixture://track/1')
             change_area=True
             denied=data(await instance.async_call_tool(llm.ToolInput(tool_name='household_voice__media_queue_options',
                 tool_args={'shuffle':False},id='controls-area-changed')))
-            assert denied['status']!='action_accepted' and len(mutations())==2
+            assert denied['status']!='action_accepted' and len(mutations())==3
     finally:
         entry.options=old_options
         dr.async_get(hass).async_update_device(context.device_id,area_id=area_id)

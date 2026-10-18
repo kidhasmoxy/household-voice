@@ -12,7 +12,7 @@ import math
 
 import probatio
 
-from .media_llm import _resolve, _text, _GuardedServices, llm, er
+from .media_llm import _resolve, _text, _music_group, _GuardedServices, llm, er
 from .llm_compat import tool_result
 from .intent_scope import constrain_arguments, ScopeConflict
 from .policy.media import validate_catalog_uri
@@ -67,10 +67,14 @@ class CurrentMedia:
         if player.get('available') is not True:
             raise ControlError('media_player_unavailable')
         members = player.get('group_members') or []
-        if not self.read_only and (not isinstance(members, list) or any(member != player_id for member in members)
-                or player.get('synced_to') not in (None, '', player_id)
-                or player.get('active_group') not in (None, '', player_id)):
-            raise ControlError('grouped_media_target_requires_clarification')
+        if not self.read_only:
+            _, topology = _music_group(self.api.hass, row['music_player'])
+            actual = [player_id, player.get('synced_to'), player.get('active_group'),
+                      sorted(members) if isinstance(members, list) else None]
+            grouped = (any(member != player_id for member in members)
+                       or player.get('synced_to') or player.get('active_group'))
+            if not isinstance(members, list) or (grouped and (not topology or actual != topology[-1])):
+                raise ControlError('grouped_media_target_requires_clarification')
         if queue is not None and (not isinstance(queue, dict) or not _text(queue.get('queue_id'), 512)):
             raise ControlError('verified_media_queue_required')
         return player, queue

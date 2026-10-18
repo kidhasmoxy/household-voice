@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.3.23
+
+Music requests addressed to a grouped speaker now use its current Music Assistant
+group leader. Play, pause, resume and queue controls retain the requested room's
+profile and operate on that group without joining or unjoining speakers. Group
+membership changes during a request invalidate the pending action. Alarm and
+announcement routing retain their existing rules.
+
 ## 0.3.22
 
 Optional Apple Music web search finds share links using the existing Brave search
