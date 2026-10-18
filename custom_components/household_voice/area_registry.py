@@ -99,9 +99,28 @@ def collect_pairings(hass,options, *, read_only=False, volume_only=False, music=
     for assistant,player in options.get('assistant_speaker_overrides',{}).items():
         if player=='auto': manual.pop(assistant,None)
         else: manual[assistant]=player
-    result=discover_pairings(snapshot,manual)
+    # Migrate once by room, never retain a per-assistant runtime preference.
+    # Conflicting old choices remain explicit until an administrator chooses.
+    if 'room_speaker_defaults' in options:
+        defaults=dict(options['room_speaker_defaults'])
+    else:
+        old=discover_pairings(snapshot,manual)
+        candidates={}
+        for identifier, player in manual.items():
+            area=old['assistants'].get(identifier,{}).get('area_id')
+            if area: candidates.setdefault(area,set()).add(player)
+        defaults={area:next(iter(values)) if len(values)==1 else 'conflict'
+                  for area,values in candidates.items()}
+    automatic=discover_pairings(snapshot)
+    room_manual={identifier:defaults[row['area_id']]
+                 for identifier,row in automatic['assistants'].items()
+                 if row['area_id'] in defaults and defaults[row['area_id']]!='auto'}
+    result=discover_pairings(snapshot,room_manual)
+    result['room_speaker_defaults']=defaults
     result['areas']=[{'id':identifier,'name':name} for identifier,name in area_names.items()]
     for identifier,row in result['assistants'].items():
+        if defaults.get(row['area_id'])=='conflict':
+            row.update(status='room_default_conflict',speaker_id=None,schedule_output=None)
         row['name']=names[identifier]
         row['aliases']=list(dict.fromkeys([*aliases[identifier],area_names.get(row['area_id'],'')]))
         row['aliases']=[value for value in row['aliases'] if value]
@@ -113,6 +132,8 @@ def collect_pairings(hass,options, *, read_only=False, volume_only=False, music=
                 row['schedule_output']={'kind':'ma','entity_id':row['speaker_id'],'device_id':row['device_id']}
                 row['alarm_isolation_available']=True
         for choice in row['choices']: choice['name']=names.get(choice['entity_id'],choice['entity_id'])
+    result['speaker_names']=names
+    result['pairing_revision']=hashlib.sha256(json.dumps(result,sort_keys=True,default=str).encode()).hexdigest()
     return result
 
 

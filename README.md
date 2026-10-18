@@ -7,7 +7,7 @@ account, or paid subscription is required for the core features. Original record
 on a single shared voice pipeline use an optional [Recording Worker app](recording-worker/README.md),
 which transports native microphone audio and leaves scheduling and playback in the integration.
 
-This is the **0.3.24 prerelease**. Automated tests cover implementation
+This is the **0.3.25 prerelease**. Automated tests cover implementation
 contracts; actual microphone capture, speaker delivery, phone presence, firmware,
 and audiobook resume require validation on your equipment. Keep an independent
 alarm available until your installation passes those tests. Home Assistant must
@@ -160,9 +160,9 @@ know what other APIs that agent selected. No automatic cutover occurs.
   the original recording with a chime on configured speakers, and send its exact
   transcript to configured phones whose presence satisfies the selected home policy.
 - Room mappings for external replies, music, wake ducking, and alarm speakers.
-- Automatic assistant/speaker pairing from Home Assistant areas, with optional
-  per-assistant overrides. Multiple eligible speakers require a choice. New alarms
-  belong to an assistant and follow its current paired speaker or, when unpaired,
+- Room-based default speakers from Home Assistant areas, configured with room
+  and speaker dropdowns. Multiple eligible speakers require a choice. New alarms
+  belong to an assistant and follow its current room default or, without one,
   its built-in speaker if HA announcements are supported. New voice timers can
   also follow their listening assistant. Existing room-only schedules remain intact.
 - Ambiguous recognized timer edits ask which timer you mean. Follow-up choices
@@ -303,3 +303,7 @@ complete. Enable prerelease display in HACS to select them.
 
 Source is MIT-licensed; see [LICENSE](LICENSE) and [NOTICE.md](NOTICE.md). Report
 bugs at [GitHub issues](https://github.com/kidhasmoxy/household-voice/issues).
+
+### Default speakers by room
+
+Open **Settings → Devices & services → Household Voice → Configure → Room speakers**. Choose a room, choose its default speaker, then use **Review and save**. All assistants in that room inherit the default for music, alarms and timers. Rooms without assistants can also have a default. An explicitly named music speaker takes priority. Automatic uses the sole suitable room speaker; conflicting migrated choices require selection.

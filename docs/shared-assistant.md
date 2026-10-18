@@ -11,7 +11,7 @@ a fresh search. Expired or changed choices require a new clarification.
 For cancellation, call the same tool with only `choice_token` and
 `cancel_choice=true`; this discards the selection without stopping playback.
 
-This is the 0.3.24 development preview. It contributes tools to an ordinary
+This is the 0.3.25 development preview. It contributes tools to an ordinary
 Home Assistant agent; it does not add or assign a conversation agent. Automated
 contract checks are not microphone or acoustic acceptance. The optional recording
 app supports the staged native two-turn capture backend; both default disabled.
@@ -205,7 +205,7 @@ Use household_voice__media_status for what is playing, its artist/album, positio
 
 Use household_voice__media_queue_options to change existing music playback: shuffle=true or false; repeat=one for the current track, all for the queue, off to stop repeating. Supply only requested settings. This does not search or replace playback. Respect spoken-content and dynamic-mix restrictions. No content-safe playback sleep timer is currently exposed; do not substitute an audible household timer or promise a delayed media stop. Never retry an uncertain queue change.
 
-Use household_voice__media_control for next/previous music track, volume_set with volume_percent, volume_up/down with optional volume_delta, or mute/unmute. It uses the listening assistant's preferred speaker automatically; target_room is only for an explicitly requested other room. Do not replace it with generic area-wide media controls. It does not control arbitrary televisions or skip audiobook chapters. Volume requests during a voice turn update the normal volume baseline while temporary ducking remains. Report unsupported or uncertain outcomes without retrying.
+Use household_voice__media_control for next/previous music track, volume_set with volume_percent, volume_up/down with optional volume_delta, or mute/unmute. It uses the requesting room's default speaker automatically; target_room is only for an explicitly requested other room. Do not replace it with generic area-wide media controls. It does not control arbitrary televisions or skip audiobook chapters. Volume requests during a voice turn update the normal volume baseline while temporary ducking remains. Report unsupported or uncertain outcomes without retrying.
 
 Shared schedule tools: household_voice__create_timer, household_voice__create_alarm, household_voice__list_schedules, household_voice__change_schedule. Use these for durable household timers/alarms; do not use competing satellite-local timers. New schedules belong to the listening assistant unless another assistant is requested. Use HA time zone and current time for dates. Finished history is not an active timer. “Set the timer to” may edit a running timer rather than create another.
 

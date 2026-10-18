@@ -128,7 +128,7 @@ does not mean the system supports only playlists or genres.""")
     if has('media_control'):
         blocks.append('Use household_voice__media_control for next/previous music track, '
             'volume_set with volume_percent, volume_up/down with optional volume_delta, or mute/unmute. '
-            'It uses the listening assistant\'s preferred speaker automatically; target_room is only for an '
+            'It uses the requesting room\'s default speaker automatically; target_room is only for an '
             'explicitly requested other room. Do not replace it with generic area-wide media controls. '
             'It does not control arbitrary televisions or skip audiobook chapters. Volume requests during '
             'a voice turn update the normal volume baseline while temporary ducking remains. '

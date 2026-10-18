@@ -46,7 +46,7 @@ async def check_source_destination_scope(hass,satellite,device,area,entry,compos
     ma.runtime_data=SimpleNamespace(mass=mass)
     hass.states.async_set(speaker.entity_id,'idle',{'group_members':[]})
     options={**entry.options,'default_announcement_speakers':[speaker.entity_id],
-        'assistant_speaker_overrides':{satellite.entity_id:speaker.entity_id}}
+        'room_speaker_defaults':{area.id:speaker.entity_id}}
     source_entry=SimpleNamespace(entry_id=entry.entry_id,data=entry.data,options=options)
     source=sources_from_registry(hass)[device]
     transport=MAAnnouncementTransport(hass,{speaker.entity_id})

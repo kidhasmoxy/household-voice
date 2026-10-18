@@ -348,6 +348,10 @@ def _resolve_area(hass, options, context, source_area, target, *, read_only=Fals
         if len(named_speakers) != 1:
             raise MediaConfigurationError()
         selected = next(iter(named_speakers))
+    elif target_area in pairings.get('room_speaker_defaults', {}) and pairings['room_speaker_defaults'][target_area] != 'auto':
+        selected = pairings['room_speaker_defaults'][target_area]
+        if selected in (None, 'conflict'):
+            raise MediaConfigurationError()
     else:
         choices = {identifier for identifier, output in pairings['outputs'].items()
                    if identifier.startswith('media_player.') and output.get('area_id') == target_area
@@ -395,7 +399,7 @@ def _resolve_area(hass, options, context, source_area, target, *, read_only=Fals
     outputs = {key:{field:value.get(field) for field in ('area_id','available','physical_aliases')}
                for key,value in pairings['outputs'].items()}
     signature = hashlib.sha256(json.dumps([source_area, row, configured,
-        options.get('satellites', []), options.get('assistant_speaker_overrides', {}),
+        options.get('satellites', []), pairings.get('room_speaker_defaults', {}),
         routing, outputs, rooms, topology, enabled, read_only, _content_settings(options), options.get('apple_web_search_enabled', False), options.get('apple_web_native_enabled', False)], sort_keys=True, allow_nan=False).encode()).hexdigest()
     return registry, row, signature, enabled
 

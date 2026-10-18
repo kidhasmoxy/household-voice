@@ -246,6 +246,14 @@ def validate_options(data, entities, devices, services):
     if result['native_recording_enabled'] and not all(result[key] for key in
             ('assist_tools_enabled','live_actions_enabled','announcements_enabled')):
         raise RoutingError('native_recording_prerequisites')
+    room_defaults=result.get('room_speaker_defaults',{})
+    if not isinstance(room_defaults,dict) or len(room_defaults)>100:
+        raise RoutingError('invalid_mapping')
+    for area,player in room_defaults.items():
+        if not isinstance(area,str) or not area.strip() or len(area)>128:
+            raise RoutingError('invalid_mapping')
+        if player not in (None,'auto','conflict') and (not isinstance(player,str) or not re.fullmatch(r'media_player\.[a-z0-9_]+',player)):
+            raise RoutingError('invalid_mapping')
     overrides=result['assistant_speaker_overrides']
     if not isinstance(overrides,dict) or len(overrides)>100:
         raise RoutingError('invalid_mapping')

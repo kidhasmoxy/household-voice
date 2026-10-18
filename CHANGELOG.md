@@ -1,6 +1,13 @@
 # Changelog
 
-## 0.3.24
+## 0.3.25
+
+- Replace assistant-specific speaker settings with Room speakers: choose a room and its default speaker, including rooms without assistants.
+- All assistants inherit their room default for music, alarms and timers. Preserve explicit music destinations and existing group isolation.
+- Migrate unambiguous legacy preferences by room; conflicting preferences require a choice. Missing saved speakers never silently fall back.
+
+
+## 0.3.25
 
 Music routing now honors an explicit room or registered speaker name from an
 authenticated app request without requiring a voice satellite. With no explicit

@@ -94,6 +94,8 @@ class NativeDuckRuntime:
         # while excluding group-wide controls, cross-area ambiguity and aliases. Derive native
         # competing-speaker selection without writing options or actual pairing.
         options = dict(self.entry.options)
+        options['room_speaker_defaults'] = {
+            row['area_id']:None for row in actual.get('assistants',{}).values() if row.get('area_id')}
         options["assistant_speaker_overrides"] = {
             identifier: None for identifier in actual.get("assistants", {})}
         return self.discover(self.hass, options)
