@@ -147,6 +147,77 @@ class MediaLLMTests(unittest.IsolatedAsyncioTestCase):
         tool = module.MediaTool("household_media_" + operation, self.api)
         return await tool.async_call(self.hass, types.SimpleNamespace(tool_args=args or {}, id=call_id or f"call-{self.sequence}"), context or self.context)
 
+    async def test_web_discovery_is_opt_in_and_books_never_search_web(self):
+        import importlib
+        from unittest.mock import AsyncMock
+        web = importlib.import_module(module.__package__ + '.apple_web')
+        with patch.object(web, 'search_web', AsyncMock()) as lookup:
+            await self.call(args={'kind':'book', 'query':'Fixture Book'})
+            self.entry.options['apple_web_search_enabled'] = True
+            await self.call(args={'kind':'book', 'query':'Fixture Book'})
+            lookup.assert_not_awaited()
+
+    async def test_web_failure_uses_existing_catalog(self):
+        import importlib
+        from unittest.mock import AsyncMock
+        web = importlib.import_module(module.__package__ + '.apple_web')
+        self.entry.options['apple_web_search_enabled'] = True
+        self.services.search_result = search(item('Song','track','fixture://track/1'), 'tracks')
+        with patch.object(web, 'search_web', AsyncMock(return_value={'status':'unavailable'})) as lookup:
+            result = await self.call(args={'query':'Song','media_type':'track'})
+        lookup.assert_awaited_once()
+        self.assertIn('selected', result.data, result.data)
+        self.assertEqual(result.data['selected']['title'], 'Song')
+        self.assertFalse(result.data['executed'])
+
+    async def test_irrelevant_web_result_falls_back_to_catalog(self):
+        import importlib
+        from unittest.mock import AsyncMock
+        web = importlib.import_module(module.__package__ + '.apple_web')
+        self.entry.options['apple_web_search_enabled'] = True
+        self.services.search_result = search(item('Song','track','fixture://track/1'), 'tracks')
+        wrong = search(item('Other','track','apple_music--one://track/2'), 'tracks')
+        with patch.object(web, 'discover', AsyncMock(return_value=(wrong, {'apple_music--one://track/2':'link'}))):
+            result = await self.call(args={'query':'Song','media_type':'track'})
+        self.assertEqual(result.data['selected']['title'], 'Song')
+        self.assertEqual(len([c for c in self.services.calls if c[1]=='search']), 1)
+
+    async def test_web_toggle_invalidates_existing_guard(self):
+        signature = module._resolve(self.hass, self.entry, self.context, 'kitchen')[2]
+        guard = module._GuardedServices(self.api, self.context, 'kitchen', signature)
+        self.entry.options['apple_web_search_enabled'] = True
+        with self.assertRaises(module.MediaConfigurationError):
+            await guard.async_call('media_player','media_play',{'entity_id':PLAYER})
+        self.assertFalse(self.services.calls)
+
+    async def test_native_web_dispatch_and_no_retry_after_failure(self):
+        import importlib
+        from unittest.mock import AsyncMock
+        web = importlib.import_module(module.__package__ + '.apple_web')
+        pairings, collector = self.auto_area_fixture()
+        self.entry.options.update(apple_web_search_enabled=True, apple_web_native_enabled=True,
+            live_actions_enabled=True, media_enabled=True)
+        self.hass.states.get = lambda entity: types.SimpleNamespace(state='idle',
+            attributes={'group_members':[TTS], 'shuffle':False, 'repeat':'off'})
+        found = search(item('Song','track','apple_music--one://track/1'), 'tracks')
+        async def empty(guard, player):
+            return dict(await fixture_queue_mode(guard, player), items=0)
+        with patch.object(collector, 'collect_pairings', return_value=pairings), \
+                patch.object(module._GuardedServices, 'async_read_queue_mode', empty), \
+                patch.object(web, 'discover', AsyncMock(return_value=(found,
+                    {'apple_music--one://track/1':'https://music.apple.com/us/song/item/1'}))):
+            result = await self.call(args={'query':'Song','media_type':'track'})
+            self.assertTrue(result.data['executed'], result.data)
+            self.assertFalse(result.data['playback_confirmed'])
+            self.assertEqual(result.data['playback_kind'], 'apple_web_native_sonos')
+            self.assertEqual(self.services.calls[-1][2]['entity_id'], TTS)
+            self.services.calls.clear()
+            self.services.fail = 'play_media'
+            result = await self.call(args={'query':'Song','media_type':'track'})
+            self.assertFalse(result.data['executed'])
+            self.assertEqual(len(self.services.calls), 1)
+            self.assertEqual(self.services.calls[0][0], 'media_player')
+
     def content_client(self, tracks, *, collections=None):
         """Native MA contract fixtures; no provider or household is contacted."""
         self.entry.options.update(block_explicit_tracks=True, live_actions_enabled=True, media_enabled=True)
@@ -1786,7 +1857,36 @@ async def real_ha_smoke():
                 blocked = await instance.async_call_tool(llm.ToolInput(tool_name=module.NAMES[0],
                     tool_args={'query':'Filtered Song','media_type':'track'},id='native-content-changed'))
                 assert blocked.data['reason'] == 'music_content_filter_blocked' and len(actions) == count
-            config.update(block_explicit_tracks=False)
+            # Exercise the web discovery adapter inside the actual HA LLM tool.
+            # Only web/provider I/O and physical services are synthetic.
+            import importlib
+            from unittest.mock import AsyncMock
+            web = importlib.import_module(module.__package__ + '.apple_web')
+            config.update(block_explicit_tracks=False, apple_web_search_enabled=True,
+                          apple_web_native_enabled=False)
+            hass.config_entries.async_update_entry(voice, options=config)
+            web_item = dict(item('Web Found Album', 'album', 'apple_music://album/123'),
+                provider_mappings=[{'provider_domain':'apple_music', 'provider_instance':'apple_music--fixture',
+                                    'item_id':'123', 'available':True}])
+            async def web_command(command, **args):
+                if command == 'music/verify_item_uri':
+                    assert args['user'] == 'configured-user'
+                    return True
+                assert command == 'music/item_by_uri' and args['uri'] == 'apple_music://album/123'
+                return web_item
+            content_helper.get_music_assistant_client = lambda *args: types.SimpleNamespace(send_command=web_command)
+            with patch.dict(sys.modules, {'homeassistant.components.music_assistant.helpers':content_helper}), \
+                    patch.object(web, 'search_web', AsyncMock(return_value={'status':'ready', 'sources':[
+                        {'url':'https://music.apple.com/us/album/web-found/123'}]})) as web_search:
+                found = await instance.async_call_tool(llm.ToolInput(tool_name=module.NAMES[0],
+                    tool_args={'query':'Web Found Album','media_type':'album'},id='web-discovery-album'))
+                assert found.data['status'] == 'action_accepted', found.data
+                assert actions[-1][2]['media_id'] == 'apple_music--fixture://album/123'
+                assert actions[-1][2]['entity_id'] == other_player.entity_id
+                web_search.assert_awaited_once()
+                assert found.data['evidence_policy'].startswith('web_discovered_')
+            count = len(actions)
+            config.update(block_explicit_tracks=False, apple_web_search_enabled=False)
             hass.config_entries.async_update_entry(voice, options=config)
             # Moving the requesting device while catalog lookup is awaited must
             # invalidate the route before any queue control or media action.
@@ -1816,6 +1916,7 @@ async def real_ha_smoke():
                 "source_area_change_blocks_dispatch": True,
                 "native_later_turn_catalog_choice_and_deduplication": True,
                 "native_content_filter_clean_mixed_album_unrated_and_changed_rating": True,
+                "web_discovery_profile_authorized_album_uses_existing_room_and_ma_playback": True,
                 "physical_actions": False, "live_ha_contacted": False, "real_ma_contacted": False}, sort_keys=True), flush=True)
         finally:
             queue_patch.stop()

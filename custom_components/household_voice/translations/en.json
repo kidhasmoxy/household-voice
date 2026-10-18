@@ -134,7 +134,7 @@
       },
       "review": {
         "title": "Review and save household voice settings",
-        "description": "Default speakers: {speakers}. Phones: {phones}. Satellites: {satellites}. Master live actions: {live}. Saving validates the current registries, preserves your feature switches, and requests integration reload. Enabled features can act on subsequent voice requests or scheduled events. Explicit music filter: {music_filter}. Unrated tracks when filtering: {unrated_tracks}."
+        "description": "Default speakers: {speakers}. Phones: {phones}. Satellites: {satellites}. Master live actions: {live}. Saving validates the current registries, preserves your feature switches, and requests integration reload. Enabled features can act on subsequent voice requests or scheduled events. Explicit music filter: {music_filter}. Unrated tracks when filtering: {unrated_tracks}. Apple Music web search: {apple_web_search}. Experimental direct Sonos: {apple_web_native}."
       },
       "media": {
         "title": "Music Assistant room and profile",
@@ -284,10 +284,12 @@
       },
       "music_content": {
         "title": "Music content",
-        "description": "Apply to Household Voice music suggestions and playback. Explicit tracks are removed from albums, playlists and artist selections. Blocking unrated tracks is recommended because some providers omit ratings. Radio streams and automatic endless playback cannot be checked and are unavailable while filtering. Existing dynamic or autoplay queues must be cleared or replaced with a finite queue with autoplay off in Music Assistant. This does not change music already playing or control playback started by other apps. Audiobooks retain their existing playback and resume behavior. Finish with Review and save.",
+        "description": "Apply to Household Voice music suggestions and playback. Explicit tracks are removed from albums, playlists and artist selections. Blocking unrated tracks is recommended because some providers omit ratings. Radio streams and automatic endless playback cannot be checked and are unavailable while filtering. Existing dynamic or autoplay queues must be cleared or replaced with a finite queue with autoplay off in Music Assistant. This does not change music already playing or control playback started by other apps. Audiobooks retain their existing playback and resume behavior. Finish with Review and save. Web search sends music terms to the existing Brave search account and shares its configured search budget. Direct Sonos applies only to idle, ungrouped speakers with an empty Music Assistant queue, without shuffle or content filtering. Other playback uses Music Assistant. Both experiments default off.",
         "data": {
           "block_explicit_tracks": "Block explicit tracks",
-          "block_unrated_tracks": "Also block tracks without a content rating (when filtering is on)"
+          "block_unrated_tracks": "Also block tracks without a content rating (when filtering is on)",
+          "apple_web_search_enabled": "Find music using Apple Music web results (experimental)",
+          "apple_web_native_enabled": "Try direct Sonos playback for web results (experimental)"
         }
       }
     },

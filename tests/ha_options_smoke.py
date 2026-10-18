@@ -48,7 +48,7 @@ class OptionsTests(unittest.TestCase):
             self.assertEqual(options.initial_options(values), values)
             self.assertTrue(values['block_explicit_tracks'])
             self.assertIs(values['block_unrated_tracks'], strict)
-        for key in ('block_explicit_tracks', 'block_unrated_tracks'):
+        for key in ('block_explicit_tracks', 'block_unrated_tracks', 'apple_web_search_enabled', 'apple_web_native_enabled'):
             for bad in ('true', 1, None, []):
                 with self.subTest(key=key, bad=bad), self.assertRaises(options.RoutingError):
                     options.validate_options({key:bad}, ENTITIES, DEVICES, SERVICES)
@@ -464,14 +464,16 @@ async def real_ha_options_smoke():
             result=await manager.async_init(entry.entry_id);flow_id=result['flow_id']
             assert 'music_content' in result['menu_options']
             await step({'next_step_id':'music_content'})
-            await step({'block_explicit_tracks':True, 'block_unrated_tracks':False})
+            await step({'block_explicit_tracks':True, 'block_unrated_tracks':False,
+                        'apple_web_search_enabled':True, 'apple_web_native_enabled':False})
             await step({'next_step_id':'review'});assert (await step({}))['type']=='create_entry'
             assert entry.options['block_explicit_tracks'] is True
             assert entry.options['block_unrated_tracks'] is False
             result=await manager.async_init(entry.entry_id);flow_id=result['flow_id']
             form=await step({'next_step_id':'music_content'})
             defaults={str(key):key.default() for key in form['data_schema'].schema}
-            assert defaults == {'block_explicit_tracks':True, 'block_unrated_tracks':False}
+            assert defaults == {'block_explicit_tracks':True, 'block_unrated_tracks':False,
+                                'apple_web_search_enabled':True, 'apple_web_native_enabled':False}
             manager.async_abort(flow_id)
             # Alarm defaults are editable without inventing a room mapping.
             hass.config_entries.async_update_entry(entry, options={**entry.options,'stt_capture_enabled':True})

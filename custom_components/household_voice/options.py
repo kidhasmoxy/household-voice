@@ -26,6 +26,8 @@ def initial_options(existing):
     result.setdefault("media_rooms", [])
     result.setdefault("block_explicit_tracks", False)
     result.setdefault("block_unrated_tracks", True)
+    result.setdefault("apple_web_search_enabled", False)
+    result.setdefault("apple_web_native_enabled", False)
     result.setdefault("stt_capture_profiles", [])
     result.setdefault("alarm_rooms", [])
     result.setdefault("ring_fallback_speakers", [])
@@ -225,7 +227,7 @@ def satellite(data, entities, devices, services):
 
 def validate_options(data, entities, devices, services):
     result = initial_options(data)
-    if any(type(result[key]) is not bool for key in ('block_explicit_tracks', 'block_unrated_tracks')):
+    if any(type(result[key]) is not bool for key in ('block_explicit_tracks', 'block_unrated_tracks', 'apple_web_search_enabled', 'apple_web_native_enabled')):
         raise RoutingError('invalid_enabled')
     if type(result['assist_tools_enabled']) is not bool or type(result['native_recording_enabled']) is not bool:
         raise RoutingError('invalid_enabled')

@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.3.22
+
+Optional Apple Music web search finds share links using the existing Brave search
+account, verifies their identity and availability through the configured Music
+Assistant profile, then uses existing room routing and playback controls. Named
+music constraints and content filters still apply; unavailable or irrelevant web
+results fall back to the normal catalog. Books and sleep stories keep their
+existing path. The search shares the configured knowledge-search budget/cache.
+
+An independent direct Sonos experiment is off by default and limited to idle,
+ungrouped speakers with empty finite MA queues, without filtering, shuffle or
+endless playback. Native queue follow-up controls remain experimental.
+
 ## 0.3.21
 
 Optional **Music content** settings exclude explicit tracks from Household Voice

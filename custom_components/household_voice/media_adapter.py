@@ -507,7 +507,15 @@ class MusicAssistantAdapter:
                         raise MediaAdapterError('Wrong catalog scope')
                     response = await self._call('music_assistant', 'search', data, session, response=True)
                     result = plan(catalog=parse_search(response, data, session, self.bindings, self.clock()))
+                    if (getattr(self.hass.services, 'apple_links', None)
+                            and result.get('status') != 'ready'
+                            and (not result.get('choices') or result.get('reason') in (
+                                'no_exact_catalog_match', 'no_relevant_soundtrack', 'no_relevant_music_collection'))):
+                        response = await self.hass.services.async_catalog_fallback(data, session)
+                        result = plan(catalog=parse_search(response, data, session, self.bindings, self.clock()))
                     result['evidence_policy'] = (
+                        'web_discovered_profile_authorized_catalog_metadata_not_global_uniqueness'
+                        if getattr(self.hass.services, 'apple_links', None) else
                         'provider_ranked_exact_artist_recommendation_not_global_uniqueness'
                         if result.get('reason') == 'provider_ranked_artist_selected' else
                         'broad_catalog_recommendation_not_exact_title'
@@ -554,6 +562,11 @@ class MusicAssistantAdapter:
                         and result.get('selected', {}).get('media_type') in ('album', 'playlist')):
                     result = await self._filter_collection(result, context)
                 if result.get('status')=='ready' and self.enable_execution:
+                    native = getattr(self.hass.services, 'async_try_native_web', None)
+                    if native is not None:
+                        native_result = await native(result, request)
+                        if native_result is not None:
+                            return self._record(native_result)
                     actions = self._validated_actions(result, session, player)
                     if context.block_explicit_tracks:
                         check = getattr(self.hass.services, 'async_verify_content_playback', None)

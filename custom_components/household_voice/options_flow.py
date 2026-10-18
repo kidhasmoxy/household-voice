@@ -376,7 +376,7 @@ class HouseholdVoiceOptionsFlow(config_entries.OptionsFlow):
 
     async def async_step_music_content(self, user_input=None):
         self._ensure_draft()
-        keys = ('block_explicit_tracks', 'block_unrated_tracks')
+        keys = ('block_explicit_tracks', 'block_unrated_tracks', 'apple_web_search_enabled', 'apple_web_native_enabled')
         errors = {}
         if user_input is not None:
             values = {key: user_input.get(key, self.draft[key]) for key in keys}
@@ -565,4 +565,6 @@ class HouseholdVoiceOptionsFlow(config_entries.OptionsFlow):
             "live": "enabled" if self.draft["live_actions_enabled"] else "disabled",
             "music_filter": "enabled" if self.draft['block_explicit_tracks'] else "disabled",
             "unrated_tracks": "blocked" if self.draft['block_unrated_tracks'] else "allowed",
+            "apple_web_search": "enabled" if self.draft['apple_web_search_enabled'] else "disabled",
+            "apple_web_native": "enabled" if self.draft['apple_web_native_enabled'] else "disabled",
         })
