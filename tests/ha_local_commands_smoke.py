@@ -112,6 +112,11 @@ async def verify(hass):
         coordinator.broadcast_runtime.async_start.assert_awaited_once()
         await ask('turn on fixture lamp')
         assert lamp.calls == 1 and not fallback.calls
+        for text in ['what time is it', 'what is the time', 'tell me the time']:
+            result = await ask(text)
+            assert not result.response.error_code
+            assert result.response.speech['plain']['speech']
+            assert not fallback.calls, 'Current time must never wait for the AI'
         for text in ['set an alarm for seven', 'set a timer for five minutes in the bedroom',
                      'play jazz', 'the second one', 'add five minutes to my timer']:
             result = await ask(text)
@@ -134,6 +139,7 @@ async def verify(hass):
         await ask('turn on fixture lamp')
         assert lamp.calls == 1 and len(fallback.calls) == count
     print(json.dumps({'ha':__version__, 'native_light_calls':lamp.calls,
+        'native_time_without_ai':True,
         'timer_and_stop_backend_contracts':True,'fallback_context_and_continuation':True,
         'uncertainty_not_retried':True,'trusted_source_required':True,'physical_audio':False}))
 

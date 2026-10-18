@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.3.28
+
+- Answer current-time requests through Home Assistant's native clock intent without waiting for the shared AI agent.
+
 ## 0.3.27
 
 - Preserve streamed AI responses through the fast-command front end. Local replies retain the normal final-speech path.
