@@ -3,6 +3,7 @@
 Only strict Apple share-link IDs enter MA's profile authorization and metadata
 lookup. The ordinary planner still selects the title/version and enforces filters.
 """
+import asyncio
 import re
 from urllib.parse import parse_qs, urlsplit
 
@@ -67,6 +68,7 @@ async def discover(data, *, search, authorize, lookup):
     response = await search(terms + ' Apple Music')
     if response.get('status') != 'ready':
         return None, {}
+    candidates = []
     for source in response.get('sources', [])[:5]:
         try:
             link, uri, kind = apple_link(source.get('url'))
@@ -75,8 +77,18 @@ async def discover(data, *, search, authorize, lookup):
         if kind not in data['media_type'] or uri in seen:
             continue
         seen.add(uri)
+        candidates.append((link, uri, kind))
+    # These are independent read-only candidates. Preserve source ranking and
+    # ambiguity evidence, while bounding provider concurrency instead of waiting
+    # for every candidate's authorization/metadata round trips in sequence.
+    gate = asyncio.Semaphore(3)
+    async def resolve(candidate):
+        async with gate:
+            return await resolve_one(candidate)
+    async def resolve_one(candidate):
+        link, uri, kind = candidate
         if not await authorize(uri):
-            continue
+            return None
         raw = await lookup(uri)
         # MA can resolve to library IDs. Require its exact available Apple mapping
         # rather than accepting an unrelated object returned for the lookup.
@@ -87,16 +99,24 @@ async def discover(data, *, search, authorize, lookup):
                    and str(m.get('item_id')) == identifier and m.get('available') is True]
         if (not isinstance(raw, dict) or raw.get('media_type') != kind
                 or raw.get('available') is False or not matches):
-            continue
+            return None
         instance = matches[0].get('provider_instance')
         if not isinstance(instance, str) or not re.fullmatch(r'apple_music(?:--[A-Za-z0-9_-]+)?', instance):
-            continue
+            return None
         bound = f'{instance}://{kind}/{identifier}'
         if not await authorize(bound):
-            continue
+            return None
         raw = dict(raw, uri=bound)
+        return kind, bound, raw, (native_track_link(raw, bound) or link) if kind == 'track' else link
+    resolved = await asyncio.gather(*(resolve(candidate) for candidate in candidates), return_exceptions=True)
+    for value in resolved:
+        if isinstance(value, BaseException):
+            raise value
+        if value is None:
+            continue
+        kind, bound, raw, link = value
         result[groups[kind]].append(raw)
-        links[bound] = (native_track_link(raw, bound) or link) if kind == 'track' else link
+        links[bound] = link
     return (result if links else None), links
 
 
