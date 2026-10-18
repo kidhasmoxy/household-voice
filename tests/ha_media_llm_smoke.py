@@ -521,7 +521,7 @@ class MediaLLMTests(unittest.IsolatedAsyncioTestCase):
         self.assertNotEqual(result.data['status'], 'action_accepted')
         self.assertEqual([call[1] for call in self.services.calls], ['search'])
 
-    async def test_native_area_output_and_profile_ambiguity_fail_closed(self):
+    async def test_room_output_ignores_satellite_pairing_status_but_requires_unique_profile(self):
         pairings, collector = self.auto_area_fixture()
         with patch.object(collector, 'collect_pairings', return_value=pairings):
             for status in ('choice_required','explicitly_unpaired','speaker_unavailable',
@@ -529,7 +529,8 @@ class MediaLLMTests(unittest.IsolatedAsyncioTestCase):
                 with self.subTest(status=status):
                     pairings['assistants']['assist_satellite.fixture']['status'] = status
                     result = await self.call(args={'query':'Fixture Book','kind':'book'})
-                    self.assertEqual(result.data['reason'], 'verified_source_and_media_configuration_required')
+                    self.assertEqual(result.data['status'], 'dry_run')
+            self.services.calls.clear()
             pairings['assistants']['assist_satellite.fixture']['status'] = 'ready'
             other = deepcopy(self.entry.options['media_rooms'][0])
             other['username'] = 'another-profile'
@@ -2004,12 +2005,14 @@ async def real_ha_smoke():
             hass.services.async_register('music_assistant','search',fixture_search,supports_response=SupportsResponse.ONLY)
             app_result = await app_instance.async_call_tool(llm.ToolInput(tool_name=module.NAMES[0],
                 tool_args={'query':'jazz','selection_mode':'broad_music','target_room':'Office'},id='app-explicit-speaker'))
-            assert app_result.data['status']=='action_accepted', app_result.data
+            app_data = app_result.data if hasattr(app_result, 'data') else app_result
+            assert app_data['status']=='action_accepted', app_data
             assert actions[-1][2]['entity_id']==other_player.entity_id
             count = len(actions)
             missing_room = await app_instance.async_call_tool(llm.ToolInput(tool_name=module.NAMES[0],
                 tool_args={'query':'jazz','selection_mode':'broad_music'},id='app-missing-room'))
-            assert missing_room.data['reason']=='music_destination_required' and len(actions)==count
+            missing_data = missing_room.data if hasattr(missing_room, 'data') else missing_room
+            assert missing_data['reason']=='music_destination_required' and len(actions)==count
             # Moving the requesting device while catalog lookup is awaited must
             # invalidate the route before any queue control or media action.
             moved = ar.async_get(hass).async_create('Moved Room')

@@ -343,36 +343,25 @@ def _resolve_area(hass, options, context, source_area, target, *, read_only=Fals
         if len(matches) != 1:
             raise MediaConfigurationError()
         target_area = next(iter(matches))
-    source_bindings = [row for row in pairings['assistants'].values()
-                       if row.get('device_id') == context.device_id]
-    if not source_area.get('explicit_destination') and source_bindings and (len(source_bindings) != 1 or source_bindings[0].get('area_id') != source_area['area_id']
-            or source_bindings[0].get('status') in ('assistant_disabled', 'assistant_unavailable',
-                'assistant_device_unknown', 'assistant_area_unknown')):
-        raise MediaConfigurationError()
     named_speakers = speaker_aliases.get(target.casefold().strip(), set()) if target else set()
     if named_speakers:
         if len(named_speakers) != 1:
             raise MediaConfigurationError()
         selected = next(iter(named_speakers))
-    elif target_area == source_area['area_id'] and source_bindings:
-        binding = source_bindings[0]
-        if binding.get('status') != 'ready':
-            raise MediaConfigurationError()
-        selected = binding.get('speaker_id')
     else:
-        bindings = [row for row in pairings['assistants'].values() if row.get('area_id') == target_area]
-        if bindings and all(row.get('status') == 'ready' for row in bindings):
-            # Different per-assistant overrides make a room-only request ambiguous.
-            choices = {row.get('speaker_id') for row in bindings if row.get('status') == 'ready'}
-            if len(choices) != 1 or any(row.get('status') != 'ready' for row in bindings):
-                raise MediaConfigurationError()
-            selected = next(iter(choices))
-        else:
-            choices = [player for player, output in pairings['outputs'].items()
-                       if player.startswith('media_player.') and output.get('area_id') == target_area]
-            if len(choices) != 1:
-                raise MediaConfigurationError()
-            selected = choices[0]
+        choices = {identifier for identifier, output in pairings['outputs'].items()
+                   if identifier.startswith('media_player.') and output.get('area_id') == target_area
+                   and output.get('available') is True}
+        if len(choices) > 1:
+            # A saved preference can disambiguate speakers inside this room;
+            # it cannot move a room request elsewhere or require a satellite.
+            preferred = {binding.get('speaker_id') for binding in pairings['assistants'].values()
+                         if binding.get('area_id') == target_area and binding.get('status') == 'ready'
+                         and binding.get('speaker_id') in choices}
+            if len(preferred) == 1: choices = preferred
+        if len(choices) != 1:
+            raise MediaConfigurationError()
+        selected = next(iter(choices))
     output = pairings['outputs'].get(selected)
     player = entities.async_get(selected) if isinstance(selected, str) else None
     if (not output or output.get('available') is not True or player is None
