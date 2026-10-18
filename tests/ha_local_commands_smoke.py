@@ -72,6 +72,7 @@ async def verify(hass):
     coordinator = SimpleNamespace(broadcast_runtime=SimpleNamespace(async_start=AsyncMock(return_value={'status':'queued'})))
     hass.data['household_voice'] = {entry.entry_id: coordinator}
     router = HouseholdLocalConversation(entry, coordinator)
+    assert router.supports_streaming
     await hass.data[DATA_COMPONENT].async_add_entities([router])
     api = HouseholdScheduleAPI(hass, entry, coordinator)
     async def ask(text, source=device.id, context=None):

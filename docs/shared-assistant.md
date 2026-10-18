@@ -11,7 +11,7 @@ a fresh search. Expired or changed choices require a new clarification.
 For cancellation, call the same tool with only `choice_token` and
 `cancel_choice=true`; this discards the selection without stopping playback.
 
-This is the 0.3.26 development preview. It contributes tools to an ordinary
+This is the 0.3.27 development preview. It contributes tools to an ordinary
 Home Assistant agent. Optional fast commands add a thin local front end to that
 same agent; assignments remain an administrator choice. Automated
 contract checks are not microphone or acoustic acceptance. The optional recording
