@@ -157,6 +157,54 @@ class MediaLLMTests(unittest.IsolatedAsyncioTestCase):
             await self.call(args={'kind':'book', 'query':'Fixture Book'})
             lookup.assert_not_awaited()
 
+    def grouped_fixture(self):
+        leader = 'media_player.fixture_leader'
+        self.hass.entities.values[PLAYER].unique_id = 'member'
+        self.hass.entities.values[PLAYER].entity_id = PLAYER
+        self.hass.entities.values[leader] = types.SimpleNamespace(entity_id=leader,
+            unique_id='leader', platform='music_assistant', config_entry_id='ma-entry', disabled_by=None)
+        self.hass.entities.entities = self.hass.entities.values
+        players = {'member':types.SimpleNamespace(available=True, synced_to='leader', active_group=None, group_members=[]),
+            'leader':types.SimpleNamespace(available=True, synced_to=None, active_group=None, group_members=['leader','member'])}
+        self.hass.config_entries.values['ma-entry'].runtime_data = types.SimpleNamespace(
+            mass=types.SimpleNamespace(players=types.SimpleNamespace(get=players.get)))
+        return leader, players
+
+    async def test_group_member_routes_play_and_pause_to_current_leader(self):
+        leader, players = self.grouped_fixture()
+        self.entry.options.update(live_actions_enabled=True, media_enabled=True)
+        self.services.search_result = search(item('Song','track','fixture://track/1'),'tracks')
+        result = await self.call(args={'query':'Song','media_type':'track'})
+        self.assertTrue(result.data['executed'], result.data)
+        self.assertEqual(self.services.calls[-1][2]['entity_id'], leader)
+        self.assertEqual(self.services.calls[-1][2]['username'], 'configured-user')
+        self.services.queue_result = {leader: self.services.queue_result[PLAYER]}
+        result = await self.call('pause')
+        self.assertTrue(result.data['executed'], result.data)
+        self.assertEqual(self.services.calls[-1][2]['entity_id'], leader)
+        self.assertEqual(players['member'].synced_to, 'leader')
+
+    async def test_group_change_after_search_never_dispatches(self):
+        _, players = self.grouped_fixture()
+        self.entry.options.update(live_actions_enabled=True, media_enabled=True)
+        self.services.search_result = search(item('Song','track','fixture://track/1'),'tracks')
+        self.services.after_search = lambda: players['leader'].group_members.append('new-member')
+        result = await self.call(args={'query':'Song','media_type':'track'})
+        self.assertFalse(result.data['executed'])
+        self.assertEqual([call[1] for call in self.services.calls], ['search'])
+
+    def test_group_resolution_rejects_stale_cycles_missing_and_cross_instance_leader(self):
+        leader, players = self.grouped_fixture()
+        for change in ('cycle','missing','membership','unavailable','cross_instance'):
+            with self.subTest(change=change):
+                leader, players = self.grouped_fixture()
+                if change == 'cycle': players['leader'].synced_to = 'member'
+                if change == 'missing': del players['leader']
+                if change == 'membership': players['leader'].group_members = ['leader']
+                if change == 'unavailable': players['leader'].available = False
+                if change == 'cross_instance': self.hass.entities.values[leader].config_entry_id = 'other'
+                with self.assertRaises(module.MediaConfigurationError): module._resolve(self.hass,self.entry,self.context)
+
     async def test_web_failure_uses_existing_catalog(self):
         import importlib
         from unittest.mock import AsyncMock
@@ -198,7 +246,7 @@ class MediaLLMTests(unittest.IsolatedAsyncioTestCase):
         self.entry.options.update(apple_web_search_enabled=True, apple_web_native_enabled=True,
             live_actions_enabled=True, media_enabled=True)
         self.hass.states.get = lambda entity: types.SimpleNamespace(state='idle',
-            attributes={'group_members':[TTS], 'shuffle':False, 'repeat':'off'})
+            attributes={'group_members':[entity], 'shuffle':False, 'repeat':'off'})
         found = search(item('Song','track','apple_music--one://track/1'), 'tracks')
         async def empty(guard, player):
             return dict(await fixture_queue_mode(guard, player), items=0)
@@ -1788,6 +1836,22 @@ async def real_ha_smoke():
             hass.config_entries.async_update_entry(voice,options=config)
             _, auto_row, _, _ = module._resolve(hass,voice,context)
             assert auto_row['music_player'] == other_player.entity_id and auto_row['username'] == 'configured-user'
+            # Real registries: music follows a grouped member to its leader,
+            # while general pairing remains excluded for room-local outputs.
+            ma_players['second-fixture'].synced_to = 'fixture-ma'
+            ma_players['fixture-ma'].group_members = ['fixture-ma','second-fixture']
+            assert collect_pairings(hass, config)['assistants'][satellite.entity_id]['status'] == 'manual_speaker_unsafe_or_unsupported'
+            grouped = await instance.async_call_tool(llm.ToolInput(tool_name=module.NAMES[0],
+                tool_args={'query':'jazz','selection_mode':'broad_music'},id='native-group-member'))
+            assert grouped.data['status'] == 'action_accepted', grouped.data
+            assert actions[-1][2]['entity_id'] == player.entity_id
+            assert calls[-1]['username'] == 'configured-user'
+            assert ma_players['second-fixture'].synced_to == 'fixture-ma'
+            _, _, grouped_signature, _ = module._resolve(hass, voice, context)
+            ma_players['fixture-ma'].group_members.append('new-member')
+            assert module._resolve(hass, voice, context)[2] != grouped_signature
+            ma_players['second-fixture'].synced_to = None
+            ma_players['fixture-ma'].group_members = []
             # Real HA tool schemas and later request contexts around synthetic
             # catalog/services: no household audio or provider is contacted.
             async def choices_search(call):
