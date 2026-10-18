@@ -310,7 +310,11 @@ class MediaLLMTests(unittest.IsolatedAsyncioTestCase):
             live_actions_enabled=True, media_enabled=True)
         self.hass.states.get = lambda entity: types.SimpleNamespace(state='idle',
             attributes={'group_members':[entity], 'shuffle':False, 'repeat':'off'})
-        found = search(item('Song','track','apple_music--one://track/1'), 'tracks')
+        track = self.rated_track('Song', False, 'apple_music--one://track/1')
+        track['provider_mappings'] = [{'provider_domain':'apple_music','provider_instance':'apple_music--one',
+            'item_id':'1','available':True,'url':'https://music.apple.com/us/album/song/2?i=1'}]
+        self.content_client([track])
+        found = search(track, 'tracks')
         async def empty(guard, player):
             return dict(await fixture_queue_mode(guard, player), items=0)
         with patch.object(collector, 'collect_pairings', return_value=pairings), \
@@ -328,6 +332,13 @@ class MediaLLMTests(unittest.IsolatedAsyncioTestCase):
             self.assertFalse(result.data['executed'])
             self.assertEqual(len(self.services.calls), 1)
             self.assertEqual(self.services.calls[0][0], 'media_player')
+            self.assertEqual(self.services.calls[0][2]['media_content_id'], track['provider_mappings'][0]['url'])
+            self.services.calls.clear()
+            self.services.fail = None
+            self.content_tracks[track['uri']] = dict(track, metadata={'explicit':True})
+            result = await self.call(args={'query':'Song','media_type':'track'})
+            self.assertFalse(result.data['executed'])
+            self.assertEqual(self.services.calls, [])
 
     def content_client(self, tracks, *, collections=None):
         """Native MA contract fixtures; no provider or household is contacted."""

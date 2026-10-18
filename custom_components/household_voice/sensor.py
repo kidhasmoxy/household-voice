@@ -10,7 +10,7 @@ async def async_setup_entry(hass, entry, async_add_entities):
 class SchedulesSensor(CoordinatorEntity, SensorEntity):
     _attr_name = "Household Voice Schedules"
     _attr_icon = "mdi:timer-outline"
-    _unrecorded_attributes = frozenset({"schedules", "events","assistants","area_pairings","native_room_ducking","native_recording"})
+    _unrecorded_attributes = frozenset({"schedules", "events","assistants","area_pairings","native_room_ducking","native_recording","media_performance"})
 
     def __init__(self, coordinator, entry_id):
         super().__init__(coordinator)
@@ -29,6 +29,7 @@ class SchedulesSensor(CoordinatorEntity, SensorEntity):
         from .native_recording_journal import SHARED_KEY
         journal=getattr(getattr(self,'hass',None),'data',{}).get(SHARED_KEY)
         return {"alarm_grouping":getattr(getattr(worker,'groups',None),'diagnostics',{}),
+                "media_performance":getattr(self.coordinator,'media_performance',{}),
                 "announcement_speakers":list(self.coordinator.entry.options.get('default_announcement_speakers', [])),
                 "native_recording":{'enabled':recording is not None,'worker_connected':bool(recording and recording.backend.connection is not None),
                     'paused':bool(recording and recording.backend.paused),'recovery_required_count':len(journal.holds) if journal else 0,
