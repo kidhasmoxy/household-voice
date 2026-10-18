@@ -170,7 +170,7 @@ async def async_setup_entry(hass, entry):
     coordinator.native_duck_runtime=None
     coordinator.native_recording=None
     coordinator.platforms=[Platform.SENSOR]
-    if entry.options.get('conversation_fallback_agent'):
+    if entry.options.get('conversation_fallback_agent') or entry.options.get('local_commands_enabled') is True:
         coordinator.platforms.append(Platform.CONVERSATION)
     if entry.options.get('stt_capture_enabled') is True and not native_recording:
         coordinator.platforms.append(Platform.STT)

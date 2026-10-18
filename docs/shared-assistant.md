@@ -11,10 +11,30 @@ a fresh search. Expired or changed choices require a new clarification.
 For cancellation, call the same tool with only `choice_token` and
 `cancel_choice=true`; this discards the selection without stopping playback.
 
-This is the 0.3.25 development preview. It contributes tools to an ordinary
-Home Assistant agent; it does not add or assign a conversation agent. Automated
+This is the 0.3.26 development preview. It contributes tools to an ordinary
+Home Assistant agent. Optional fast commands add a thin local front end to that
+same agent; assignments remain an administrator choice. Automated
 contract checks are not microphone or acoustic acceptance. The optional recording
 app supports the staged native two-turn capture backend; both default disabled.
+
+## Fast local commands
+
+In Shared assistant and recording, enable **Use fast local commands** and select
+your existing shared AI agent. Save, then select **Household Voice fast commands**
+as the voice pipeline's conversation agent. Keep **Prefer handling commands
+locally** off: its broad native timer handling would bypass household schedules.
+
+Strict, exposed device commands use Home Assistant's native matcher. Complete new
+timers such as “set a five minute timer” and “start a timer for one hour and ten
+minutes called pasta” use the existing durable scheduler and room speaker binding.
+Bare “Stop” uses the same ringing-first tool as the AI. Announcements retain the
+existing recording sentence trigger. Ambiguous timers, alarm requests, music,
+questions and follow-up choices pass to the original AI with their full context.
+Failures after dispatch are not retried through the AI.
+
+Rollback: first select the original shared AI in the pipeline, keeping local
+preference off, then disable fast commands. Schedules and pairings are unchanged.
+Text/fixture checks do not establish physical ringing or acoustic response time.
 
 1. Configure satellite devices in HA areas. Use Household Voice **Assistant
    speakers** dropdowns only when the automatic room choice is ambiguous or you
