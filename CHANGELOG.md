@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.3.26
+
+- Add opt-in fast commands with strict native device intents, shared durable timers and ringing-first Stop.
+- Preserve the existing shared AI agent, request identity, conversation context and follow-up choices for other requests.
+- Keep Core local preference off to prevent native satellite timers bypassing household speaker routing.
+
 ## 0.3.25
 
 - Replace assistant-specific speaker settings with Room speakers: choose a room and its default speaker, including rooms without assistants.
@@ -7,7 +13,7 @@
 - Migrate unambiguous legacy preferences by room; conflicting preferences require a choice. Missing saved speakers never silently fall back.
 
 
-## 0.3.25
+## 0.3.24
 
 Music routing now honors an explicit room or registered speaker name from an
 authenticated app request without requiring a voice satellite. With no explicit

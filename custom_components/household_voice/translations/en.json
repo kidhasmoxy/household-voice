@@ -244,10 +244,12 @@
       },
       "shared_assistant": {
         "title": "Shared assistant and recording",
-        "description": "Expose household tools to your shared Home Assistant Assist agent. Native recording asks “What’s the announcement?” and records the answer using the existing shared pipeline. No dedicated recording STT profile or alignment server is needed. Pipeline and agent selection are managed in Home Assistant Voice assistants.",
+        "description": "Expose household tools to your shared Home Assistant Assist agent. Native recording asks “What’s the announcement?” and records the answer using the existing shared pipeline. No dedicated recording STT profile or alignment server is needed. Pipeline and agent selection are managed in Home Assistant Voice assistants. Fast commands use the existing household timer and Stop tools and Home Assistant device intents. Select Household Voice fast commands in your voice pipeline and keep Prefer handling commands locally off.",
         "data": {
           "assist_tools_enabled": "Provide native household capability tools",
-          "native_recording_enabled": "Record announcements on a shared voice pipeline (preview)"
+          "native_recording_enabled": "Record announcements on a shared voice pipeline (preview)",
+          "local_commands_enabled": "Use fast local commands",
+          "local_commands_agent": "Shared AI agent for other requests"
         }
       },
       "alarm_defaults": {

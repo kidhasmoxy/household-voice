@@ -21,6 +21,9 @@ _ACTIVE_ROUTERS = ContextVar('household_voice_active_conversation_routers', defa
 
 
 async def async_setup_entry(hass, entry, async_add_entities):
+    if entry.options.get('local_commands_enabled') is True:
+        from .local_conversation import HouseholdLocalConversation
+        async_add_entities([HouseholdLocalConversation(entry, hass.data[DOMAIN][entry.entry_id])])
     if entry.options.get('conversation_fallback_agent'):
         async_add_entities([HouseholdConversationRouter(entry, hass.data[DOMAIN][entry.entry_id])])
 

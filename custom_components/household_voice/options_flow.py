@@ -94,15 +94,25 @@ class HouseholdVoiceOptionsFlow(config_entries.OptionsFlow):
         if user_input is not None:
             enabled = user_input.get('assist_tools_enabled')
             native = user_input.get('native_recording_enabled',self.draft['native_recording_enabled'])
-            if type(enabled) is not bool or type(native) is not bool:
+            fast = user_input.get('local_commands_enabled', self.draft['local_commands_enabled'])
+            if type(enabled) is not bool or type(native) is not bool or type(fast) is not bool:
                 errors['base'] = 'invalid_enabled'
             else:
-                self.draft['assist_tools_enabled'] = enabled
-                self.draft['native_recording_enabled'] = native
-                return await self.async_step_init()
+                try:
+                    agent = conversation_fallback(user_input.get('local_commands_agent', self.draft['local_commands_agent']), self._registry()[0])
+                    if fast and (not enabled or not agent):
+                        raise RoutingError('invalid_conversation_fallback')
+                except RoutingError as exc:
+                    errors['base'] = str(exc)
+                else:
+                    self.draft.update(assist_tools_enabled=enabled, native_recording_enabled=native,
+                                      local_commands_enabled=fast, local_commands_agent=agent)
+                    return await self.async_step_init()
         return self._form('shared_assistant', {
             vol.Required('assist_tools_enabled', default=self.draft['assist_tools_enabled']): BooleanSelector(),
             vol.Optional('native_recording_enabled', default=self.draft['native_recording_enabled']): BooleanSelector(),
+            vol.Optional('local_commands_enabled', default=self.draft['local_commands_enabled']): BooleanSelector(),
+            vol.Optional('local_commands_agent'): EntitySelector(EntitySelectorConfig(domain='conversation')),
         }, errors, user_input or self.draft)
 
     async def async_step_knowledge_family(self, user_input=None):

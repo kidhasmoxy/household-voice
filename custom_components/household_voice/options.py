@@ -38,6 +38,8 @@ def initial_options(existing):
     result.setdefault("phone_presence_policy", "recent_five_minutes")
     result.setdefault("conversation_fallback_agent", "")
     result.setdefault("assist_tools_enabled", False)
+    result.setdefault("local_commands_enabled", False)
+    result.setdefault("local_commands_agent", "")
     result.setdefault("native_recording_enabled", False)
     result.setdefault("single_turn_announcements_enabled", False)
     result.setdefault("announcement_alignment_url", "")
@@ -242,6 +244,11 @@ def validate_options(data, entities, devices, services):
         raise RoutingError(str(exc)) from None
     result.update(alignment_options(result))
     result["conversation_fallback_agent"] = conversation_fallback(result["conversation_fallback_agent"], entities)
+    if type(result['local_commands_enabled']) is not bool:
+        raise RoutingError('invalid_enabled')
+    result['local_commands_agent'] = conversation_fallback(result['local_commands_agent'], entities)
+    if result['local_commands_enabled'] and (not result['assist_tools_enabled'] or not result['local_commands_agent']):
+        raise RoutingError('invalid_conversation_fallback')
     result.update(feature_options(result))
     if result['native_recording_enabled'] and not all(result[key] for key in
             ('assist_tools_enabled','live_actions_enabled','announcements_enabled')):
