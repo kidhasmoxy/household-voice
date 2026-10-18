@@ -444,6 +444,7 @@ class _GuardedServices:
         self.native_timeout_phase = None
         self.apple_links = {}
         self.web_music_request = False
+        self.timings = {}
     async def async_try_native_web(self, plan, request):
         from .apple_web import try_native
         return await try_native(self, plan, request, resolve=_resolve, entity_registry=er,
@@ -454,6 +455,7 @@ class _GuardedServices:
         return await self.async_call('music_assistant', 'search', data,
             blocking=True, return_response=True, context=session.ha_context)
     async def _native_response(self, operation):
+        phase, started = self.phase, time.perf_counter()
         try:
             result = await operation
             # A successful fallback must not inherit an earlier lookup timeout.
@@ -462,6 +464,8 @@ class _GuardedServices:
         except TimeoutError:
             self.native_timeout_phase = self.phase
             raise
+        finally:
+            self.timings[phase] = self.timings.get(phase, 0.0) + time.perf_counter() - started
     def has_service(self, domain, service):
         return self.api.hass.services.has_service(domain, service)
     async def async_call(self, domain, service, data, **kwargs):
@@ -472,7 +476,8 @@ class _GuardedServices:
                 and self.api.entry.options.get('apple_web_search_enabled') is True):
             from .apple_web import discover, search_web
             async def search(query):
-                return await search_web(self.api.hass, self.api.entry, query)
+                self.phase = 'web_search'
+                return await self._native_response(search_web(self.api.hass, self.api.entry, query))
             async def lookup(uri):
                 return await self._content_read('music/item_by_uri', uri=uri)
             try:
@@ -556,7 +561,13 @@ class _GuardedServices:
                     or not any(isinstance(row, dict) and row.get('available') is True
                         and row.get('provider_instance') == provider and row.get('item_id') == item_id for row in mappings)):
                 return False
-        return raw.get('available') is not False and content_allowed(raw, _content_settings(self.api.entry.options)[1])
+        allowed = raw.get('available') is not False and (not _content_settings(self.api.entry.options)[0]
+            or content_allowed(raw, _content_settings(self.api.entry.options)[1]))
+        if allowed:
+            from .apple_web import native_track_link
+            if link := native_track_link(raw, uri):
+                self.apple_links[uri] = link
+        return allowed
 
     async def async_read_collection_tracks(self, uri, kind):
         if kind not in ('album', 'playlist'):
@@ -948,6 +959,7 @@ class MediaTool(llm.Tool):
         uncertain = _result("error", "media_result_uncertain")
         self.api.pending[call_key] = (signature, asyncio.get_running_loop().create_future())
         services = None
+        started = time.perf_counter()
         try:
             async with self.api.call_lock:
                 if choice_row is not None:
@@ -1034,6 +1046,12 @@ class MediaTool(llm.Tool):
                 result = _result("error", "media_unavailable_or_result_uncertain")
             error = True
         self.api.complete_call(call_key, signature, result, error)
+        coordinator = getattr(self.api.hass, 'data', {}).get('household_voice', {}).get(self.api.entry.entry_id)
+        if coordinator is not None:
+            coordinator.media_performance = {'status':result.get('status'),
+                'playback_kind':result.get('playback_kind'),
+                'total_ms':round((time.perf_counter() - started) * 1000),
+                'phases_ms':{key:round(value * 1000) for key,value in services.timings.items()} if services else {}}
         return tool_result(llm, data=result, error=error)
 
 

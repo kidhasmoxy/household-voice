@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.3.30
+
+- Preserve Apple album links with a track ID for compatibility with older Sonos share-link parsers.
+- Permit native Sonos playback of individually verified tracks with content filtering enabled; filtered collections retain their existing track-by-track path.
+- Expose the last music tool's phase timings in diagnostic sensor attributes without storing queries or catalog metadata.
+
 ## 0.3.29
 
 - Preserve the exact selected artist when a library record contains multiple IDs on the same music provider. Verify the matching catalog mapping before reading top tracks.
