@@ -1066,8 +1066,10 @@ class MediaLLMTests(unittest.IsolatedAsyncioTestCase):
             calls.append((command, kwargs))
             if command == 'music/verify_item_uri': return True
             if command == 'music/search':
-                artist = item('Fleetwood Mac','artist','fixture://artist/7')
-                artist['provider_mappings'] = [{'provider_instance':'fixture','available':True,'item_id':'7'}]
+                artist = item('Fleetwood Mac','artist','library://artist/42')
+                artist['provider_mappings'] = [
+                    {'provider_instance':'fixture','available':True,'item_id':'personal-library-id'},
+                    {'provider_instance':'fixture','available':True,'item_id':'7'}]
                 return {'artists': [artist]}
             track = item('Fixture Song', 'track', 'fixture://track/9')
             track['provider_mappings'] = [{'provider_instance':'fixture','available':True}]
