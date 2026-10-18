@@ -126,7 +126,7 @@ async def async_setup(hass, config):
 
 
 async def async_setup_entry(hass, entry):
-    if 'room_speaker_defaults' not in entry.options:
+    if entry.options and 'room_speaker_defaults' not in entry.options:
         from .area_registry import collect_pairings
         defaults=collect_pairings(hass,entry.options,read_only=True)['room_speaker_defaults']
         hass.config_entries.async_update_entry(entry,options={**entry.options,'room_speaker_defaults':defaults})
