@@ -362,26 +362,28 @@ async def real_ha_options_smoke():
             knowledge_form = await step({'next_step_id':'knowledge_family'})
             assert 'fixture-knowledge-secret' not in repr(knowledge_form['data_schema'].schema)
             assert (await step({**knowledge_values,'knowledge_brave_api_key':'','knowledge_reset_prompt':True}))['type'] == 'menu'
-            assistant_form=await step({'next_step_id':'assistant_pairing'})
-            assert assistant_form['step_id']=='assistant_pairing'
+            empty_room=ar.async_get(hass).async_create('Fixture study without assistant')
+            assistant_form=await step({'next_step_id':'room_speakers'})
+            assert assistant_form['step_id']=='room_speakers'
             assistant_selector=next(iter(assistant_form['data_schema'].schema.values()))
             assert assistant_selector.config['mode']=='dropdown'
             assert not assistant_selector.config.get('custom_value',False)
-            assert 'Fixture kitchen' in assistant_selector.config['options'][0]['label']
-            selection=await step({'assistant':satellite_entity.entity_id})
-            assert selection['step_id']=='assistant_speaker'
-            assert selection['description_placeholders']['area']=='Fixture kitchen'
+            assert any(row['value']==empty_room.id for row in assistant_selector.config['options'])
+            assert any('Fixture kitchen' in row['label'] for row in assistant_selector.config['options'])
+            selection=await step({'room':area.id})
+            assert selection['step_id']=='room_speaker'
+            assert selection['description_placeholders']['room']=='Fixture kitchen'
             speaker_selector=next(iter(selection['data_schema'].schema.values()))
             assert speaker_selector.config['mode']=='dropdown'
             assert not speaker_selector.config.get('custom_value',False)
-            assert any(row['value']=='auto' and 'Fixture kitchen' in row['label'] for row in speaker_selector.config['options'])
+            assert any(row['value']=='auto' for row in speaker_selector.config['options'])
             try:
                 await step({'speaker':'media_player.invented'})
             except InvalidData:
                 pass
             else:
                 raise AssertionError('Pairing selector accepted an invented speaker ID')
-            assert (await step({'speaker':'auto'}))['type']=='menu'
+            assert (await step({'speaker':music.entity_id}))['type']=='menu'
             alignment_form = await step({'next_step_id':'single_turn_announcements'})
             assert alignment_form['step_id'] == 'single_turn_announcements'
             secret_field = next(value for key,value in alignment_form['data_schema'].schema.items() if str(key)=='announcement_alignment_api_key')
@@ -435,7 +437,7 @@ async def real_ha_options_smoke():
             assert entry.options["live_actions_enabled"] is True and entry.options['media_enabled'] is True
             assert entry.options['assist_tools_enabled'] is True
             assert entry.options['single_turn_announcements_enabled'] is True
-            assert entry.options['assistant_speaker_overrides'][satellite_entity.entity_id]=='auto'
+            assert entry.options['room_speaker_defaults'][area.id]==music.entity_id
             assert entry.options['announcement_alignment_api_key'] == 'fixture-secret'
             from custom_components.household_voice.knowledge_policy import DEFAULT_PROMPT
             assert entry.options['knowledge_enabled'] is True

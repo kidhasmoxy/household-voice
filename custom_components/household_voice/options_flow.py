@@ -17,6 +17,9 @@ class HouseholdVoiceOptionsFlow(config_entries.OptionsFlow):
     def _ensure_draft(self):
         if not hasattr(self, "draft"):
             self.draft = initial_options(self.config_entry.options)
+            if "room_speaker_defaults" not in self.draft:
+                from .area_registry import collect_pairings
+                self.draft["room_speaker_defaults"] = collect_pairings(self.hass,self.draft,read_only=True)["room_speaker_defaults"]
 
     def _registry(self):
         entities = {}
@@ -57,9 +60,9 @@ class HouseholdVoiceOptionsFlow(config_entries.OptionsFlow):
         self._ensure_draft()
         if self.draft['assist_tools_enabled']:
             return self.async_show_menu(step_id='init', menu_options=[
-                'announcements', 'assistant_pairing', 'features', 'shared_assistant',
+                'announcements', 'room_speakers', 'features', 'shared_assistant',
                 'knowledge_family', 'phone', 'media', 'music_content', 'alarm_defaults', 'maintenance', 'review'])
-        return self.async_show_menu(step_id="init", menu_options=["announcements", "assistant_pairing", "features", "shared_assistant", "conversation_routing", "knowledge_family", "single_turn_announcements", "phone", "satellite", "media", "music_content", "alarms", "capture", "test_pairing", "audio_recovery", "native_audio_recovery", "remove", "review"])
+        return self.async_show_menu(step_id="init", menu_options=["announcements", "room_speakers", "features", "shared_assistant", "conversation_routing", "knowledge_family", "single_turn_announcements", "phone", "satellite", "media", "music_content", "alarms", "capture", "test_pairing", "audio_recovery", "native_audio_recovery", "remove", "review"])
 
     async def async_step_maintenance(self, user_input=None):
         return self.async_show_menu(step_id='maintenance', menu_options=[
@@ -152,49 +155,68 @@ class HouseholdVoiceOptionsFlow(config_entries.OptionsFlow):
             vol.Optional('knowledge_clear_api_key', default=False): BooleanSelector(),
         }, errors, values)
 
-    async def async_step_assistant_pairing(self,user_input=None):
+    async def async_step_room_speakers(self,user_input=None):
         self._ensure_draft()
         from .area_registry import collect_pairings
-        discovery=collect_pairings(self.hass,self.draft)
-        pairings=discovery['assistants']
-        areas={area['id']:area['name'] for area in discovery['areas']}
+        discovery=collect_pairings(self.hass,self.draft,read_only=True)
         errors={}
+        rooms={row['id']:row['name'] for row in discovery['areas']}
         if user_input is not None:
-            selected=user_input.get('assistant')
-            if selected not in pairings: errors['base']='invalid_mapping'
+            selected=user_input.get('room')
+            if selected not in rooms: errors['base']='invalid_mapping'
             else:
-                self.pairing_assistant=selected
-                return await self.async_step_assistant_speaker()
-        choices=[{'value':identifier,'label':f"{areas.get(row['area_id'],'No Home Assistant room')} — {row['name']} → {row['speaker_name'] or 'Built-in speaker / choose a default'}"}
-                 for identifier,row in pairings.items()]
+                self.speaker_room=selected
+                return await self.async_step_room_speaker()
+        choices=[]
+        for identifier,name in rooms.items():
+            selected=self.draft['room_speaker_defaults'].get(identifier,'auto')
+            label={'auto':'Automatic',None:'Built-in assistant speaker','conflict':'Choose a default'}.get(selected)
+            if label is None: label=discovery['speaker_names'].get(selected,selected)
+            choices.append({'value':identifier,'label':f'{name} — {label}'})
         choices.sort(key=lambda item:item['label'].casefold())
-        return self._form('assistant_pairing',{
-            vol.Required('assistant'):SelectSelector(SelectSelectorConfig(options=choices,mode='dropdown')),
+        return self._form('room_speakers',{
+            vol.Required('room'):SelectSelector(SelectSelectorConfig(options=choices,mode='dropdown')),
         },errors,user_input)
 
-    async def async_step_assistant_speaker(self,user_input=None):
+    async def async_step_room_speaker(self,user_input=None):
+        self._ensure_draft()
         from .area_registry import collect_pairings
-        pairings=collect_pairings(self.hass,self.draft)
-        row=pairings['assistants'].get(self.pairing_assistant)
-        if row is None: return await self.async_step_assistant_pairing()
-        area=next((item['name'] for item in pairings['areas'] if item['id']==row['area_id']),'No Home Assistant room')
-        choices=[{'value':'auto','label':f'Automatic — suitable speaker in {area}'},
-                 {'value':'none','label':'No paired speaker — use the assistant’s built-in speaker for alarms and timers'}]
-        choices += [{'value':item['entity_id'],'label':item['name']+(' (unavailable)' if not item['available'] else '')} for item in row['choices']]
-        # Preserve a deliberate cross-area or currently unavailable exact override.
-        if row.get('speaker_id') and row['speaker_id'] not in {item['value'] for item in choices}:
-            choices.append({'value':row['speaker_id'],'label':f"{row['speaker_name']} (current explicit choice)"})
+        discovery=collect_pairings(self.hass,self.draft,read_only=True)
+        rooms={row['id']:row['name'] for row in discovery['areas']}
+        if self.speaker_room not in rooms: return await self.async_step_room_speakers()
+        choices=[{'value':'auto','label':'Automatic — use the sole suitable speaker in this room'},
+                 {'value':'none','label':'No external default — use each assistant’s built-in speaker for alarms and timers'}]
+        # MA is the playback transport. Proven native aliases are not offered twice.
+        candidates=[]
+        seen=set()
+        for identifier,output in discovery['outputs'].items():
+            if not identifier.startswith('media_player.'): continue
+            physical=tuple(output['physical_aliases'])
+            if physical in seen: continue
+            seen.add(physical)
+            label=discovery['speaker_names'].get(identifier,identifier)
+            label+=f" — {rooms.get(output['area_id'],'Unknown room')}"
+            if not output['available']: label+=' (unavailable)'
+            candidates.append({'value':identifier,'label':label})
+        choices+=sorted(candidates,key=lambda item:item['label'].casefold())
+        current=self.draft['room_speaker_defaults'].get(self.speaker_room,'auto')
+        if current not in (None,'auto','conflict') and current not in {item['value'] for item in choices}:
+            choices.append({'value':current,'label':f'{current} (saved speaker unavailable)'})
         errors={}
         if user_input is not None:
             choice=user_input.get('speaker')
             if choice not in {item['value'] for item in choices}: errors['base']='invalid_mapping'
             else:
-                self.draft['assistant_speaker_overrides'][self.pairing_assistant]=None if choice=='none' else choice
+                self.draft['room_speaker_defaults'][self.speaker_room]=None if choice=='none' else choice
                 return await self.async_step_init()
-        current=self.draft['assistant_speaker_overrides'].get(self.pairing_assistant,row['speaker_id'] if row['selection']=='manual' else 'auto')
-        return self._form('assistant_speaker',{
-            vol.Required('speaker',default=current or 'none'):SelectSelector(SelectSelectorConfig(options=choices,mode='dropdown')),
-        },errors,user_input,{'assistant':row['name'],'area':area,'status':row['status'].replace('_',' ')})
+        suggested=user_input or ({'speaker':current or 'none'} if current!='conflict' else {})
+        return self._form('room_speaker',{
+            vol.Required('speaker'):SelectSelector(SelectSelectorConfig(options=choices,mode='dropdown')),
+        },errors,suggested,{'room':rooms[self.speaker_room]})
+
+    async def async_step_assistant_pairing(self,user_input=None):
+        # Older open links lead to the room UI, never to an assistant override.
+        return await self.async_step_room_speakers()
 
     async def async_step_single_turn_announcements(self, user_input=None):
         self._ensure_draft()

@@ -70,13 +70,13 @@
           "audio_recovery": "Recover speaker after uncertain audio",
           "conversation_routing": "Conversation routing",
           "single_turn_announcements": "Single-turn announcements",
-          "assistant_pairing": "Assistant speakers",
           "knowledge_family": "Knowledge and family settings",
           "native_audio_recovery": "Recover built-in speaker after uncertain audio",
           "shared_assistant": "Shared assistant and recording",
           "alarm_defaults": "Alarm volume and fallback speakers",
           "maintenance": "Maintenance",
-          "music_content": "Music content"
+          "music_content": "Music content",
+          "room_speakers": "Room speakers"
         }
       },
       "announcements": {
@@ -217,20 +217,6 @@
           "announcement_alignment_clear_api_key": "Clear the saved API key"
         }
       },
-      "assistant_pairing": {
-        "title": "Assistant speakers",
-        "description": "Rooms come from Home Assistant. A room with one suitable Music Assistant speaker pairs automatically; when there are several, choose a default below. Existing choices stay saved. No device IDs or YAML are needed. Finish with Review and save.",
-        "data": {
-          "assistant": "Assistant in its Home Assistant room"
-        }
-      },
-      "assistant_speaker": {
-        "title": "Speaker for {assistant}",
-        "description": "Home Assistant room: {area}. Current status: {status}. Automatic follows this room; choose a speaker to set a default, or No paired speaker for built-in alarm and timer audio. In the native-conversation beta, replies stay on the assistant while paired speakers handle music, books, announcements, alarms and timers. This selection does not move existing schedules or change broadcast defaults. Finish with Review and save.",
-        "data": {
-          "speaker": "Default speaker"
-        }
-      },
       "knowledge_family": {
         "title": "Knowledge and family settings",
         "description": "Family-friendly knowledge uses your existing local model with household tools disabled. Search uses Brave strict SafeSearch and only the domains below; questions, including health questions, go to Brave and your local model. Avoid sharing personal or identifying details. Source excerpts are stored locally and may reveal the topic. They are reused for up to six hours; expired cache records are removed on the next search. No new subscription is created. Search excerpts and AI answers can be incomplete or wrong, and content screening is not perfect. Non-graphic health, body and puberty education remains available. A parent can edit the style prompt; fixed safety and tool restrictions still apply. Reset restores the default prompt. Blank credentials reuse one unambiguous existing Brave configuration; saved keys are never shown. Save through Review and save; this form does not play audio or query providers.",
@@ -290,6 +276,20 @@
           "block_unrated_tracks": "Also block tracks without a content rating (when filtering is on)",
           "apple_web_search_enabled": "Find music using Apple Music web results (experimental)",
           "apple_web_native_enabled": "Try direct Sonos playback for web results (experimental)"
+        }
+      },
+      "room_speakers": {
+        "title": "Room speakers",
+        "description": "Choose a room to set its default speaker. All assistants in that room inherit it.",
+        "data": {
+          "room": "Room"
+        }
+      },
+      "room_speaker": {
+        "title": "Default speaker for {room}",
+        "description": "Used for music, alarms and timers from assistants in this room. An explicitly named music speaker takes priority. Save changes on the Review and save page.",
+        "data": {
+          "speaker": "Default speaker"
         }
       }
     },

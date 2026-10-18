@@ -213,6 +213,26 @@ class MediaLLMTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(module._resolve(self.hass,self.entry,self.context,'Office Desk')[1]['music_player'],other)
             self.assertEqual(module._resolve(self.hass,self.entry,self.context)[1]['music_player'],PLAYER)
 
+    def test_room_default_without_assistant_and_explicit_speaker_override(self):
+        pairings, collector = self.auto_area_fixture()
+        other = 'media_player.other'
+        self.hass.entities.values[other] = types.SimpleNamespace(platform='music_assistant',
+            config_entry_id='ma-entry', disabled_by=None, name='Office Desk')
+        pairings['outputs'][other] = {'area_id':'current-area','available':True,'physical_aliases':[other]}
+        pairings['assistants'] = {}
+        pairings['room_speaker_defaults'] = {'current-area':PLAYER}
+        with patch.object(collector, 'collect_pairings', return_value=pairings):
+            first = module._resolve(self.hass,self.entry,self.context)
+            self.assertEqual(first[1]['music_player'],PLAYER)
+            self.assertEqual(module._resolve(self.hass,self.entry,self.context,'Office Desk')[1]['music_player'],other)
+            pairings['room_speaker_defaults']['current-area'] = other
+            changed = module._resolve(self.hass,self.entry,self.context)
+            self.assertEqual(changed[1]['music_player'],other)
+            self.assertNotEqual(first[2],changed[2])
+            pairings['room_speaker_defaults']['current-area'] = 'media_player.removed'
+            with self.assertRaises(module.MediaConfigurationError):
+                module._resolve(self.hass,self.entry,self.context)
+
     async def test_group_member_routes_play_and_pause_to_current_leader(self):
         leader, players = self.grouped_fixture()
         self.entry.options.update(live_actions_enabled=True, media_enabled=True)
