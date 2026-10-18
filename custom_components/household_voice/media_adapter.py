@@ -101,7 +101,7 @@ def _item(raw, expected=None, depth=0):
                 aliases=(name,) if title != name else (), available=available, explicit=explicit_rating(raw))
 
 
-def _provider_item(raw, kind, provider):
+def _provider_item(raw, kind, provider, *, expected_item_id=None):
     """Bind a returned item to an available mapping on one authorized instance.
 
     MA top-tracks resolves provider tracks to library equivalents. Library URIs
@@ -113,7 +113,8 @@ def _provider_item(raw, kind, provider):
     if not isinstance(mappings, list) or len(mappings) > 32:
         raise MediaAdapterError('Unverified provider mapping')
     available = [mapping for mapping in mappings if isinstance(mapping, dict)
-                 and mapping.get('provider_instance') == provider and mapping.get('available') is True]
+                 and mapping.get('provider_instance') == provider and mapping.get('available') is True
+                 and (expected_item_id is None or mapping.get('item_id') == expected_item_id)]
     if not available:
         return None
     mapping = available[0]
@@ -299,7 +300,11 @@ class MusicAssistantAdapter:
                 if normalize(original['title']) != normalize(selected['title']):
                     continue
                 for provider in providers:
-                    parsed = _provider_item(raw, 'artist', provider)
+                    # A library artist may have both personal-library and catalog
+                    # IDs on the same provider. Reauthorize the selected exact ID,
+                    # not whichever mapping happens to be listed first.
+                    parsed = _provider_item(raw, 'artist', provider,
+                        expected_item_id=match[3] if match[1] != 'library' else None)
                     if parsed is not None:
                         same_artist = (match[1] != 'library' and
                             (original['uri'] == selected['uri'] or parsed['uri'] == selected['uri']))

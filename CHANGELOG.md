@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.3.29
+
+- Preserve the exact selected artist when a library record contains multiple IDs on the same music provider. Verify the matching catalog mapping before reading top tracks.
+
 ## 0.3.28
 
 - Answer current-time requests through Home Assistant's native clock intent without waiting for the shared AI agent.
