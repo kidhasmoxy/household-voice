@@ -307,3 +307,7 @@ bugs at [GitHub issues](https://github.com/kidhasmoxy/household-voice/issues).
 ### Default speakers by room
 
 Open **Settings → Devices & services → Household Voice → Configure → Room speakers**. Choose a room, choose its default speaker, then use **Review and save**. All assistants in that room inherit the default for music, alarms and timers. Rooms without assistants can also have a default. An explicitly named music speaker takes priority. Automatic uses the sole suitable room speaker; conflicting migrated choices require selection.
+
+### Fast alarm snooze
+
+Say "snooze" or "snooze my alarm" for nine minutes, or "snooze for ten minutes". Only ringing alarms are eligible. Multiple matches prompt for a name or number, handled locally. Durations must be positive and at most one hour. Requires the existing fast-command adapter.

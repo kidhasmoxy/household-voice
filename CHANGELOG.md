@@ -1,3 +1,8 @@
+## 0.3.32
+
+- Handle alarm snooze locally without model inference, with a nine-minute default and explicit durations up to one hour.
+- Reuse ringing-only selection, trusted assistant identity, revision checks and duplicate-request protection; resolve multiple ringing alarms locally.
+
 # v0.3.31
 
 Route complete media and sleep-story requests through the deterministic adapter. Resolve exact saved stories in the configured user library before streaming searches; retain ambiguity, content filtering, ordered playback and conversation-bound choices. Route common time/date wording through native HA intents.

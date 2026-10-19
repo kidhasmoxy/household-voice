@@ -139,10 +139,13 @@ class ScheduleControl:
                 return _reply('That timer selection has expired. Please repeat the complete change you want.')
         return response
 
-    async def route(self,client,entry_id,user_input,*,trusted,conversation_id):
+    async def route(self,client,entry_id,user_input,*,trusted,conversation_id,snooze_only=False):
         async with self.lock:
             key=(entry_id,user_input.device_id,getattr(user_input.context,'user_id',None),user_input.conversation_id)
             pending=self.pending.get(key)
+            if snooze_only and not (re.match(r'^snooze\b',normalize(user_input.text,user_input.language) or '')
+                    or pending is not None and pending.edit.operation=='snooze'):
+                return None
             handled=(bare_stop(user_input.text,user_input.language)
                 or schedule_edit(user_input.text,user_input.language) is not None
                 or pending is not None and pending.expires>self.clock())
@@ -220,6 +223,8 @@ class ScheduleControl:
             edit=pending.edit
         if edit.operation is None:
             self.pending.pop(key,None)
+            if edit.kind=='alarm':
+                return _reply('Say snooze my alarm, or snooze my alarm for a duration up to one hour.')
             return _reply('Please say which timer to change and the duration, for example, set the pasta timer to five minutes.')
         try:
             snapshot=await client.schedules()
@@ -251,6 +256,8 @@ class ScheduleControl:
             return self._ask(key,conversation_id,edit,choices,'That schedule changed. ',rooms)
         except Exception:
             return _reply('I could not confirm that change. Please check the timers and alarms page before trying again.')
+        if edit.operation=='snooze':
+            return _reply(f'{selected.label} alarm snoozed for {edit.seconds/60:g} minutes.')
         return _reply(f'{selected.label} {selected.kind} updated.' if edit.operation!='dismiss'
             else f'{selected.label} {selected.kind} dismissed.')
     def _ask(self,key,conversation_id,edit,choices,prefix='',rooms=None):
