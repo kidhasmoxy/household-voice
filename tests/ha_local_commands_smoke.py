@@ -112,13 +112,45 @@ async def verify(hass):
         coordinator.broadcast_runtime.async_start.assert_awaited_once()
         await ask('turn on fixture lamp')
         assert lamp.calls == 1 and not fallback.calls
-        for text in ['what time is it', 'what is the time', 'tell me the time']:
+        for text in ['what time is it', 'what is the time', 'tell me the time',
+                     'Could you please tell me the time?', "What's today's date?", 'what day is it today']:
             result = await ask(text)
             assert not result.response.error_code
             assert result.response.speech['plain']['speech']
             assert not fallback.calls, 'Current time must never wait for the AI'
+        # Actual media API boundary remains inert, but exercise the real router
+        # path, scope, request arguments and truthful acknowledgement.
+        media_api = SimpleNamespace(async_call_tool=AsyncMock(return_value={
+            'status': 'action_accepted', 'executed': True,
+            'announcement': 'Playing The Magic Hotel.'}))
+        with patch.object(llm, 'async_get_api', return_value=media_api) as get_api:
+            count = len(fallback.calls)
+            result = await ask('play the sleep story The Magic Hotel')
+            assert len(fallback.calls) == count
+            assert result.response.speech['plain']['speech'] == 'Playing The Magic Hotel.'
+            assert media_api.async_call_tool.call_args.args[0].tool_args == {
+                'kind': 'sleep_story', 'query': 'The Magic Hotel', 'selection_mode': 'exact'}
+            assert get_api.call_args.args[2].device_id == device.id
+            assert result.conversation_id == '01TEST00000000000000000002'
+            await ask('play my sleep stories')
+            assert media_api.async_call_tool.call_args.args[0].tool_args == {
+                'kind': 'sleep_stories', 'selection_mode': 'exact'}
+            media_api.async_call_tool.return_value = {'status': 'clarify', 'question': 'Which version: 1 or 2?',
+                'choices': [{'choice': 1}, {'choice': 2}]}
+            result = await ask('play the sleep story The Magic Hotel')
+            assert result.response.speech['plain']['speech'] == 'Which version: 1 or 2?'
+            assert result.continue_conversation
+            assert result.conversation_id == '01TEST00000000000000000002'
+            media_api.async_call_tool.side_effect = TimeoutError()
+            result = await ask('play my sleep stories')
+            assert 'could not confirm' in result.response.speech['plain']['speech']
+            assert len(fallback.calls) == count
+            calls = media_api.async_call_tool.await_count
+            await ask('play my sleep stories', source='unknown')
+            assert media_api.async_call_tool.await_count == calls
         for text in ['set an alarm for seven', 'set a timer for five minutes in the bedroom',
-                     'play jazz', 'the second one', 'add five minutes to my timer']:
+                     'play jazz for an hour', 'the second one', 'add five minutes to my timer',
+                     'what time is it in London', 'play my sleep stories on shuffle']:
             result = await ask(text)
             assert result.continue_conversation
             assert result.conversation_id == '01TEST00000000000000000001'

@@ -6,13 +6,14 @@ pipeline must keep prefer_local_intents off so Core cannot intercept timers.
 import hashlib
 import json
 from contextvars import ContextVar
+from dataclasses import replace
 
 from homeassistant.components import conversation
 from homeassistant.components.conversation.chat_log import ChatLog
 from homeassistant.helpers import device_registry as dr, entity_registry as er, intent, llm
 from homeassistant.util import ulid as ulid_util
 
-from .local_commands import exclude_intent, timer_request
+from .local_commands import clock_request, exclude_intent, timer_request
 from .schedule_language import bare_stop
 
 _ACTIVE = ContextVar('household_voice_local_active', default=False)
@@ -89,7 +90,8 @@ class HouseholdLocalConversation(conversation.ConversationEntity):
             # Native strict recognition retains HA exposure and authorization.
             # A reported action error stays local; no automatic second attempt.
             try:
-                response = await conversation.async_handle_intents(self.hass, request,
+                native_request = replace(request, text=text) if (text := clock_request(request.text, request.language)) else request
+                response = await conversation.async_handle_intents(self.hass, native_request,
                     ChatLog(self.hass, request.conversation_id or ulid_util.ulid_now()),
                     intent_filter=exclude_intent)
             except Exception:
@@ -98,6 +100,27 @@ class HouseholdLocalConversation(conversation.ConversationEntity):
                 return conversation.ConversationResult(response=response,
                     conversation_id=request.conversation_id or ulid_util.ulid_now(),
                     continue_conversation=False)
+            # Reuse the exact catalog and room guards, bypassing model inference
+            # for complete playback requests. Unsupported constraints stay intact.
+            from .conversation_router import music_request
+            from .media_llm import _MUSIC_STYLES, _resolve
+            parsed = music_request(request.text, request.language, _MUSIC_STYLES)
+            if parsed is not None:
+                if not self.trusted(request):
+                    return self.reply(request, 'Please use a configured voice assistant.', 'source_required')
+                if target := parsed.get('target_room'):
+                    try:
+                        _resolve(self.hass, self.entry, request.as_llm_context('household_voice'), target)
+                    except Exception:
+                        return await self.fallback(request)
+                from .conversation import HouseholdConversationRouter
+                router = HouseholdConversationRouter(self.entry, self.coordinator)
+                router.hass = self.hass
+                scoped = replace(request, conversation_id=request.conversation_id or ulid_util.ulid_now())
+                result = await router._media_reply(scoped, parsed)
+                # Saved catalog choices are bound to this same conversation.
+                result.conversation_id = scoped.conversation_id
+                return result
             return await self.fallback(request)
         finally:
             _ACTIVE.reset(token)

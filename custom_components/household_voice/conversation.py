@@ -2,6 +2,7 @@
 from contextvars import ContextVar
 import hashlib
 import json
+from dataclasses import replace
 
 from homeassistant.components import conversation
 from homeassistant.helpers import device_registry as dr, entity_registry as er, intent, llm
@@ -102,7 +103,8 @@ class HouseholdConversationRouter(conversation.ConversationEntity):
 
     async def _media_reply(self, user_input, query):
         """Use the registered media API's source/configuration/idempotency guards."""
-        if not self._trusted_source(user_input):
+        user_input = replace(user_input, conversation_id=user_input.conversation_id or ulid_util.ulid_now())
+        if not self._trusted_schedule_source(user_input):
             return self._reply(user_input, 'Use a configured voice assistant to play music in its room.')
         arguments = {'kind':'music', **(query if isinstance(query, dict) else {'query':query})}
         context = user_input.as_llm_context(DOMAIN)
@@ -125,7 +127,9 @@ class HouseholdConversationRouter(conversation.ConversationEntity):
             data = {'status': 'error'}
         speech = music_acknowledgement(data)
         reply = self._reply(user_input, speech)
+        reply.conversation_id = user_input.conversation_id
         if isinstance(data, dict):
+            reply.continue_conversation = data.get('status') == 'clarify' and bool(data.get('choices'))
             evidence = {key: data[key] for key in ('status', 'reason', 'executed',
                 'playback_confirmed', 'retry_automatically', 'playback_dispatch_started',
                 'mutation_dispatch_started', 'timeout_phase',

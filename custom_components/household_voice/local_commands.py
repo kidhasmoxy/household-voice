@@ -9,12 +9,26 @@ LOCAL_INTENTS = frozenset({
     'HassTurnOn', 'HassTurnOff', 'HassLightSet', 'HassGetState',
     'HassClimateSetTemperature', 'HassClimateGetTemperature',
     'HassSetPosition',
-    'HassGetCurrentTime',
+    'HassGetCurrentTime', 'HassGetCurrentDate',
 })
 
 
 def exclude_intent(result):
     return result.intent.name not in LOCAL_INTENTS
+
+
+def clock_request(text, language='en'):
+    """Canonicalize only whole local-clock questions; retain foreign/relative ones."""
+    if not isinstance(text, str) or re.search(r'[\n\r;:"“”]', text):
+        return None
+    value = normalize(text, language)
+    if not value:
+        return None
+    if re.fullmatch(r"(?:(?:tell me|do you know) )?(?:what(?:'s| is) (?:the )?(?:current )?time(?: now)?|what time is it(?: right now| now)?|the (?:current )?time)", value):
+        return 'what time is it'
+    if re.fullmatch(r"(?:(?:tell me|do you know) )?(?:what(?:'s| is) (?:the )?(?:date(?: today)?|day today|today's date)|what (?:day|date) is it(?: today)?|today's date|the date)", value):
+        return 'what is the date'
+    return None
 
 
 def timer_request(text, language='en'):

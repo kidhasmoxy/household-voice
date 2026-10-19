@@ -970,9 +970,19 @@ class MediaLLMTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_default_sleep_playlist_context_factory(self):
         self.services.search_result = search(item("Configured Sleep Playlist", "playlist", "library://playlist/12"), "playlists")
-        result = await self.call(args={"kind": "sleep_stories"})
+        calls = []
+        async def send(command, **kwargs):
+            calls.append((command, kwargs))
+            return self.services.search_result
+        helper = types.ModuleType('homeassistant.components.music_assistant.helpers')
+        helper.get_music_assistant_client = lambda hass, entry: types.SimpleNamespace(send_command=send)
+        with patch.dict(sys.modules, {'homeassistant.components.music_assistant.helpers': helper}):
+            result = await self.call(args={"kind": "sleep_stories"})
         self.assertEqual(result.data["status"], "dry_run")
-        self.assertEqual(self.services.calls[0][2]["name"], "Configured Sleep Playlist")
+        self.assertEqual(calls, [('music/search', {'search_query': 'Configured Sleep Playlist',
+            'media_types': ['playlist'], 'limit': 20, 'providers': ['library'],
+            'user': 'configured-user', 'require_schema': 35})])
+        self.assertEqual(self.services.calls, [])
 
     async def test_original_broad_music_request_selects_relevant_fresh_playlist(self):
         self.context.user_prompt = 'Play some jazz.'
