@@ -79,6 +79,16 @@ class HouseholdLocalConversation(conversation.ConversationEntity):
                 if not self.trusted(request):
                     return self.reply(request, 'Please use a configured voice assistant.', 'source_required')
                 return await self.household_action(request, timer, stop)
+            from .schedule_control import get_schedule_control
+            selection = await get_schedule_control(self.hass).route(
+                self.coordinator.client, self.entry.entry_id, request,
+                trusted=self.trusted(request),
+                conversation_id=request.conversation_id or ulid_util.ulid_now(), snooze_only=True)
+            if selection is not None:
+                result = self.reply(request, selection['speech'], 'snooze')
+                result.conversation_id = selection.get('conversation_id') or result.conversation_id
+                result.continue_conversation = selection['continue_conversation']
+                return result
             # The existing sentence trigger owns announcement recording in the
             # pipeline. Also support direct conversation calls using that exact
             # callback, without reimplementing recording or acknowledgement.

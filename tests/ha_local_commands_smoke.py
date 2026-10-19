@@ -69,7 +69,7 @@ async def verify(hass):
         'assist_tools_enabled': True, 'local_commands_enabled': True,
         'local_commands_agent': fallback.entity_id, 'announcements_enabled': True,
         'native_recording_enabled': True})
-    coordinator = SimpleNamespace(broadcast_runtime=SimpleNamespace(async_start=AsyncMock(return_value={'status':'queued'})))
+    coordinator = SimpleNamespace(client=SimpleNamespace(), broadcast_runtime=SimpleNamespace(async_start=AsyncMock(return_value={'status':'queued'})))
     hass.data['household_voice'] = {entry.entry_id: coordinator}
     router = HouseholdLocalConversation(entry, coordinator)
     assert router.supports_streaming
@@ -108,6 +108,46 @@ async def verify(hass):
         create.return_value = {'status':'stored','audio_delivery':'dry_run'}
         result = await ask('set a five minute timer')
         assert 'will not ring' in result.response.speech['plain']['speech']
+        # Real adapter and durable control, with an inert schedule transport.
+        from copy import deepcopy
+        schedules = []
+        mutations = []
+        async def snapshot():
+            return {'schedules':deepcopy(schedules)}
+        async def mutate(service, payload):
+            assert service == 'command'
+            mutations.append(dict(payload))
+            row = next(row for row in schedules if row['id'] == payload['identifier'])
+            assert payload['expected_revision'] == row['revision']
+            assert payload['operation'] == 'snooze' and row['state'] == 'ringing'
+            row.update(state='active', revision=row['revision']+1)
+            return {'schedule':deepcopy(row)}
+        coordinator.client = SimpleNamespace(schedules=snapshot, mutate=mutate)
+        def alarm(identifier):
+            return {'id':identifier,'kind':'alarm','label':identifier,'source_room':'fixture',
+                    'target_room':'fixture','state':'ringing','revision':1,'due':1000,'remaining':None}
+        schedules.append(alarm('wake'))
+        context = Context()
+        result = await ask('snooze', context=context)
+        assert result.response.speech['plain']['speech'] == 'wake alarm snoozed for 9 minutes.'
+        assert result.response.speech['plain']['extra_data']['household_voice_path'] == 'snooze'
+        assert mutations[-1]['seconds'] == 540 and not fallback.calls
+        await ask('snooze', context=context)
+        assert len(mutations) == 1
+        schedules[:] = [alarm('wake'), alarm('work')]
+        result = await ask('snooze for ten minutes')
+        assert result.continue_conversation and len(mutations) == 1
+        result = await ask('the second one')
+        assert result.response.speech['plain']['speech'] == 'work alarm snoozed for 10 minutes.'
+        assert mutations[-1]['identifier'] == 'work' and mutations[-1]['seconds'] == 600
+        count = len(mutations)
+        await ask('snooze', source='unknown')
+        await ask('snooze for 90 minutes')
+        assert len(mutations) == count and not fallback.calls
+        schedules.clear()
+        result = await ask('snooze')
+        assert 'eligible alarm' in result.response.speech['plain']['speech']
+        assert not fallback.calls
         await ask('broadcast')
         coordinator.broadcast_runtime.async_start.assert_awaited_once()
         await ask('turn on fixture lamp')

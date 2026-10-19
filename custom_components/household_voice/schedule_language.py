@@ -58,6 +58,13 @@ def schedule_edit(text,language='en'):
     value=normalize(text,language)
     if value is None:return None
     if new_timer(text,language):return None
+    match=re.fullmatch(r'snooze(?: (?:the |my |this |that )?(?:ringing )?alarm)?(?: for (.+))?',value)
+    if match:
+        seconds=duration(match[1]) if match[1] else 540
+        return ScheduleEdit('snooze' if seconds is not None and seconds<=3600 else None,
+            kind='alarm',seconds=seconds)
+    if re.match(r'^snooze\b',value):
+        return ScheduleEdit(None,kind='alarm')
     match=re.fullmatch(r'(?:stop|dismiss|silence) (?:the |my |this |that )?(?:ringing )?(alarm|timer)',value)
     if match:return ScheduleEdit('dismiss',match[1])
     match=re.fullmatch(r'(pause|resume|cancel|delete) (?:the |my |this |that )?(?:(.+?) )?timer',value)
