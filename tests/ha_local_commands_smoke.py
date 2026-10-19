@@ -172,6 +172,11 @@ async def verify(hass):
                 'kind': 'sleep_story', 'query': 'The Magic Hotel', 'selection_mode': 'exact'}
             assert get_api.call_args.args[2].device_id == device.id
             assert result.conversation_id == '01TEST00000000000000000002'
+            for wording in ('play the sleep story of the Green Sea', 'play the Green Sea sleep story'):
+                await ask(wording)
+                assert media_api.async_call_tool.call_args.args[0].tool_args == {
+                    'kind': 'sleep_story', 'query': 'the Green Sea', 'selection_mode': 'exact'}
+                assert len(fallback.calls) == count
             await ask('play my sleep stories')
             assert media_api.async_call_tool.call_args.args[0].tool_args == {
                 'kind': 'sleep_stories', 'selection_mode': 'exact'}

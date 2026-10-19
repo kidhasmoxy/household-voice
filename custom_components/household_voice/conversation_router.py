@@ -102,7 +102,13 @@ def music_request(text, language='en', styles=()):
         if shuffle:
             return None
         return {**request, 'kind': 'sleep_stories', 'selection_mode': 'exact'}
-    story = re.fullmatch(r'(?:the )?(sleep|bedtime) story (?:called |named )?(.+)', body, re.I)
+    story = re.fullmatch(r'(?:the )?(sleep|bedtime) story (?:called |named |of )?(.+)', body, re.I)
+    trailing_story = re.fullmatch(r'(.+?) (sleep|bedtime) story', body, re.I)
+    if trailing_story and not story:
+        title = _media_name(trailing_story[1], allow_in=room is not None)
+        if shuffle or title is None:
+            return None
+        return {**request, 'kind': 'sleep_story', 'query': title, 'selection_mode': 'exact'}
     if story:
         title = _media_name(story[2], allow_in=room is not None)
         if shuffle or title is None:

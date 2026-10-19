@@ -24,7 +24,7 @@ from __future__ import annotations
 
 import asyncio
 from copy import deepcopy
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 import hashlib
 import json
 import math
@@ -516,7 +516,24 @@ class MusicAssistantAdapter:
                             and (not request.selected_uri or request.selected_uri.startswith('library://'))
                             and library_reader is not None):
                         response = await library_reader(data)
-                        result = plan(catalog=parse_search(response, data, session, self.bindings, self.clock()))
+                        catalog = parse_search(response, data, session, self.bindings, self.clock())
+                        result = plan(catalog=catalog)
+                        # A saved series-prefixed title is a useful choice, not
+                        # an exact match. Preserve it for explicit confirmation;
+                        # never silently turn a subtitle into playback authority.
+                        if request.kind == 'sleep_story' and result.get('reason') == 'no_exact_catalog_match':
+                            normalize = lambda text: ' '.join(text.casefold().split())
+                            subtitles = tuple(item for item in catalog.items
+                                if ':' in item.title and normalize(item.title.split(':', 1)[1]) == normalize(request.query))
+                            if subtitles:
+                                # Run normal eligibility/content checks before
+                                # offering these, including candidates after the
+                                # first five unrelated search results.
+                                suggestion = plan(catalog=replace(catalog, items=subtitles))
+                                if suggestion.get('choices'):
+                                    result = suggestion
+                                    result.update(reason='saved_story_subtitle_requires_confirmation',
+                                        question='Which saved story did you mean?')
                         library_selected = result.get('reason') != 'no_exact_catalog_match'
                     if not library_selected:
                         response = await self._call('music_assistant', 'search', data, session, response=True)

@@ -1,3 +1,8 @@
+## 0.3.33
+
+- Offer saved series-prefixed sleep-story titles for confirmation when the requested subtitle matches, retaining content filtering and exact playback selection.
+- Recognize named stories before or after “sleep story,” including “sleep story of …”.
+
 ## 0.3.32
 
 - Handle alarm snooze locally without model inference, with a nine-minute default and explicit durations up to one hour.
