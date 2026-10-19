@@ -96,6 +96,18 @@ def music_request(text, language='en', styles=()):
         if not body.casefold().endswith(' on'):
             return None
         body = body[:-3]
+    # Spoken content must retain exact matching and ordered playback. Generic
+    # requests use the room's configured playlist, never a guessed title/URI.
+    if re.fullmatch(r'(?:my |the |some )?(?:sleep|bedtime) stories|a (?:sleep|bedtime) story', body, re.I):
+        if shuffle:
+            return None
+        return {**request, 'kind': 'sleep_stories', 'selection_mode': 'exact'}
+    story = re.fullmatch(r'(?:the )?(sleep|bedtime) story (?:called |named )?(.+)', body, re.I)
+    if story:
+        title = _media_name(story[2], allow_in=room is not None)
+        if shuffle or title is None:
+            return None
+        return {**request, 'kind': 'sleep_story', 'query': title, 'selection_mode': 'exact'}
     # An artist clause constrains a track/album; music/songs by an artist instead
     # selects that artist. Explicit typed categories are never discarded.
     by = re.fullmatch(r'(?P<title>.+?) by (?P<artist>.+)', body, re.I)
@@ -152,6 +164,8 @@ def music_acknowledgement(result):
     if not isinstance(result, dict):
         result = {}
     status, reason = result.get('status'), result.get('reason')
+    if status in ('clarify', 'unavailable') and isinstance(result.get('question'), str) and result['question'].strip():
+        return result['question']
     if status == 'action_accepted' and result.get('executed') is True:
         announcement = result.get('announcement')
         if isinstance(announcement, str) and 0 < len(announcement.strip()) <= 800:

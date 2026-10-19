@@ -103,7 +103,7 @@ def _with_music_selection(arguments, context, operation):
         return arguments
     qualified = qualified_music_request(prompt, language, _MUSIC_STYLES)
     query = ' '.join(arguments.get('query', '').casefold().split())
-    if qualified and qualified.get('media_type') is None:
+    if qualified and qualified.get('kind', 'music') == 'music' and qualified.get('media_type') is None:
         style = qualified['query'].casefold()
         if style in _MUSIC_STYLES and query in (style, style + ' music'):
             return {**arguments, 'query': style, 'selection_mode': 'broad_music'}
@@ -454,6 +454,14 @@ class _GuardedServices:
         self.apple_links = {}
         return await self.async_call('music_assistant', 'search', data,
             blocking=True, return_response=True, context=session.ha_context)
+    async def async_search_spoken_library(self, data):
+        """Search the configured user's saved stories before streaming catalogs."""
+        response = await self._content_read('music/search', scoped=True,
+            search_query=data['name'], media_types=data['media_type'],
+            limit=data['limit'], providers=['library'])
+        if not isinstance(response, dict):
+            raise MediaConfigurationError()
+        return {key: response.get(key, []) for key in GROUPS}
     async def _native_response(self, operation):
         phase, started = self.phase, time.perf_counter()
         try:

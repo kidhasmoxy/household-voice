@@ -510,8 +510,17 @@ class MusicAssistantAdapter:
                     data = dict(lookup['data'])
                     if data.get('config_entry_id')!=session.config_entry_id or data.get('username')!=session.username:
                         raise MediaAdapterError('Wrong catalog scope')
-                    response = await self._call('music_assistant', 'search', data, session, response=True)
-                    result = plan(catalog=parse_search(response, data, session, self.bindings, self.clock()))
+                    library_reader = getattr(self.hass.services, 'async_search_spoken_library', None)
+                    library_selected = False
+                    if (request.kind.startswith('sleep_') and request.provider in (None, 'library')
+                            and (not request.selected_uri or request.selected_uri.startswith('library://'))
+                            and library_reader is not None):
+                        response = await library_reader(data)
+                        result = plan(catalog=parse_search(response, data, session, self.bindings, self.clock()))
+                        library_selected = result.get('reason') != 'no_exact_catalog_match'
+                    if not library_selected:
+                        response = await self._call('music_assistant', 'search', data, session, response=True)
+                        result = plan(catalog=parse_search(response, data, session, self.bindings, self.clock()))
                     if (getattr(self.hass.services, 'apple_links', None)
                             and result.get('status') != 'ready'
                             and (not result.get('choices') or result.get('reason') in (
@@ -519,6 +528,7 @@ class MusicAssistantAdapter:
                         response = await self.hass.services.async_catalog_fallback(data, session)
                         result = plan(catalog=parse_search(response, data, session, self.bindings, self.clock()))
                     result['evidence_policy'] = (
+                        'profile_scoped_library_exact_match_below_limit' if library_selected else
                         'web_discovered_profile_authorized_catalog_metadata_not_global_uniqueness'
                         if getattr(self.hass.services, 'apple_links', None) else
                         'provider_ranked_exact_artist_recommendation_not_global_uniqueness'

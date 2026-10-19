@@ -1,3 +1,7 @@
+# v0.3.31
+
+Route complete media and sleep-story requests through the deterministic adapter. Resolve exact saved stories in the configured user library before streaming searches; retain ambiguity, content filtering, ordered playback and conversation-bound choices. Route common time/date wording through native HA intents.
+
 # Changelog
 
 ## 0.3.30
