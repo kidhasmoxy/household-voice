@@ -156,7 +156,7 @@
     "tests/ha_embedded_smoke.py": "ef4a7c426bc7309e98b7ddc16a3faf9b2e5cc5412e31e0b7121b20d3371d47ee",
     "tests/ha_local_commands_smoke.py": "ae2a9da2188061d4b46372bac7a96745424e80ab0bcf28bb7fe3c41fe8ffd43f",
     "tests/ha_media_controls_smoke.py": "519155187df29e71275ad3ad9e4a37c6b623bee6830a58dade868e666cd0a6c7",
-    "tests/ha_media_llm_smoke.py": "8c10ab0e78f44406e1d26d0d19efc5e0e9c011ae84ecbfbdd9f01686ff35ace8",
+    "tests/ha_media_llm_smoke.py": "105bfd597c6b29c38138a41080fcc143fd5ff18b0a991053558398bd6351f42e",
     "tests/ha_native_alarm_smoke.py": "ded99df14b4e4dcea48fd92ef3f6bf401010b147decae226596a01b667fe880c",
     "tests/ha_native_duck_smoke.py": "b5c18920e8d3b38c9bf95c23cddf7eae6add549b8428f60299a6ae3a12299ab0",
     "tests/ha_native_recording_checks.py": "6d10df76b25054782ab996732f120b7be4329d52fd3f71db31e3fbafb2d0631c",
